@@ -17,12 +17,29 @@
 # Make the main classes and function accessible from the root of CYTools.
 from cytools.polytope import Polytope
 from cytools.cone import Cone
-from cytools.utils import read_polytopes, fetch_polytopes
-from . import ntfe, vector_config
+from cytools.dataset import (
+    load_polytopes,
+    load_sample,
+    load_tier,
+    load_5d_polytopes,
+    PolytopeRecord,
+    PolytopeRecord5D,
+)
 
 # Latest version
 version = "1.4.6"
 versions_with_serious_bugs = []
+__all__ = [
+    "Cone",
+    "Polytope",
+    "PolytopeRecord",
+    "PolytopeRecord5D",
+    "load_polytopes",
+    "load_sample",
+    "load_tier",
+    "load_5d_polytopes",
+    "version",
+]
 
 # Check for more recent versions of CYTools
 def check_for_updates():
@@ -100,6 +117,3 @@ def check_for_updates():
                 break
     except:
         pass
-
-
-check_for_updates()

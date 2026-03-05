@@ -23,21 +23,28 @@
 import ast
 import fractions
 import functools
+import importlib
 import itertools
+import logging
 import math
-import requests
-import subprocess
-from typing import Generator
+from typing import Generator, TYPE_CHECKING
+
+logger = logging.getLogger(__name__)
 
 # 3rd party imports
 import flint
 import numpy as np
-from numpy.typing import ArrayLike
+import numpy.typing as npt
 import pypalp
 import scipy.sparse as sp
 
 # CYTools imports
 from cytools import config
+
+if TYPE_CHECKING:
+    from cytools.calabiyau import CalabiYau
+    from cytools.polytope import Polytope
+    from cytools.toricvariety import ToricVariety
 
 
 # custom decorators
@@ -110,17 +117,40 @@ def integral_nullspace(M, reduce_by_gcd=True):
     """
     Returns the integral nullspace as column vectors
     """
-    null, nullity = flint.fmpz_mat(M.tolist()).nullspace()
-    
+    M_arr = np.asarray(M, dtype=int)
+    if M_arr.ndim != 2:
+        raise ValueError("M must be a 2D matrix.")
+
+    # For 0-row matrices, the nullspace is the full ambient space.
+    if M_arr.shape[0] == 0:
+        return np.eye(M_arr.shape[1], dtype=int)
+
+    null, nullity = flint.fmpz_mat(M_arr.tolist()).nullspace()
+
+    rows = int(null.nrows())
+    if nullity == 0:
+        return np.zeros((rows, 0), dtype=int)
+
+    raw = null.tolist()
+    null_arr = np.asarray(raw, dtype=int)
+    if null_arr.ndim == 1:
+        if rows == 0:
+            null_arr = null_arr.reshape((0, 0))
+        else:
+            null_arr = null_arr.reshape((rows, -1))
+    elif null_arr.ndim != 2:
+        raise ValueError("Unexpected FLINT nullspace output shape.")
+
     # trim extra columns
-    null = np.array(null.tolist(), dtype=int)[:,:nullity]
-    
+    null_arr = np.ascontiguousarray(null_arr[:, :nullity], dtype=int)
+
     # reduce by gcd
-    if reduce_by_gcd:
-        gcds = np.array([math.gcd(*c) for c in null.T])
-        null = null//gcds
-    
-    return null
+    if reduce_by_gcd and null_arr.shape[1] > 0:
+        gcds = np.gcd.reduce(np.abs(null_arr), axis=0)
+        gcds[gcds == 0] = 1
+        null_arr = null_arr // gcds
+
+    return null_arr
 
 # flint conversion
 # ----------------
@@ -173,7 +203,10 @@ def fmpq_to_float(c: flint.fmpq) -> float:
     """
     return int(c.p) / int(c.q)
 
-def array_to_flint(arr: np.ndarray, t: "int | float" = None) -> np.ndarray:
+def array_to_flint(
+    arr: np.ndarray,
+    t: type[int] | type[float] | np.dtype | None = None,
+) -> np.ndarray:
     """
     **Description:**
     Converts a numpy array with either:
@@ -288,22 +321,23 @@ def to_sparse(
         arr = [list(ind) + [val] for ind, val in arr.items()]
 
     # map to numpy array
-    arr = np.asarray(arr)
+    arr_np = np.asarray(arr)
 
-    # form empty sparse matrix with appropriate dimensions
-    sp_mat = sp.dok_matrix(tuple(1 + arr.max(axis=0)[:2]))
-
-    # fill in matrix
-    for r in arr:
-        sp_mat[r[0], r[1]] = r[2]
+    # build sparse matrix directly from COO data
+    shape = tuple((1 + arr_np.max(axis=0)[:2]).astype(int))
+    rows = arr_np[:, 0].astype(int)
+    cols = arr_np[:, 1].astype(int)
+    vals = arr_np[:, 2]
+    sp_mat = sp.csr_matrix((vals, (rows, cols)), shape=shape)
 
     # return in appropriate format
     if sparse_type == "dok":
-        return sp_mat
-    else:
-        return sp.csr_matrix(sp_mat)
+        return sp.dok_matrix(sp_mat)
+    return sp_mat
 
-def symmetric_sparse_to_dense(tensor: dict, basis: ArrayLike = None) -> np.ndarray:
+def symmetric_sparse_to_dense(
+    tensor: dict, basis: np.ndarray | None = None
+) -> np.ndarray:
     """
     **Description:**
     Converts a symmetric sparse tensor of the form {(a,b,...,c): M_ab...c, ...}
@@ -347,14 +381,16 @@ def symmetric_sparse_to_dense(tensor: dict, basis: ArrayLike = None) -> np.ndarr
         for c in itertools.permutations(inds):
             out[c] = val
 
-    # apply basis transformation
+        # apply basis transformation
     if basis is not None:
         for i in reversed(range(rank)):
-            out = np.tensordot(out, basis, axes=[[i], [1]])
+            out = np.tensordot(out, basis, axes=([i], [1]))
 
     return out
 
-def symmetric_dense_to_sparse(tensor: ArrayLike, basis: ArrayLike = None) -> dict:
+def symmetric_dense_to_sparse(
+    tensor: npt.ArrayLike, basis: np.ndarray | None = None
+) -> dict:
     """
     **Description:**
     Converts a dense symmetric tensor to a sparse tensor of the form
@@ -386,23 +422,24 @@ def symmetric_dense_to_sparse(tensor: ArrayLike, basis: ArrayLike = None) -> dic
     out = {}
 
     # grab dense tensor
-    tensor = np.array(tensor)
+    tensor_arr: np.ndarray = np.array(tensor)
 
-    rank = len(tensor.shape)
-    dim = set(tensor.shape)
+    rank = len(tensor_arr.shape)
+    dim = set(tensor_arr.shape)
     if len(dim) != 1:
         raise ValueError("All dimensions must have the same length")
     dim = next(iter(dim))
 
     # apply basis transformation
+    t: np.ndarray = tensor_arr
     if basis is not None:
         for i in reversed(range(rank)):
-            tensor = np.tensordot(tensor, basis, axes=[[i], [1]])
+            t = np.tensordot(t, basis, axes=([i], [1]))
 
     # iterate over increasing indices, filling sparse tensor
     for ind in itertools.combinations_with_replacement(range(dim), rank):
-        if tensor[ind] != 0:
-            out[ind] = tensor[ind]
+        if t[ind] != 0:
+            out[ind] = t[ind]
 
     return out
 
@@ -464,7 +501,7 @@ def solve_linear_system(
     check: bool = True,
     backend_error_tol: float = 1e-4,
     verbosity: int = 0,
-) -> np.ndarray:
+) -> np.ndarray | None:
     """
     **Description:**
     Solves the sparse linear system M*x + C = 0.
@@ -517,20 +554,21 @@ def solve_linear_system(
 
     elif backend == "sksparse":
         try:
-            from sksparse.cholmod import cholesky_AAt
+            cholmod = importlib.import_module("sksparse.cholmod")
+            cholesky_AAt = getattr(cholmod, "cholesky_AAt")
 
             factor = cholesky_AAt(M.transpose())
             solution = factor(-M.transpose() * C)
-        except:
+        except Exception:
             if verbosity >= 1:
-                print("Linear backend error: sksparse failed.")
+                logger.warning("Linear backend error: sksparse failed.")
 
     elif backend == "scipy":
         try:
             solution = sp.linalg.spsolve(M.transpose() * M, -M.transpose() * C).tolist()
-        except:
+        except Exception:
             if verbosity >= 1:
-                print("Linear backend error: scipy failed.")
+                logger.warning("Linear backend error: scipy failed.")
 
     # check/return solution
     if solution is None:
@@ -542,16 +580,16 @@ def solve_linear_system(
 
         if max_error > backend_error_tol:
             if verbosity >= 1:
-                print("Linear backend error: numerical error.")
+                logger.warning("Linear backend error: numerical error.")
             solution = None
 
-    return solution
+    return np.asarray(solution, dtype=float)
 
 # set algebraic geometric bases
 # -----------------------------
 def set_divisor_basis(
     tv_or_cy: "ToricVariety | CalabiYau",
-    basis: ArrayLike,
+    basis: npt.ArrayLike,
     include_origin: bool = True,
 ):
     """
@@ -619,7 +657,7 @@ def set_divisor_basis(
 
     if len(b.shape) == 1:
         # input is a vector
-        b = np.array(sorted(basis)) + (not include_origin)
+        b = np.array(sorted(b)) + (not include_origin)
 
         # check that it is valid
         if (min(b) < 0) or (max(b) >= glsm_cm.shape[1]):
@@ -676,10 +714,6 @@ def set_divisor_basis(
 
     elif len(b.shape) == 2:
         # input is a matrix
-        if not config._exp_features_enabled:
-            raise Exception(
-                "The experimental features must be enabled to " "use generic bases."
-            )
 
         # We start by checking if the input matrix looks right
         if np.linalg.matrix_rank(b) != glsm_rnk:
@@ -778,7 +812,7 @@ def set_divisor_basis(
 
 def set_curve_basis(
     tv_or_cy: "ToricVariety | CalabiYau",
-    basis: ArrayLike,
+    basis: npt.ArrayLike,
     include_origin: bool = True,
 ):
     """
@@ -854,10 +888,6 @@ def set_curve_basis(
         raise ValueError("Input must be either a vector or a matrix.")
 
     # Else input is a matrix
-    if not config._exp_features_enabled:
-        raise Exception(
-            "The experimental features must be enabled to " "use generic bases."
-        )
 
     # grab GLSM information
     glsm_cm = self.glsm_charge_matrix(include_origin=True)
@@ -868,7 +898,7 @@ def set_curve_basis(
     if b.shape == (glsm_rnk, glsm_cm.shape[1]):
         new_b = b
     elif b.shape == (glsm_rnk, glsm_cm.shape[1] - 1):
-        new_b = np.empty(glsm_cm.shape, dtype=t)
+        new_b = np.empty(glsm_cm.shape, dtype=int)
         new_b[:, 1:] = b
         new_b[:, 0] = -np.sum(b, axis=1)
     else:
@@ -917,472 +947,11 @@ def set_curve_basis(
     self.clear_cache(recursive=False, only_in_basis=True)
 
 
-# polytope grabbing
-# -----------------
-def polytope_generator(
-    input: str,
-    input_type: str = "file",
-    format: str = "ks",
-    backend: str = None,
-    dualize: bool = False,
-    favorable: bool = None,
-    lattice: str = None,
-    limit: int = None,
-) -> Generator["Polytope", None, None]:
-    """
-    **Description:**
-    Reads polytopes from a file or a string. The polytopes can be specified
-    with their vertices, as used in the Kreuzer-Skarke database, or from a
-    weight system.
-
-    :::note
-    This function is not intended to be called by the end user. Instead, it is
-    used by the [`read_polytopes`](#read_polytopes) and
-    [`fetch_polytopes`](#fetch_polytopes) functions.
-    :::
-
-    **Arguments:**
-    - `input`: Specifies the name of the file to read or the string containing
-        the polytopes.
-    - `input_type`: Specifies whether to read from a file or from the input
-        string. Options are "file" or "str".
-    - `format`: Specifies the format to read. The options are "ks", which is
-        the format used in the KS database, and "ws", if the polytopes should
-        be constructed from weight systems.
-    - `backend`: A string that specifies the backend used for the
-        [`Polytope`](./polytope) class.
-    - `dualize`: Flag that indicates whether to dualize all the polytopes
-        before yielding them.
-    - `favorable`: Yield only polytopes that are favorable when set to True, or
-        non-favorable when set to False. If not specified then it yields both
-        favorable and non-favorable polytopes.
-    - `lattice`: The lattice to use when checking favorability. This parameter
-        is only required when `favorable` is set. Options are "M" and "N".
-    - `limit`: Sets a maximum numbers of polytopes to yield.
-
-    **Returns:**
-    A generator of [`Polytope`](./polytope) objects.
-
-    **Example:**
-    Since this function should not be used directly, we show an example of it
-    being used with the [`read_polytopes`](#read_polytopes) function. We take a
-    string obtained from the KS database and read the polytope it specifies.
-    ```python {8}
-    from cytools import read_polytopes # Note - it cannot be imported from root
-    poly_data = '''4 5  M:10 5 N:376 5 H:272,2 [540]
-                    1    0    0    0   -9
-                    0    1    0    0   -6
-                    0    0    1    0   -1
-                    0    0    0    1   -1
-                '''
-    read_polytopes(poly_data, input_type="str", as_list=True)
-    # [A 4-dimensional reflexive lattice polytope in ZZ^4]
-    ```
-    """
-    from cytools.polytope import Polytope
-
-    # input checking
-    if favorable is not None and lattice is None:
-        raise ValueError('Lattice must be specified. Options are "M" and "N".')
-
-    if input_type not in ["file", "str"]:
-        raise ValueError('"input_type" must be either "file" or "str"')
-
-    # read data
-    n_yielded = 0
-
-    if input_type == "file":
-        in_file = open(input)
-        l = in_file.readline()
-    else:
-        in_string = input.split("\n")
-        l = in_string.pop(0)
-
-    if format == "ws":
-        # read the polytopes as weight systems
-        while (limit is None) or (n_yielded < limit):
-            # pass line to PALP
-            p    = pypalp.Polytope(input)
-            vert = p.vertices()
-
-            # ensure reasonable shape
-            if len(vert.shape) == 0:
-                break
-            if vert.shape[0] < vert.shape[1]:
-                vert = vert.T
-
-            # build the Polytope
-            p = Polytope(vert, backend=backend)
-
-            if (favorable is None) or (p.is_favorable(lattice=lattice) == favorable):
-                n_yielded += 1
-                yield (p.dual() if dualize else p)
-
-            # get next line
-            if input_type == "file":
-                l = in_file.readline()
-
-                for i in range(5):
-                    if l != "":
-                        break
-                    l = in_file.readline()
-                else:
-                    in_file.close()
-                    break
-            else:
-                if len(in_string) > 0:
-                    l = in_string.pop(0)
-                else:
-                    break
-    elif format != "ks":
-        raise ValueError('Unsupported format. Options are "ks" and "ws".')
-
-    # format is "ks"
-    while limit is None or n_yielded < limit:
-        if "M:" in l:
-            h = l.split()
-            n, m = int(h[0]), int(h[1])
-
-            # add vertices
-            vert = []
-            for i in range(n):
-                if input_type == "file":
-                    vert.append([int(c) for c in in_file.readline().split()])
-                else:
-                    vert.append([int(c) for c in in_string.pop(0).split()])
-
-            vert = np.asarray(vert)
-
-            # ensure reasonable shape
-            if vert.shape != (n, m):
-                raise ValueError("Dimensions of array do not match")
-            if m > n:
-                vert = vert.T
-
-            # build the Polytope
-            p = Polytope(vert, backend=backend)
-            if (favorable is None) or (p.is_favorable(lattice=lattice) == favorable):
-                n_yielded += 1
-                yield (p.dual() if dualize else p)
-
-        # get next line
-        if input_type == "file":
-            l = in_file.readline()
-
-            for i in range(5):
-                if l != "":
-                    break
-                l = in_file.readline()
-            else:
-                in_file.close()
-                break
-        else:
-            if len(in_string) > 0:
-                l = in_string.pop(0)
-            else:
-                break
-
-
-def read_polytopes(
-    input: str,
-    input_type: str = "file",
-    format: str = "ks",
-    backend: str = None,
-    as_list: bool = False,
-    dualize: bool = False,
-    favorable: bool = None,
-    lattice: str = None,
-    limit: int = None,
-) -> 'Generator["Polytope", None, None] | \
-                                                            list["Polytope"]':
-    """
-    **Description:**
-    Reads polytopes from a file or a string. The polytopes can be specified
-    with their vertices, as used in the Kreuzer-Skarke database, or from a
-    weight system.
-
-    **Arguments:**
-    - `input`: Specifies the name of the file to read or the string containing
-        the polytopes.
-    - `input_type`: Specifies whether to read from a file or from the input
-        string. Options are "file" or "str".
-    - `format`: Specifies the format to read. The options are "ks", which is
-        the format used in the KS database, and "ws", if the polytopes should
-        be constructed from weight systems.
-    - `backend`: A string that specifies the backend used for the
-        [`Polytope`](./polytope) class.
-    - `as_list`: Return the list of polytopes instead of a generator.
-    - `dualize`: Flag that indicates whether to dualize all the polytopes
-        before yielding them.
-    - `favorable`: Yield or return only polytopes that are favorable when set
-        to True, or non-favorable when set to False. If not specified then it
-        yields both favorable and non-favorable polytopes.
-    - `lattice`: The lattice to use when checking favorability. This parameter
-        is only required when `favorable` is set. Options are "M" and "N".
-    - `limit`: Sets a maximum numbers of polytopes to yield.
-
-    **Returns:**
-    A generator of [`Polytope`](./polytope) objects, or the full list when
-    `as_list` is set to True.
-
-    **Example:**
-    We take a string obtained from the KS database and read the polytope it
-    specifies.
-    ```python {8}
-    from cytools import read_polytopes # Note that it can directly be imported from the root
-    poly_data = '''4 5  M:10 5 N:376 5 H:272,2 [540]
-                    1    0    0    0   -9
-                    0    1    0    0   -6
-                    0    0    1    0   -1
-                    0    0    0    1   -1
-                '''
-    read_polytopes(poly_data, input_type="str", as_list=True)
-    # [A 4-dimensional reflexive lattice polytope in ZZ^4]
-    ```
-    """
-    g = polytope_generator(
-        input,
-        input_type=input_type,
-        format=format,
-        backend=backend,
-        dualize=dualize,
-        favorable=favorable,
-        lattice=lattice,
-        limit=limit,
-    )
-
-    if as_list:
-        return list(g)
-    else:
-        return g
-
-
-def fetch_polytopes(
-    h11: int = None,
-    h12: int = None,
-    h13: int = None,
-    h21: int = None,
-    h22: int = None,
-    h31: int = None,
-    chi: int = None,
-    lattice: str = "N",
-    dim: int = 4,
-    n_points: int = None,
-    n_vertices: int = None,
-    n_dual_points: int = None,
-    n_facets: int = None,
-    limit: int = 1000,
-    timeout: int = 60,
-    as_list: bool = True,
-    backend: str = None,
-    dualize: bool = False,
-    favorable: bool = None,
-    verbosity: int = 0,
-) -> 'Generator["Polytope", None, None] | list["Polytope"]':
-    """
-    **Description:**
-    Fetches reflexive polytopes from the Kreuzer-Skarke database or from the
-    Schöller-Skarke database. The data is fetched from the websites
-    http://hep.itp.tuwien.ac.at/~kreuzer/CY/ and
-    http://rgc.itp.tuwien.ac.at/fourfolds/ respectively.
-
-    :::note
-    The Kreuzer-Skarke database does not store favorability data. Thus, when
-    setting favorable to True or False it fetches additional polytopes so that
-    after filtering by favorability it can saturate the requested limit.
-    However, it may happen that fewer polytopes than requested are returned
-    even though more exist. To verify that no more polytopes with the requested
-    conditions exist one can increase the limit significantly and check if more
-    polytopes are returned.
-    :::
-
-    **Arguments:**
-    - `h11`: The Hodge number $h^{1,1}$ of the Calabi-Yau hypersurface.
-    - `h12`: The Hodge number $h^{1,2}$ of the Calabi-Yau hypersurface.
-    - `h13`: The Hodge number $h^{1,3}$ of the Calabi-Yau hypersurface.
-    - `h21`: The Hodge number $h^{2,1}$ of the Calabi-Yau hypersurface. This is
-        equivalent to the h12 parameter.
-    - `h22`: The Hodge number $h^{2,2}$ of the Calabi-Yau hypersurface.
-    - `h31`: The Hodge number $h^{3,1}$ of the Calabi-Yau hypersurface. This is
-        equivalent to the h13 parameter.
-    - `chi`: The Euler characteristic of the Calabi-Yau hypersurface.
-    - `lattice`: The lattice on which the polytope is defined. Options are "N"
-        and "M". Has to be specified if the Hodge numbers or the Euler
-        characteristic is specified.
-    - `dim`: The dimension of the polytope. Only available options are 4 and 5.
-    - `n_points`: The number of lattice points of the desired polytopes.
-    - `n_vertices`: The number of vertices of the desired polytopes.
-    - `n_dual_points`: The number of points of the dual polytopes of the
-        desired polytopes.
-    - `n_facets`: The number of facets of the desired polytopes.
-    - `limit`: The maximum number of fetched polytopes.
-    - `timeout`: The maximum number of seconds to wait for the server to return
-        the data.
-    - `as_list`: Return the list of polytopes instead of a generator.
-    - `backend`: A string that specifies the backend used for the
-        [`Polytope`](./polytope) class.
-    - `dualize`: Flag that indicates whether to dualize all the polytopes
-        before yielding them.
-    - `favorable`: Yield or return only polytopes that are favorable when set
-        to True, or non-favorable when set to False. If not specified then it
-        yields both favorable and non-favorable polytopes.
-    - `verbostiy`: The verbosity level.
-
-    **Returns:**
-    A generator of [`Polytope`](./polytope) objects, or the full list when
-    `as_list` is set to True.
-
-    **Example:**
-    We fetch polytopes from the Kreuzer-Skarke and Schöller-Skarke databases
-    with a few different parameters.
-    ```python {2,5,8}
-    from cytools import fetch_polytopes # Note that it can directly be imported from the root
-    g = fetch_polytopes(h11=27, as_list=False) # Constructs a generator of polytopes
-    next(g)
-    # A 4-dimensional reflexive lattice polytope in ZZ^4
-    l = fetch_polytopes(h11=27, limit=100) # Constructs a list of polytopes
-    print(f"Fetched {len(l)} polytopes")
-    # Fetched 100 polytopes
-    g_5d = fetch_polytopes(h11=1000, as_list=False, dim=5, limit=100) # Generator of 5D polytopes
-    next(g_5d)
-    # A 5-dimensional reflexive lattice polytope in ZZ^5
-    ```
-    """
-    # input checking
-    # --------------
-    if dim not in (4, 5):
-        raise ValueError("Only polytopes of dimension 4 or 5 are available.")
-
-    if lattice not in ("N", "M", None):
-        raise ValueError("Options for lattice are 'N' and 'M'.")
-
-    if favorable is not None:
-        if lattice is None:
-            raise ValueError("Must specify lattice when checking " "favorability.")
-
-        fetch_limit = (5 if favorable else 10) * limit + 100
-    else:
-        fetch_limit = limit
-
-    # hodge numbers
-    if (h12 is not None) and (h21 is not None) and (h12 != h21):
-        raise ValueError("Only one of h12 or h21 should be specified.")
-
-    if (h13 is not None) and (h31 is not None) and (h13 != h31):
-        raise ValueError("Only one of h13 or h31 should be specified.")
-
-    if (h12 is None) and (h21 is not None):
-        h12 = h21
-    if (h13 is None) and (h31 is not None):
-        h13 = h31
-
-    # grab the polytopes
-    # ------------------
-    if dim == 4:
-        # further input checking...
-        if h13 is not None or h22 is not None:
-            print("Ignoring inputs for h13 and h22.")
-
-        if (lattice is None) and (
-            (h11 is not None) or (h12 is not None) or (chi is not None)
-        ):
-            raise ValueError(
-                "Lattice must be specified when Hodge numbers "
-                "or Euler characteristic are given."
-            )
-        if lattice == "N":
-            h11, h12 = h12, h11
-            chi = -chi if chi is not None else None
-
-        if (
-            (chi is not None)
-            and (h11 is not None)
-            and (h12 is not None)
-            and (chi != 2 * (h11 - h21))
-        ):
-            raise ValueError("Inconsistent Euler characteristic input.")
-
-        # build/send a request
-        variables = [
-            h11,
-            h12,
-            n_points,
-            n_vertices,
-            n_dual_points,
-            n_facets,
-            chi,
-            fetch_limit,
-        ]
-        names = ["h11", "h12", "M", "V", "N", "F", "chi", "L"]
-
-        parameters = {
-            name: str(var) for name, var in zip(names, variables) if var is not None
-        }
-
-        r = requests.get(
-            "http://quark.itp.tuwien.ac.at/cgi-bin/cy/cydata.cgi",
-            params=parameters,
-            timeout=timeout,
-        )
-    else:
-        # further input checking...
-        if (lattice is None) and ((h11 is not None) or (h13 is not None)):
-            raise ValueError("Lattice must be specified when h11 or h13 " "are given.")
-
-        if lattice == "N":
-            h11, h13 = h13, h11
-
-        if (
-            (chi is not None)
-            and (h11 is not None)
-            and (h12 is not None)
-            and (h13 is not None)
-            and (chi != 48 + 6 * (h11 - h12 + h13))
-        ):
-            raise ValueError("Inconsistent Euler characteristic input.")
-
-        if (
-            (h22 is not None)
-            and (h11 is not None)
-            and (h12 is not None)
-            and (h13 is not None)
-            and (h22 != 44 + 6 * h11 - 2 * h12 + 4 * h13)
-        ):
-            raise ValueError("Inconsistent h22 input.")
-
-        # build/send a request
-        variables = [h11, h12, h13, h22, chi, fetch_limit]
-        names = ["h11", "h12", "h13", "h22", "chi", "limit"]
-
-        url = "http://rgc.itp.tuwien.ac.at/fourfolds/db/5d_reflexive"
-        for i, vr in enumerate(variables):
-            if vr is not None:
-                url += f",{names[i]}={vr}"
-        url += ".txt"
-
-        r = requests.get(url, timeout=timeout)
-
-    # verbosity
-    if verbosity >= 1:
-        print(f"Fetched from URL = '{r.url}'...")
-
-    # return the generator based off of output of request
-    return read_polytopes(
-        r.text,
-        input_type="str",
-        format=("ks" if dim == 4 else "ws"),
-        backend=backend,
-        as_list=as_list,
-        dualize=dualize,
-        favorable=favorable,
-        lattice=lattice,
-        limit=limit,
-    )
-
-
 # point manipulations
 # -------------------
-def lll_reduce(pts_in: ArrayLike, transform: bool = False) -> "misc":
+def lll_reduce(
+    pts_in: npt.ArrayLike, transform: bool = False
+) -> np.ndarray | tuple[np.ndarray, tuple[np.ndarray, np.ndarray]]:
     """
     Apply lll-reduction to the input points (the rows).
 
@@ -1433,7 +1002,7 @@ def lll_reduce(pts_in: ArrayLike, transform: bool = False) -> "misc":
         return pts_red
 
 
-def find_new_affinely_independent_points(pts: ArrayLike) -> np.ndarray:
+def find_new_affinely_independent_points(pts: npt.ArrayLike) -> np.ndarray:
     """
     **Description:**
     Finds new points that are affinely independent to the input list of points.
@@ -1457,12 +1026,12 @@ def find_new_affinely_independent_points(pts: ArrayLike) -> np.ndarray:
     array([[1, 0, 2]])
     ```
     """
+    # cast to numpy array
+    pts = np.asarray(pts)
+
     # input checking
     if len(pts) == 0:
         raise ValueError("List of points cannot be empty.")
-
-    # cast to numpy array
-    pts = np.asarray(pts)
     shape = pts.shape
 
     # translate, append unit vector
@@ -1470,7 +1039,7 @@ def find_new_affinely_independent_points(pts: ArrayLike) -> np.ndarray:
     pts -= translation
 
     if shape[0] == 1:
-        pts = np.append(pts_trans, [[1] + [0] * (shape[1] - 1)], axis=0)
+        pts = np.append(pts, [[1] + [0] * (shape[1] - 1)], axis=0)
 
     dim = np.linalg.matrix_rank(pts)
 

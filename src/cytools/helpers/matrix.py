@@ -28,8 +28,8 @@ import numpy as np
 from cytools.helpers import misc
 
 # typing
-from numpy.typing import ArrayLike
-from typing import Callable, Iterator, Union
+from collections.abc import Sequence
+from typing import Any, Callable, Iterator, Union, cast
 
 numeric = Union[int, float, np.number]
 
@@ -56,12 +56,13 @@ class LazyTuple:
     def __len__(self) -> int:
         return len(self._data)
 
-    def __getitem__(self, key: int) -> numeric:
+    def __getitem__(self, key: int) -> object:
         item = self._data[key]
 
         if callable(item):
+            fn = cast(Callable[[], object], item)
             self._data = list(self._data)
-            self._data[key] = item()
+            self._data[key] = fn()
             self._data = tuple(self._data)
             item = self._data[key]
 
@@ -86,7 +87,7 @@ class LIL:
     def __init__(
         self,
         dtype: Union[np.dtype, str],
-        width: int = None,
+        width: int | None = None,
         iter_densely: bool = False,
     ) -> None:
         # data container
@@ -156,12 +157,16 @@ class LIL:
         # length
         return len(self.arr)
 
-    def __array__(self, copy=False, dtype: Union[np.dtype, str] = None) -> np.array:
+    def __array__(
+        self, copy: bool = False, dtype: Union[np.dtype, str] | None = None
+    ) -> np.ndarray:
         # What is called upon running np.array on this object
         return np.array(self.dense(), copy=copy, dtype=dtype)
 
     @property
-    def shape(self) -> tuple[int]:
+    def shape(self) -> tuple[int, int]:
+        if self.width is None:
+            self.width = self.infer_width()
         return (len(self), self.width)
 
     def __add__(self, other: "LIL") -> "LIL":
@@ -198,7 +203,7 @@ class LIL:
         """
         self.arr.append(dict())
 
-    def append(self, toadd: "dict or LIL", tocopy: bool = True) -> "LIL":
+    def append(self, toadd: Any, tocopy: bool = True) -> "LIL":
         """
         **Description:**
         Append (a) row(s) to the array.
@@ -232,7 +237,7 @@ class LIL:
     def col_inds(self) -> set:
         return set().union(*[r.keys() for r in self.arr])
 
-    def reindex(self, f: dict = None) -> None:
+    def reindex(self, f: dict[int, int] | None = None) -> None:
         """
         **Description:**
         Reindex the ith column to be the f(i)-th one.
@@ -266,7 +271,7 @@ class LIL:
         self.arr_dense = None
         self.arr = [dict(t) for t in {tuple(sorted(d.items())) for d in self.arr}]
 
-    def dense(self, tocopy: bool = False) -> np.array:
+    def dense(self, tocopy: bool = False) -> np.ndarray:
         """
         **Description:**
         Return a dense version of the array
@@ -297,20 +302,23 @@ class LIL:
                     self.arr_dense[i, j] = v
 
         # return
+        assert self.arr_dense is not None
+        dense_arr = np.asarray(self.arr_dense)
         if tocopy:
-            return self.arr_dense.copy()
+            return dense_arr.copy()
         else:
-            return self.arr_dense
+            return dense_arr
 
     def tolist(self) -> list:
         return self.dense().tolist()
 
     def sum(
-        self, axis: int = None, dense: bool = True
-    ) -> Union[numeric, ArrayLike]:
+        self, axis: int | None = None, dense: bool = True
+    ) -> Union[numeric, np.ndarray, dict[int, numeric]]:
         if axis is None:
             if self._sum_all is None:
-                self._sum_all = np.sum(self.sum(axis=1))
+                row_sums = np.asarray(self.sum(axis=1))
+                self._sum_all = np.sum(row_sums)
             return self._sum_all
         elif axis == 1:
             if self._sum_1 is None:
@@ -318,6 +326,8 @@ class LIL:
             return self._sum_1
         elif axis == 0:
             if dense:
+                if self.width is None:
+                    self.width = self.infer_width()
                 if self._sum_0_dense is None:
                     self._sum_0_dense = np.asarray(
                         [
@@ -333,6 +343,7 @@ class LIL:
                         for i in self.col_inds()
                     }
                 return self._sum_0
+        raise ValueError(f"Axis {axis} not supported.")
 
 
 class LIL_stack:
@@ -364,9 +375,9 @@ class LIL_stack:
 
     def __init__(
         self,
-        options: [[ArrayLike]],
-        choices: [int],
-        choice_bounds: [int],
+        options: list[list["LIL"]],
+        choices: int | list[int],
+        choice_bounds: list[int],
         iter_densely: bool = False,
     ) -> None:
         self._options = options
@@ -403,6 +414,7 @@ class LIL_stack:
                     return block[idx]
                 else:
                     idx = (idx[0] - L, idx[1])
+            raise RuntimeError("LIL_stack internal indexing error")
         else:
             # get element self.arr[i]
             if idx >= len(self):
@@ -418,6 +430,7 @@ class LIL_stack:
                     return block[idx]
                 else:
                     idx -= L
+            raise RuntimeError("LIL_stack internal indexing error")
 
     def __len__(self) -> int:
         # length
@@ -427,7 +440,7 @@ class LIL_stack:
         # iterator
         return self._rows(self.iter_densely)
 
-    def __array__(self, copy=False, dtype: np.dtype = None) -> np.array:
+    def __array__(self, copy: bool = False, dtype: np.dtype | None = None) -> np.ndarray:
         # What is called upon running np.array on this object
         return np.array(self.dense(), copy=copy, dtype=dtype)
 
@@ -438,11 +451,14 @@ class LIL_stack:
 
     @property
     def dtype(self) -> np.dtype:
-        return self._options[0][0].dtype
+        return np.dtype(self._options[0][0].dtype)
 
     @property
     def width(self) -> int:
-        return self._options[0][0].width
+        width = self._options[0][0].width
+        if width is None:
+            width = self._options[0][0].infer_width()
+        return width
 
     @property
     def shape(self) -> "LazyTuple":
@@ -470,7 +486,7 @@ class LIL_stack:
     def _rows(self, dense: bool = True) -> Iterator:
         if dense:
 
-            def row_iter(r: "LIL") -> np.array:
+            def row_iter(r: "LIL") -> np.ndarray:
                 return r.dense()
 
         else:
@@ -483,7 +499,7 @@ class LIL_stack:
 
     # getter
     @property
-    def arr(self) -> ArrayLike:
+    def arr(self) -> list[dict[int, numeric]]:
         if not hasattr(self, "_arr"):
             self._arr = [row for row in self._rows(False)]
 
@@ -493,7 +509,7 @@ class LIL_stack:
     def arr(self, value):
         self._arr = value
 
-    def dense(self, tocopy: bool = False) -> ArrayLike:
+    def dense(self, tocopy: bool = False) -> np.ndarray:
         """
         **Description:**
         Return a dense version of the array
@@ -541,34 +557,36 @@ class LIL_stack:
 
     # basic methods
     def sum(
-        self, axis: int = None, dense: bool = True
-    ) -> Union[numeric, ArrayLike]:
+        self, axis: int | None = None, dense: bool = True
+    ) -> Union[numeric, np.ndarray]:
         if axis is None:
             if not hasattr(self, "_sum_all"):
                 self._sum_all = np.sum(self.sum(axis=1))
             return self._sum_all
         elif axis == 1:
             if not hasattr(self, "_sum_1"):
-                self._sum_1 = flatten_top(
-                    [M.sum(axis=1) for M in self._blocks()], as_list=False
+                self._sum_1 = np.asarray(
+                    flatten_top([M.sum(axis=1) for M in self._blocks()], as_list=False)
                 )
             return self._sum_1
         elif axis == 0:
             if dense:
                 if not hasattr(self, "_sum_0_dense"):
                     self._sum_0_dense = np.sum(
-                        M.sum(axis=0, dense=True) for M in self._blocks()
+                        np.asarray([M.sum(axis=0, dense=True) for M in self._blocks()]),
+                        axis=0,
                     )
                 return self._sum_0_dense
             else:
                 raise NotImplementedError("sparse sum not yet implemented")
+        raise ValueError(f"Axis {axis} not supported.")
 
 
 # helpers
 # -------
 def flatten_top(
-    arr: ArrayLike, as_list: bool = True, N: int = 1
-) -> "list or np.array":
+    arr: np.ndarray | Sequence, as_list: bool = True, N: int = 1
+) -> list | np.ndarray:
     """
     **Description:**
     Flatten the top level (axis=0) of an array.

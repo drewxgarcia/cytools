@@ -24,10 +24,41 @@ import os
 
 # 3rd party imports
 import pickle
-from platformdirs import user_cache_dir
+try:
+    from platformdirs import user_cache_dir
+except ImportError:
+    def user_cache_dir(appname: str, appauthor: str) -> str:
+        return os.path.join(os.path.expanduser("~"), ".cache", appname)
 
 # typing
-from typing import Any
+from collections.abc import Callable
+from typing import Any, TypeVar
+
+_T = TypeVar("_T")
+
+
+# cached_result
+# -------------
+def cached_result_on(
+    obj: Any,
+    attr: str,
+    compute: Callable[[], _T],
+    transform: Callable[[_T], Any] | None = None,
+) -> Any:
+    """
+    Memoisation helper.  Checks ``getattr(obj, attr)``, computes and stores via
+    ``setattr`` if *None*, then returns the (optionally transformed) value.
+
+    Usage::
+
+        return cached_result_on(self, "_dim", lambda: np.linalg.matrix_rank(M))
+        return cached_result_on(self, "_rays", lambda: ..., transform=np.array)
+    """
+    cached = getattr(obj, attr)
+    if cached is None:
+        cached = compute()
+        setattr(obj, attr, cached)
+    return transform(cached) if transform is not None else cached
 
 
 # numbers

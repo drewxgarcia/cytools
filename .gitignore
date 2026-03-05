@@ -1,29 +1,42 @@
-# Compiled python or sage files
-*.pyc
-__pycache__
+# Byte-compiled / cache files
+__pycache__/
+*.py[cod]
 *.sage.py
 
-# Jupyter notebooks (if you want to add one use the --force option)
+# Jupyter notebooks (use --force if intentionally committing one)
 *.ipynb
-.ipynb_checkpoints
+.ipynb_checkpoints/
 
-# Data files
+# Data archives and local datasets
 *.dat
 *.zip
 *.rar
 *.tar*
 
-# Mosek license
+# Local license files
 *.lic
 
 # Python package build files
-build
-dist
-*.egg-info
+build/
+dist/
+*.egg-info/
+*.egg
+pip-wheel-metadata/
 
-# testing
+# Virtual environments and local tooling caches
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.pytype/
+.benchmarks/
+.coverage
+.coverage.*
+htmlcov/
+
+# Local testing and scratch files
 private.py
-examples
-
-# build logs
+examples/
 build.log
+.DS_Store

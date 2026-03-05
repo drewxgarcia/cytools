@@ -24,15 +24,17 @@ import collections
 import itertools
 from numba import njit
 import numpy as np
-import regfans
-from typing import Union
+import numpy.typing as npt
+from regfans.fan import Fan as RegfansFan
+from typing import Any, Union, cast
 
 # core CYTools imports
 from cytools import Cone, utils
+from cytools.h_polytope.h_polytope import HPolytope
 from cytools.triangulation import Triangulation
 
 
-class Fan(regfans.fan.Fan):
+class Fan(RegfansFan):
     """
     This class handles definition/operations on fans. It is analogous to the
     Triangulation class. It also has toric methods, like intersection numbers.
@@ -57,7 +59,7 @@ class Fan(regfans.fan.Fan):
     """
     # read from regfans type
     @classmethod
-    def from_regfans(cls, fan: "regfans.Fan") -> "Fan":
+    def from_regfans(cls, fan: Any) -> "Fan":
         """
         **Description:**
         Convert a `regfans.Fans` object to a object of the CYTools Fan class.
@@ -76,40 +78,16 @@ class Fan(regfans.fan.Fan):
 
     # cones/simplices
     # ---------------
-    def cones(self,
-        formal: bool = False,
-        as_hyps: bool = False,
-        as_inds: bool = False,
-        ind_offset: int = 0) -> Union[ tuple[tuple[int]], list["Cone"] ]:
+    def formal_cones(self) -> tuple["Cone", ...]:
         """
-        **Description:**
-        Returns the cones in the fan, each cone specified either by
-            - (default) a tuple of labels
-            - (formal=True) as a formal Cone object.
-            - (as_inds=True) as a tuple of indices
-
-        **Arguments:**
-        - `formal`:     Whether to return the cones as formal Cone objects.
-        - `as_hyps`:    Whether to return the cones as their hyperplanes.
-        - `as_inds`:    Whether to return the cones as indices (not labels).
-        - `ind_offset`: Additive offset to the indices
-
-        **Returns:**
-        The full-dimensional cones in the fan.
+        Returns the cones in the fan as formal CYTools `Cone` objects.
         """
-        if formal:
-            return tuple([self.vc.cone(c) for c in self._cones])
-        else:
-            return super(Fan, self).cones(
-                as_hyps=as_hyps,
-                as_inds=as_inds,
-                ind_offset=ind_offset)
-
-            return cones
+        return tuple(self.vc.cone(c) for c in self._cones)
 
     # aliases
-    simplices = cones
-    simps = cones
+    cones = RegfansFan.cones
+    simplices = RegfansFan.cones
+    simps = RegfansFan.cones
 
 
     def restricted_simps(self,
@@ -131,7 +109,7 @@ class Fan(regfans.fan.Fan):
         The restricted simplices
         """
         p = self.vc.conv()
-        simps = self.simps()
+        simps = cast(tuple[tuple[int, ...], ...], self.simps(as_inds=False))
 
         # restrict to each to_dim-face
         restricted = []
@@ -202,18 +180,24 @@ class Fan(regfans.fan.Fan):
             p = self.vc.conv(which=self.labels)
             pts_in_facets = (self.labels == p.labels[1:])
             h = self.heights()
-            if not np.all(h >= 0):
+            if h is None:
+                raise ValueError("Regular fan is missing heights.")
+            h_arr = np.asarray(h)
+            if not np.all(h_arr >= 0):
                 msg =   "Heights are assumed non-negative here... "
-                msg += f"your heights={h}..."
+                msg += f"your heights={h_arr}..."
                 raise ValueError(msg)
-            return p.triangulate(heights=[0]+h.tolist(),
+            return p.triangulate(heights=[0] + h_arr.tolist(),
                                  include_points_interior_to_facets=pts_in_facets,
                                  check_heights=check)
 
         # get/return the triangulation
         p = self.vc.conv(self.labels)
 
-        simps = tuple([(0,) + c for c in self.simps()])
+        simps_raw = cast(
+            tuple[tuple[int, ...], ...], self.simps(as_inds=False)
+        )
+        simps = tuple((0,) + c for c in simps_raw)
         t = p.triangulate(
             simplices=simps,
             include_points_interior_to_facets=True,
@@ -280,9 +264,9 @@ class Fan(regfans.fan.Fan):
         symmetrize: bool = False,
         as_np_array: bool = False,
         eps: float = 1e-4,
-        digits: int = 10,
+        digits: int | None = 10,
         verbosity: int = 0,
-    ) -> Union[dict, "ArrayLike"]:
+    ) -> Union[dict, np.ndarray]:
         """
         **Description:**
         Compute the intersection numbers of the toric variety defined by the
@@ -324,8 +308,10 @@ class Fan(regfans.fan.Fan):
         # push down the intersection numbers and represent them in said basis
         if pushed_down or in_basis:
             # get the ambient intersection numbers
-            kappa = self.intersection_numbers(symmetrize=False,
-                                              digits=None)
+            kappa = cast(
+                dict[tuple[int, ...], float],
+                self.intersection_numbers(symmetrize=False, digits=None),
+            )
             arr_size = self.vc.size
 
             if verbosity >= 10:
@@ -388,7 +374,7 @@ class Fan(regfans.fan.Fan):
                 else:
                     # map labels to indices...
                     for k,v in kappa.items():
-                        kappa_np[*[ki-1 for ki in k]] = v
+                        kappa_np[tuple(ki - 1 for ki in k)] = v
                 return kappa_np
             
             return kappa
@@ -422,7 +408,9 @@ class Fan(regfans.fan.Fan):
 
         # (formally add the origin to ease indexing)
         vecs  = np.vstack([ np.zeros((1,dim),dtype=int), self.vectors() ])
-        simps = self.cones(as_inds=True, ind_offset=1)
+        simps = cast(
+            tuple[tuple[int, ...], ...], self.cones(as_inds=True, ind_offset=1)
+        )
         simps_np = np.array(simps)
 
         # face-to-neighbor map for each codim
@@ -596,7 +584,7 @@ class Fan(regfans.fan.Fan):
     int_nums = intersection_numbers
     kappa    = intersection_numbers
 
-    def c2(self, eps: float = 1e-4, digits: int = 4) -> "ArrayLike":
+    def c2(self, eps: float = 1e-4, digits: int = 4) -> np.ndarray:
         """
         **Description:**
         Compute the second chern class associated to the fan.
@@ -613,15 +601,18 @@ class Fan(regfans.fan.Fan):
         # get the 2-cones
         max_ind = -1
         two_cones = set()
-        for s in self.cones():
+        for s in cast(tuple[tuple[int, ...], ...], self.cones(as_inds=False)):
             max_ind = max(max_ind, max(s))
 
             for two_cone in itertools.combinations(s, 2):
                 two_cones.add(two_cone)
 
         # get the intersection numbers
-        kappa = self.intersection_numbers(
-            pushed_down=True, symmetrize=False, eps=eps, digits=4
+        kappa = cast(
+            dict[tuple[int, ...], float],
+            self.intersection_numbers(
+                pushed_down=True, symmetrize=False, eps=eps, digits=4
+            ),
         )
 
         # compute c2
@@ -631,9 +622,9 @@ class Fan(regfans.fan.Fan):
                 round(sum(kappa.get(tuple(sorted(c + (a,))), 0) for c in two_cones))
             )
 
-        return out
+        return np.asarray(out, dtype=int)
 
-    def mori_rays(self) -> "ArrayLike":
+    def mori_rays(self) -> np.ndarray:
         """
         **Description:**
         Compute the rays of the Mori cone of the toric variety defined by the
@@ -845,12 +836,13 @@ class Fan(regfans.fan.Fan):
         if not self.is_gorestein_fano():
             raise NotImplementedError()
 
+        p = self.newton_polytope([1] * len(self.used_labels))
         if p.labels_not_facet[1:] != self.used_labels:
             print(
                 f"This function may not hold! Polytope labels are {p.labels_not_facet} and VC labels are {self.used_labels}"
             )
 
-        return len(self.newton_polytope([1] * len(self.used_labels)).labels_not_facet)
+        return len(p.labels_not_facet)
 
     # generalize flip_linear
     # ----------------------
@@ -1011,7 +1003,7 @@ def curve_to_gv(fan, kappa, circ, verbosity=0):
             
             if set(c).issubset(fan.vc.divisor_basis):
                 c_inds = fan.vc.labels_to_inds(c, ambient_labels=fan.vc.divisor_basis)
-                kappa_c = kappa[*c_inds]
+                kappa_c = kappa[tuple(c_inds)]
                 if False:
                     A = kappa_c
 
@@ -1065,8 +1057,10 @@ def flop(fan, kappa, circ, verbosity=0):
 
 # misc
 # ----
-# give Triangulation a method to directly generate VCs/Fans
-def vc(self, include_points_interior_to_facets=None):
+# helper constructors used by `Triangulation.vc` and `Triangulation.fan`
+def triangulation_to_vc(
+    triang: "Triangulation", include_points_interior_to_facets: bool | None = None
+):
     """
     **Description:**
     Construct the VectorConfiguration associated to the triangulation.
@@ -1080,15 +1074,21 @@ def vc(self, include_points_interior_to_facets=None):
     """
     # set include_points_interior_to_facets
     if include_points_interior_to_facets is None:
-        include_points_interior_to_facets = tuple(self.labels) == self.polytope().labels
+        include_points_interior_to_facets = (
+            tuple(triang.labels) == triang.polytope().labels
+        )
 
     # get the vc
-    vc = self.polytope().vc(include_points_interior_to_facets=include_points_interior_to_facets)
+    vc = triang.polytope().vc(
+        include_points_interior_to_facets=include_points_interior_to_facets
+    )
 
     return vc
-Triangulation.vc = vc
 
-def fan(self, include_points_interior_to_facets=None):
+
+def triangulation_to_fan(
+    triang: "Triangulation", include_points_interior_to_facets: bool | None = None
+):
     """
     **Description:**
     Construct the Fan associated to the triangulation.
@@ -1102,12 +1102,15 @@ def fan(self, include_points_interior_to_facets=None):
     """
     # set include_points_interior_to_facets
     if include_points_interior_to_facets is None:
-        include_points_interior_to_facets = tuple(self.labels) == self.polytope().labels
+        include_points_interior_to_facets = (
+            tuple(triang.labels) == triang.polytope().labels
+        )
 
     # get the vc
-    vc = self.polytope().vc(include_points_interior_to_facets=include_points_interior_to_facets)
+    vc = triang.polytope().vc(
+        include_points_interior_to_facets=include_points_interior_to_facets
+    )
 
     # get/return the fan
-    fan = vc.subdivide(cells=self.simplices()[:,1:])
+    fan = vc.subdivide(cells=triang.simplices()[:, 1:])
     return fan
-Triangulation.fan = fan

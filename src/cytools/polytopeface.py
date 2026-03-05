@@ -21,14 +21,19 @@
 
 # 'standard' imports
 import copy
+from typing import TYPE_CHECKING
 
 # 3rd party imports
 import numpy as np
-from numpy.typing import ArrayLike
+import numpy.typing as npt
 
 # CYTools imports
 from cytools.triangulation import Triangulation
 from cytools.utils import lll_reduce
+
+if TYPE_CHECKING:
+    from cytools.helpers import matrix
+    from cytools.polytope import Polytope
 
 
 class PolytopeFace:
@@ -75,7 +80,7 @@ class PolytopeFace:
         ambient_poly: "Polytope",
         vert_labels: list,
         saturated_ineqs: frozenset,
-        dim: int = None,
+        dim: int | None = None,
     ) -> None:
         """
         **Description:**
@@ -213,7 +218,8 @@ class PolytopeFace:
         if self._labels is None:
             self._process_points()
 
-        return self._labels
+        assert self._labels is not None
+        return tuple(self._labels)
 
     @property
     def labels_bdry(self) -> tuple:
@@ -230,7 +236,8 @@ class PolytopeFace:
         if self._labels_bdry is None:
             self._process_points()
 
-        return self._labels_bdry
+        assert self._labels_bdry is not None
+        return tuple(self._labels_bdry)
 
     @property
     def labels_int(self) -> tuple:
@@ -247,7 +254,8 @@ class PolytopeFace:
         if self._labels_int is None:
             self._process_points()
 
-        return self._labels_int
+        assert self._labels_int is not None
+        return tuple(self._labels_int)
 
     @property
     def labels_vertices(self) -> tuple:
@@ -261,7 +269,7 @@ class PolytopeFace:
         **Returns:**
         The labels of vertices in the face.
         """
-        return self._labels_vertices
+        return tuple(self._labels_vertices)
 
     def dimension(self) -> int:
         """
@@ -390,7 +398,7 @@ class PolytopeFace:
                 # asking for optimal points, where the optimal value may
                 # differ from the entire polytope
                 pts = self.points(which=which)
-                return lll_reduce(pts - pts[0])[:, dim_diff:]
+                return np.asarray(lll_reduce(pts - pts[0]))[:, dim_diff:]
 
         # normal case
         return self.ambient_poly.points(
@@ -400,7 +408,7 @@ class PolytopeFace:
     # aliases
     pts = points
 
-    def interior_points(self, as_indices: bool = False) -> ArrayLike:
+    def interior_points(self, as_indices: bool = False) -> np.ndarray:
         """
         **Description:**
         Returns the interior lattice points of the face.
@@ -430,7 +438,7 @@ class PolytopeFace:
     # aliases
     interior_pts = interior_points
 
-    def boundary_points(self, as_indices: bool = False) -> ArrayLike:
+    def boundary_points(self, as_indices: bool = False) -> np.ndarray:
         """
         **Description:**
         Returns the boundary lattice points of the face.
@@ -462,7 +470,7 @@ class PolytopeFace:
     # aliases
     boundary_pts = boundary_points
 
-    def vertices(self, as_indices: bool = False) -> ArrayLike:
+    def vertices(self, as_indices: bool = False) -> np.ndarray:
         """
         **Description:**
         Returns the vertices of the face.
@@ -525,6 +533,14 @@ class PolytopeFace:
     # alias
     as_poly = as_polytope
 
+    def _2d_frt_subfan_ineqs(self, ambient_dim: int) -> "matrix.LIL":
+        """
+        Compute the 2D FRT subfan inequalities for this face (NTFE helper).
+        """
+        from cytools.ntfe.ntfe import _2d_frt_subfan_ineqs as _2d_frt_subfan_ineqs_impl
+
+        return _2d_frt_subfan_ineqs_impl(self, ambient_dim=ambient_dim)
+
     # dual
     # ====
     def dual_face(self) -> "PolytopeFace":
@@ -574,9 +590,12 @@ class PolytopeFace:
             [dual_ineqs.index(v) for v in self.vertices().tolist()]
         )
         dual_face_dim = self.ambient_poly._dim - self._dim - 1
+        dual_vert_labels = dual_poly.points_to_labels(dual_vert)
+        if dual_vert_labels is None:
+            raise RuntimeError("Could not map dual face vertices to labels.")
         self._dual_face = PolytopeFace(
             dual_poly,
-            dual_poly.points_to_labels(dual_vert),
+            list(dual_vert_labels),
             dual_saturated_ineqs,
             dim=dual_face_dim,
         )
@@ -590,7 +609,7 @@ class PolytopeFace:
 
     # faces
     # =====
-    def faces(self, d: int = None) -> tuple:
+    def faces(self, d: int | None = None) -> tuple:
         """
         **Description:**
         Computes the faces of the face.
@@ -635,8 +654,8 @@ class PolytopeFace:
     # =============
     def triangulate(
         self,
-        heights: list = None,
-        simplices: ArrayLike = None,
+        heights: list | None = None,
+        simplices: npt.ArrayLike | None = None,
         check_input_simplices: bool = True,
         backend: str = "cgal",
         verbosity=0,

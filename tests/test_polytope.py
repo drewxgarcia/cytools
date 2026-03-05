@@ -2,10 +2,6 @@ import numpy as np
 
 from cytools import Polytope
 
-# To compute nef partitions
-from cytools import config
-
-config._exp_features_enabled = True
 
 
 def test_all_triangulations():
@@ -20,11 +16,13 @@ def test_all_triangulations():
         ]
     )
 
-    triang_list = p.all_triangulations(as_list=True)
+    triang_list = list(p.all_triangulations(as_list=True))
     assert len(triang_list) == 2
 
-    triang_list = p.all_triangulations(
-        only_regular=False, only_star=False, only_fine=False, as_list=True
+    triang_list = list(
+        p.all_triangulations(
+            only_regular=False, only_star=False, only_fine=False, as_list=True
+        )
     )
     assert len(triang_list) == 6
 
@@ -247,6 +245,40 @@ def test_normal_form():
     assert anf == real_anf
 
 
+def test_normal_form_native_agrees_with_palp():
+    """The native backend must produce the same normal form as PALP.
+
+    Several polytopes are tested, including ones with high symmetry (the 4D
+    cross-polytope and the standard simplex) where the PM_max column-sorting
+    step encounters ties in both M_max and S_max simultaneously.  A regression
+    in the tie-breaking logic (e.g. using np.lexsort instead of the
+    selection-sort with in-place list mutation) would cause disagreements on
+    exactly these symmetric cases.
+    """
+    polytopes = [
+        # asymmetric — exercises the basic code path
+        [[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1], [-1, -1, -6, -9]],
+        # standard 4-simplex — all columns identical, maximum tie condition
+        [[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1], [-1, -1, -1, -1]],
+        # 4D cross-polytope — pairs of ±e_i, another highly symmetric case
+        [
+            [1, 0, 0, 0], [-1, 0, 0, 0],
+            [0, 1, 0, 0], [0, -1, 0, 0],
+            [0, 0, 1, 0], [0, 0, -1, 0],
+            [0, 0, 0, 1], [0, 0, 0, -1],
+        ],
+    ]
+    for verts in polytopes:
+        p = Polytope(verts)
+        nf_palp = p.normal_form(backend="palp").tolist()
+        nf_native = p.normal_form(backend="native").tolist()
+        assert nf_palp == nf_native, (
+            f"native and palp normal forms disagree for polytope with vertices {verts}:\n"
+            f"  palp:   {nf_palp}\n"
+            f"  native: {nf_native}"
+        )
+
+
 def test_points():
     p = Polytope(
         [[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1], [-1, -1, -6, -9]]
@@ -280,7 +312,8 @@ def test_points_to_indices():
 
     pts_to_check = [[-1, -1, -6, -9], [0, 0, 0, 0], [0, 0, 1, 0]]
     indices = p.points_to_indices(pts_to_check)
-    pts_from_indices = [pts[i] for i in indices]
+    inds = np.asarray(indices, dtype=int).reshape(-1).tolist()
+    pts_from_indices = [pts[i] for i in inds]
     assert pts_from_indices == pts_to_check
 
 

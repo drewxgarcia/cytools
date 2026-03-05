@@ -1,6 +1,7 @@
 import numpy as np
 
 from cytools import Polytope
+from cytools.triangulation import Triangulation
 
 
 def test_ambient_dimension():
@@ -64,6 +65,20 @@ def test_compute_divisor_volumes():
     assert np.isclose(vols, [2.5, 24, 16, 2.5, 2.5, 0.5]).all()
 
 
+def test_compute_divisor_volumes_in_basis():
+    """The in_basis=True branch of compute_divisor_volumes was not previously
+    tested.  At the tip of the stretched Kähler cone the two basis-divisor
+    volumes must match known values."""
+    p = Polytope(
+        [[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1], [-1, -1, -6, -9]]
+    )
+    t = p.triangulate()
+    cy = t.get_cy()
+    tip = cy.toric_kahler_cone().tip_of_stretched_cone(1)
+    vols_basis = cy.compute_divisor_volumes(tip, in_basis=True)
+    assert np.isclose(vols_basis, [2.5, 0.5]).all()
+
+
 def test_compute_inverse_kahler_metric():
     p = Polytope(
         [[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1], [-1, -1, -6, -9]]
@@ -84,6 +99,23 @@ def test_compute_kappa_matrix():
     tip = cy.toric_kahler_cone().tip_of_stretched_cone(1)
     km = cy.compute_kappa_matrix(tip)
     assert np.isclose(km, [[1, 1], [1, -3]]).all()
+
+
+def test_compute_kappa_matrix_symmetry():
+    """kappa_matrix must always be symmetric: kappa[i,j] == kappa[j,i].
+
+    This is a physical requirement (triple intersection numbers are fully
+    symmetric) and also guards against index-scatter bugs in the vectorized
+    implementation.
+    """
+    p = Polytope(
+        [[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1], [-1, -1, -6, -9]]
+    )
+    t = p.triangulate()
+    cy = t.get_cy()
+    tip = cy.toric_kahler_cone().tip_of_stretched_cone(1)
+    km = cy.compute_kappa_matrix(tip)
+    assert np.allclose(km, km.T)
 
 
 def test_compute_kappa_vector():
@@ -118,6 +150,25 @@ def test_intersection_numbers():
     assert len(intnum_basis) == 3
 
 
+def test_intersection_numbers_values():
+    """Check actual intersection-number values, not just the non-zero count.
+
+    The in-basis dictionary must contain the three known triple intersection
+    numbers for this triangulation of the [-1,-1,-6,-9] polytope.
+    """
+    p = Polytope(
+        [[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1], [-1, -1, -6, -9]]
+    )
+    t = p.triangulate()
+    cy = t.get_cy()
+    intnums = cy.intersection_numbers(in_basis=True)
+    # Flatten to a dict keyed by sorted tuples for stable comparison
+    flat = {tuple(sorted(k)): v for k, v in intnums.items()}
+    assert flat[(0, 0, 1)] == 1
+    assert flat[(0, 1, 1)] == -3
+    assert flat[(1, 1, 1)] == 9
+
+
 def test_is_smooth():
     p = Polytope(
         [[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1], [-1, -1, -6, -9]]
@@ -141,7 +192,9 @@ def test_is_trivially_equivalent():
             [-1, 0, 1, 1],
         ]
     )
-    triangs = p.all_triangulations(as_list=True)
+    triangs = [
+        t for t in p.all_triangulations(as_list=True) if isinstance(t, Triangulation)
+    ]
     cy0 = triangs[0].get_cy()
     cy1 = triangs[1].get_cy()
     assert not cy0.is_trivially_equivalent(cy1)

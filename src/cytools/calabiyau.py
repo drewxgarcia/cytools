@@ -21,6 +21,7 @@
 
 # 'standard' imports
 from collections import Counter, defaultdict
+from collections.abc import Iterable
 import copy
 from itertools import combinations
 from math import factorial
@@ -30,12 +31,13 @@ import warnings
 import cygv
 from flint import fmpz_mat, fmpq_mat, fmpz, fmpq
 import numpy as np
+import numpy.typing as npt
 from scipy.linalg import null_space
 from scipy.sparse import csr_matrix, dok_matrix
 
 # CYTools imports
-from cytools import config
 from cytools.cone import Cone
+from cytools.helpers.misc import cached_result_on
 from cytools.utils import (
     gcd_list,
     array_fmpz_to_int,
@@ -138,10 +140,6 @@ class CalabiYau:
         triang = toric_var.triangulation()
 
         if nef_partition is not None:
-            if not config._exp_features_enabled:
-                raise Exception(
-                    "The experimental features must be enabled to " "construct CICYs."
-                )
             # Verify that the input defines a nef-partition
             from cytools import Polytope
 
@@ -172,15 +170,6 @@ class CalabiYau:
             self._nef_part = None
             if not triang.is_fine():
                 raise ValueError("Triangulation is non-fine.")
-            if (
-                toric_var.dim() != 4 or not triang.polytope().is_favorable(lattice="N")
-            ) and not config._exp_features_enabled:
-                raise Exception(
-                    "The experimental features must be enabled to "
-                    "construct non-favorable CYs or CYs with "
-                    "dimension other than 3."
-                )
-
             # check that we have sensical points
             poly = triang.polytope()
 
@@ -643,17 +632,14 @@ class CalabiYau:
         # 3
         ```
         """
-        if self._dim is not None:
-            return self._dim
+        def _compute():
+            tv = self.ambient_variety()
+            if self._is_hypersurface:
+                return tv.dim() - 1
+            assert self._nef_part is not None
+            return tv.triangulation().dim() - len(self._nef_part)
 
-        tv = self.ambient_variety()
-
-        if self._is_hypersurface:
-            self._dim = tv.dim() - 1
-        else:
-            self._dim = tv.triangulation().dim() - len(self._nef_part)
-
-        return self._dim
+        return cached_result_on(self, "_dim", _compute)
 
     # aliases
     dim = dimension
@@ -700,6 +686,7 @@ class CalabiYau:
         if not self._is_hypersurface:
             if self._hodge_nums is None:
                 self._compute_cicy_hodge_numbers()
+            assert self._hodge_nums is not None
             return self._hodge_nums.get((p, q), 0)
         if self.dim() not in (2, 3, 4) and p != 1 and q != 1:
             raise NotImplementedError(
@@ -885,6 +872,7 @@ class CalabiYau:
         if not self._is_hypersurface:
             if self._hodge_nums is None:
                 self._compute_cicy_hodge_numbers()
+            assert self._hodge_nums is not None
             if "chi" in self._hodge_nums:
                 return self._hodge_nums["chi"]
             chi = 0
@@ -930,11 +918,11 @@ class CalabiYau:
         #        [ -6,   0,   3,   2,   0,   0,   1]])
         ```
         """
-        if self._glsm_charge_matrix is not None:
-            return np.array(self._glsm_charge_matrix)[:, (0 if include_origin else 1) :]
-        pts = [0] + list(self.prime_toric_divisors())
-        self._glsm_charge_matrix = self.polytope().glsm_charge_matrix(
-            include_origin=True, points=pts
+        cached_result_on(
+            self, "_glsm_charge_matrix",
+            lambda: self.polytope().glsm_charge_matrix(
+                include_origin=True, points=[0] + list(self.prime_toric_divisors())
+            ),
         )
         return np.array(self._glsm_charge_matrix)[:, (0 if include_origin else 1) :]
 
@@ -967,17 +955,14 @@ class CalabiYau:
         #        [ 0,  1,  0,  0,  0, -1,  0]])
         ```
         """
-        if self._glsm_linrels is not None:
-            return np.array(self._glsm_linrels)[
-                (0 if include_origin else 1) :, (0 if include_origin else 1) :
-            ]
-        pts = [0] + list(self.prime_toric_divisors())
-        self._glsm_linrels = self.polytope().glsm_linear_relations(
-            include_origin=True, points=pts
+        cached_result_on(
+            self, "_glsm_linrels",
+            lambda: self.polytope().glsm_linear_relations(
+                include_origin=True, points=[0] + list(self.prime_toric_divisors())
+            ),
         )
-        return np.array(self._glsm_linrels)[
-            (0 if include_origin else 1) :, (0 if include_origin else 1) :
-        ]
+        sl = slice(0 if include_origin else 1, None)
+        return np.array(self._glsm_linrels)[sl, sl]
 
     def divisor_basis(self, include_origin=True, as_matrix=False):
         """
@@ -1025,6 +1010,7 @@ class CalabiYau:
                     integral=True, include_origin=True, points=pts
                 )
             )
+        assert self._divisor_basis is not None
         if len(self._divisor_basis.shape) == 1:
             if 0 in self._divisor_basis and not include_origin:
                 raise ValueError(
@@ -1032,6 +1018,7 @@ class CalabiYau:
                     "origin, but it is included in the current basis."
                 )
             if as_matrix:
+                assert self._divisor_basis_mat is not None
                 return np.array(
                     self._divisor_basis_mat[:, (0 if include_origin else 1) :]
                 )
@@ -1135,6 +1122,7 @@ class CalabiYau:
                     ),
                 )
             )
+        assert self._curve_basis is not None
         if len(self._curve_basis.shape) == 1:
             if 0 in self._curve_basis and not include_origin:
                 raise ValueError(
@@ -1142,6 +1130,7 @@ class CalabiYau:
                     "origin, but it is included in the current basis."
                 )
             if as_matrix:
+                assert self._curve_basis_mat is not None
                 return np.array(
                     self._curve_basis_mat[:, (0 if include_origin else 1) :]
                 )
@@ -1361,6 +1350,7 @@ class CalabiYau:
                     tuple(pt) for pt in self.ambient_variety().triangulation().points()
                 ]
                 parts = self._nef_part
+                assert parts is not None
                 ambient_dim = self.ambient_dim()
                 intnums_dict = ambient_intnums
                 for dd in range(len(parts)):
@@ -1654,11 +1644,13 @@ class CalabiYau:
                 self._optimal_ambient_var is None
             ):  # Make sure self._optimal_ambient_var is set
                 self.prime_toric_divisors()
+            assert self._optimal_ambient_var is not None
             self._mori_cone[0] = self._optimal_ambient_var.mori_cone()
         # 0: All divs, 1: No origin, 2: In basis
         args_id = ((not include_origin) * 1 if not in_basis else 0) + in_basis * 2
         if self._mori_cone[args_id] is not None:
             return self._mori_cone[args_id]
+        assert self._mori_cone[0] is not None
         rays = self._mori_cone[0].rays()
         basis = self.divisor_basis()
         if include_origin and not in_basis:
@@ -1721,10 +1713,10 @@ class CalabiYau:
         # A 2-dimensional rational polyhedral cone in RR^2 generated by 6 rays
         ```
         """
-        if self._eff_cone is not None:
-            return self._eff_cone
-        self._eff_cone = Cone(self.curve_basis(include_origin=False, as_matrix=True).T)
-        return self._eff_cone
+        return cached_result_on(
+            self, "_eff_cone",
+            lambda: Cone(self.curve_basis(include_origin=False, as_matrix=True).T),
+        )
 
     def compute_cy_volume(self, tloc):
         """
@@ -1752,16 +1744,22 @@ class CalabiYau:
         """
         intnums = self.intersection_numbers(in_basis=True, exact_arithmetic=False)
         xvol = 0
+        tloc_arr = np.asarray(tloc, dtype=float)
         basis = self.divisor_basis()
         if len(basis.shape) == 2:  # If basis is matrix
-            tmp = np.array(intnums)
+            tmp = np.asarray(intnums, dtype=float)
             for i in range(self.dim()):
-                tmp = np.tensordot(tmp, tloc, axes=[[self.dim() - 1 - i], [0]])
+                tmp = np.tensordot(tmp, tloc_arr, axes=(self.dim() - 1 - i, 0))
             xvol = tmp / factorial(self.dim())
         else:
-            for ii in intnums:
-                mult = np.prod([factorial(c) for c in Counter(ii).values()])
-                xvol += intnums[ii] * np.prod([tloc[int(j)] for j in ii]) / mult
+            ii_arr = np.array(list(intnums.keys()), dtype=int)   # (N_nz, dim)
+            vals   = np.array(list(intnums.values()), dtype=float)
+            mults  = np.array([
+                np.prod([factorial(c) for c in Counter(tuple(row)).values()])
+                for row in ii_arr
+            ], dtype=float)
+            tloc_prods = np.prod(tloc_arr[ii_arr], axis=1)       # (N_nz,)
+            xvol = float(np.dot(vals / mults, tloc_prods))
         return xvol
 
     def compute_divisor_volumes(self, tloc, in_basis=False):
@@ -1802,37 +1800,51 @@ class CalabiYau:
             )
             intnums = self.intersection_numbers(in_basis=False, exact_arithmetic=False)
             tau = np.zeros(len(self.prime_toric_divisors()), dtype=float)
-            for ii in intnums:
+            t_arr = np.asarray(tloc_new, dtype=float)
+            # Expand dict into flat (j_idx, contribution) pairs — one per (key, unique j).
+            # Eliminates the outer Python loop over intnums; the inner loop over Counter
+            # (at most dim entries) stays and is negligible.
+            j_list = []
+            contrib_list = []
+            for ii, kappa in intnums.items():
                 if 0 in ii:
                     continue
                 c = Counter(ii)
-                for j in c.keys():
-                    tau[j - 1] += intnums[ii] * np.prod(
-                        [
-                            tloc_new[k - 1] ** (c[k] - (j == k))
-                            / factorial(c[k] - (j == k))
-                            for k in c.keys()
-                        ]
-                    )
+                for j, cj in c.items():
+                    prod = np.prod([
+                        t_arr[k - 1] ** (c[k] - (j == k)) / factorial(c[k] - (j == k))
+                        for k in c
+                    ])
+                    j_list.append(j - 1)
+                    contrib_list.append(kappa * prod)
+            if j_list:
+                np.add.at(tau, np.array(j_list, dtype=int),
+                          np.array(contrib_list, dtype=float))
             return np.array(tau)
         intnums = self.intersection_numbers(in_basis=True, exact_arithmetic=False)
         basis = self.divisor_basis()
+        tloc_arr = np.asarray(tloc, dtype=float)
         if len(basis.shape) == 2:  # If basis is matrix
-            tmp = np.array(intnums)
+            tmp = np.asarray(intnums, dtype=float)
             for i in range(1, self.dim()):
-                tmp = np.tensordot(tmp, tloc, axes=[[self.dim() - 1 - i], [0]])
+                tmp = np.tensordot(tmp, tloc_arr, axes=(self.dim() - 1 - i, 0))
             tau = tmp / factorial(self.dim() - 1)
         else:
             tau = np.zeros(len(basis), dtype=float)
-            for ii in intnums:
+            j_list = []
+            contrib_list = []
+            for ii, kappa in intnums.items():
                 c = Counter(ii)
-                for j in c.keys():
-                    tau[j] += intnums[ii] * np.prod(
-                        [
-                            tloc[k] ** (c[k] - (j == k)) / factorial(c[k] - (j == k))
-                            for k in c.keys()
-                        ]
-                    )
+                for j, cj in c.items():
+                    prod = np.prod([
+                        tloc_arr[k] ** (c[k] - (j == k)) / factorial(c[k] - (j == k))
+                        for k in c
+                    ])
+                    j_list.append(j)
+                    contrib_list.append(kappa * prod)
+            if j_list:
+                np.add.at(tau, np.array(j_list, dtype=int),
+                          np.array(contrib_list, dtype=float))
         return np.array(tau)
 
     def compute_curve_volumes(self, tloc, only_extremal=False):
@@ -1909,27 +1921,33 @@ class CalabiYau:
             raise NotImplementedError("This function only supports Calabi-Yau 3-folds.")
         intnums = self.intersection_numbers(in_basis=True, exact_arithmetic=False)
         basis = self.divisor_basis()
+        tloc_arr = np.asarray(tloc, dtype=float)
         if len(basis.shape) == 2:  # If basis is matrix
-            AA = np.tensordot(intnums, tloc, axes=[[2], [0]])
+            AA = np.tensordot(np.asarray(intnums, dtype=float), tloc_arr, axes=(2, 0))
             return AA
-        AA = np.zeros((len(basis),) * 2, dtype=float)
-        for ii in intnums:
-            ii_list = Counter(ii).most_common(3)
-            if len(ii_list) == 1:
-                AA[ii_list[0][0], ii_list[0][0]] += intnums[ii] * tloc[ii_list[0][0]]
-            elif len(ii_list) == 2:
-                AA[ii_list[0][0], ii_list[0][0]] += intnums[ii] * tloc[ii_list[1][0]]
-                AA[ii_list[0][0], ii_list[1][0]] += intnums[ii] * tloc[ii_list[0][0]]
-                AA[ii_list[1][0], ii_list[0][0]] += intnums[ii] * tloc[ii_list[0][0]]
-            elif len(ii_list) == 3:
-                AA[ii_list[0][0], ii_list[1][0]] += intnums[ii] * tloc[ii_list[2][0]]
-                AA[ii_list[1][0], ii_list[0][0]] += intnums[ii] * tloc[ii_list[2][0]]
-                AA[ii_list[0][0], ii_list[2][0]] += intnums[ii] * tloc[ii_list[1][0]]
-                AA[ii_list[2][0], ii_list[0][0]] += intnums[ii] * tloc[ii_list[1][0]]
-                AA[ii_list[1][0], ii_list[2][0]] += intnums[ii] * tloc[ii_list[0][0]]
-                AA[ii_list[2][0], ii_list[1][0]] += intnums[ii] * tloc[ii_list[0][0]]
-            else:
-                raise Exception("Error: Inconsistent intersection numbers.")
+        keys   = list(intnums.keys())
+        vals   = np.array([intnums[k] for k in keys], dtype=float)
+        ii_arr = np.array(keys, dtype=int)           # (N, 3), 0-based sorted
+        AA     = np.zeros((len(basis),) * 2, dtype=float)
+        # AA[i,j] = sum_{k} kappa[i,j,k] * tloc[k].
+        # For each position p in {0,1,2} as the "contracted" index k:
+        #   only process rows where p is the first occurrence of ii_arr[:,p] in the row
+        #   (avoids double-counting repeated indices).
+        #   For the remaining two positions (q,r), scatter kappa*tloc[k] into AA[i,j] and AA[j,i];
+        #   when i==j (both remaining positions equal), scatter only once.
+        for p in range(3):
+            qs = [q for q in range(3) if q != p]
+            q0, q1 = qs[0], qs[1]
+            is_first_k = (
+                np.ones(len(keys), dtype=bool) if p == 0
+                else ~np.any(ii_arr[:, :p] == ii_arr[:, p:p+1], axis=1)
+            )
+            contrib = vals[is_first_k] * tloc_arr[ii_arr[is_first_k, p]]
+            i_idx   = ii_arr[is_first_k, q0]
+            j_idx   = ii_arr[is_first_k, q1]
+            np.add.at(AA, (i_idx, j_idx), contrib)
+            off_diag = i_idx != j_idx
+            np.add.at(AA, (j_idx[off_diag], i_idx[off_diag]), contrib[off_diag])
         return AA
 
     # aliases
@@ -2081,6 +2099,7 @@ class CalabiYau:
         codim = self.ambient_variety().dim() - self.dim()
         poly = self.ambient_variety().polytope()
         vert_ind = poly.points_to_indices(poly.vertices())
+        assert self._nef_part is not None
         nef_part_fs = frozenset(
             frozenset(i for i in part if i in vert_ind) for part in self._nef_part
         )
@@ -2130,12 +2149,12 @@ class CalabiYau:
     def _compute_gvs_gws(
         self,
         gv_or_gw: str,
-        mcap_generators: "ArrayLike" = None,
-        grading_vec: "ArrayLike" = None,
-        max_deg: bool = None,
-        min_points: bool = None,
-        basis: "ArrayLike" = None,
-        format: str = None,
+        mcap_generators: npt.ArrayLike | None = None,
+        grading_vec: npt.ArrayLike | None = None,
+        max_deg: int | None = None,
+        min_points: int | None = None,
+        basis: npt.ArrayLike | None = None,
+        format: str | None = None,
     ):
         """
         **Description:**
@@ -2205,22 +2224,22 @@ class CalabiYau:
         invariants = Invariants(
             gv_or_gw,
             invariants,
-            grading_vec,
+            np.asarray(grading_vec) if grading_vec is not None else None,
             max_deg,
             calabiyau=self,
-            basis=basis,
+            basis=np.asarray(basis) if basis is not None else None,
         )
 
         return invariants
 
     def compute_gvs(
         self,
-        mcap_generators: "ArrayLike" = None,
-        grading_vec: "ArrayLike" = None,
-        max_deg: bool = None,
-        min_points: bool = None,
-        basis: "ArrayLike" = None,
-        format: str = None,
+        mcap_generators: npt.ArrayLike | None = None,
+        grading_vec: npt.ArrayLike | None = None,
+        max_deg: int | None = None,
+        min_points: int | None = None,
+        basis: npt.ArrayLike | None = None,
+        format: str | None = None,
     ):
         """
         **Description:**
@@ -2253,12 +2272,12 @@ class CalabiYau:
 
     def compute_gws(
         self,
-        mcap_generators: "ArrayLike" = None,
-        grading_vec: "ArrayLike" = None,
-        max_deg: bool = None,
-        min_points: bool = None,
-        basis: "ArrayLike" = None,
-        format: str = None,
+        mcap_generators: npt.ArrayLike | None = None,
+        grading_vec: npt.ArrayLike | None = None,
+        max_deg: int | None = None,
+        min_points: int | None = None,
+        basis: npt.ArrayLike | None = None,
+        format: str | None = None,
     ):
         """
         **Description:**
@@ -2352,6 +2371,8 @@ class CalabiYau:
                     else:
                         f2 = ff
                         break
+            if f1 is None or f2 is None:
+                continue
             pts_f1 = f1.difference(f2)
             pts_f2 = f2.difference(f1)
             for p1 in pts_f1:
@@ -2405,10 +2426,10 @@ class Invariants:
         self,
         invariant_type: str,
         charge2invariant,
-        grading_vec: "ArrayLike" = None,
-        cutoff: int = None,
-        calabiyau: "CalabiYau" = None,
-        basis: "ArrayLike" = None,
+        grading_vec: np.ndarray | None = None,
+        cutoff: int | None = None,
+        calabiyau: "CalabiYau | None" = None,
+        basis: np.ndarray | None = None,
     ):
         """
         **Description:**
@@ -2558,7 +2579,7 @@ class Invariants:
         return Cone(self.charges(as_np_arr=True))
 
     @property
-    def gvs(self) -> set:
+    def gvs(self) -> list | None:
         """
         **Description:**
         Get the GVs.
@@ -2575,7 +2596,7 @@ class Invariants:
             return None
 
     @property
-    def gws(self) -> set:
+    def gws(self) -> set | None:
         """
         **Description:**
         Get the GWs.
@@ -2608,8 +2629,9 @@ class Invariants:
         out = self._charge2invariant.get(tuple(charge), None)
 
         if check_deg and (out is None):
-            if np.dot(charge, self._grading_vec) <= self._cutoff:
-                out = 0  # deg<=cutoff but not in dict -> 0 GV
+            if (self._grading_vec is not None) and (self._cutoff is not None):
+                if np.dot(np.asarray(charge), np.asarray(self._grading_vec)) <= self._cutoff:
+                    out = 0  # deg<=cutoff but not in dict -> 0 GV
 
         return out
 
@@ -2653,7 +2675,7 @@ class Invariants:
 
 
 def _group_by_deg(
-    charges: "Iterable", grading_vec: "ArrayLike", as_np_arr: bool = False
+    charges: Iterable, grading_vec: npt.ArrayLike, as_np_arr: bool = False
 ):
     """
     **Description:**

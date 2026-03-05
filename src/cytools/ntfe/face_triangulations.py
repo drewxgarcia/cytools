@@ -36,12 +36,12 @@ from typing import Iterable
 def face_triangs(
     self,
     dim: int = 2,
-    which: list = None,
+    which: list[int] | None = None,
     only_regular: bool = True,
-    max_npts: int = None,
+    max_npts: int | None = None,
     N_face_triangs: int = 1000,
     triang_method: str = "grow2d",
-    seed: int = None,
+    seed: int | None = None,
     verbosity: int = 0,
 ):
     """
@@ -151,10 +151,6 @@ def face_triangs(
 
     return triangs
 
-
-Polytope.face_triangs = face_triangs
-
-
 def n_2face_triangs(self, only_regular: bool = True) -> int:
     """
     **Description:**
@@ -169,15 +165,10 @@ def n_2face_triangs(self, only_regular: bool = True) -> int:
     triangs = self.face_triangs(dim=2, only_regular=only_regular)
     return math.prod([len(f) for f in triangs])
 
-
-Polytope.n_2face_triangs = n_2face_triangs
-Polytope.num_2face_triangs = n_2face_triangs
-
-
 def grow_ft(
     self,
-    bdry: Iterable[Iterable[int]] = None,
-    seed: int = None,
+    bdry: Iterable[Iterable[int]] | None = None,
+    seed: int | None = None,
     verbosity: int = 0,
 ) -> "Triangulation":
     """
@@ -243,9 +234,11 @@ def grow_ft(
     if bdry is None:
         if verbosity >= 1:
             print(time.perf_counter() - t0, ": Calculating boundary points...")
-        bdry = basic_geometry.get_bdry(poly)
+        bdry_edges = basic_geometry.get_bdry(poly)
+    else:
+        bdry_edges = {frozenset(edge) for edge in bdry}
 
-    choosable = edges - bdry
+    choosable = edges - bdry_edges
 
     # get the bounding box of known edges. Used for intersection checking
     edges_bounds = dict()
@@ -267,7 +260,8 @@ def grow_ft(
         print(time.perf_counter() - t0, ": Growing new simplices...")
     while len(choosable):
         # randomly choose an edge
-        edge = rand_gen.choice(list(choosable))
+        choosable_list = list(choosable)
+        edge = choosable_list[int(rand_gen.integers(len(choosable_list)))]
         edge_lis = list(edge)
         to_try = [i for i in pts_i if i not in edge]
         rand_gen.shuffle(to_try)
@@ -284,8 +278,9 @@ def grow_ft(
             if len(to_try):
                 i = to_try.pop()
             else:
-                print("Failed! Returning known simplices...")
-                return simps
+                raise RuntimeError(
+                    f"Failed to build a fine triangulation from seed={seed}."
+                )
 
             if verbosity >= 3:
                 print(
@@ -324,6 +319,8 @@ def grow_ft(
 
                     edges_new_bounds[j] = edges_bounds[edges_new[j]]
 
+            assert edges_new_bounds[0] is not None
+            assert edges_new_bounds[1] is not None
             p0i_min, p0i_max = edges_new_bounds[0]
             p1i_min, p1i_max = edges_new_bounds[1]
 
@@ -342,10 +339,10 @@ def grow_ft(
                 ):
                     pass
                 elif basic_geometry.intersect(
-                    pts[edge_lis[0]],
-                    pts[i],
-                    pts[other_lis[0]],
-                    pts[other_lis[1]],
+                    pts[edge_lis[0]].tolist(),
+                    pts[i].tolist(),
+                    pts[other_lis[0]].tolist(),
+                    pts[other_lis[1]].tolist(),
                 ):
                     if verbosity >= 3:
                         print(
@@ -364,10 +361,10 @@ def grow_ft(
                 ):
                     pass
                 elif basic_geometry.intersect(
-                    pts[edge_lis[1]],
-                    pts[i],
-                    pts[other_lis[0]],
-                    pts[other_lis[1]],
+                    pts[edge_lis[1]].tolist(),
+                    pts[i].tolist(),
+                    pts[other_lis[0]].tolist(),
+                    pts[other_lis[1]].tolist(),
                 ):
                     if verbosity >= 3:
                         print(
@@ -385,7 +382,7 @@ def grow_ft(
                 simps.add(tuple(sorted([*edge, i])))
                 choosable.remove(edge)
                 edges = edges.union(edges_new)
-                choosable ^= set(edges_new) - bdry
+                choosable ^= set(edges_new) - bdry_edges
                 break
 
     # return triangulation
@@ -396,19 +393,15 @@ def grow_ft(
         simplices=np.asarray(sorted(simps)), check_input_simplices=False
     )
 
-
-Polytope.grow_ft = grow_ft
-
-
 def grow_frt(
     self,
     N: int = 1,
-    max_N_tries: int = None,
-    bdry: Iterable[Iterable[int]] = None,
-    seed: int = None,
-    backend: str = None,
+    max_N_tries: int | None = None,
+    bdry: Iterable[Iterable[int]] | None = None,
+    seed: int | None = None,
+    backend: str | None = None,
     verbosity: int = 0,
-) -> "Triangulation":
+) -> "Triangulation | set[Triangulation]":
     """
     **Description:**
     Grow a fine, regular triangulation of a polygon
@@ -446,7 +439,11 @@ def grow_frt(
         if verbosity >= 1:
             print(f"Attempt #{N_attempt}. Have #{len(frts)} FRTs")
         while True:
-            t = poly.grow_ft(bdry=bdry, seed=seed, verbosity=verbosity)
+            try:
+                t = grow_ft(poly, bdry=bdry, seed=seed, verbosity=verbosity)
+            except RuntimeError:
+                seed += 1
+                continue
             seed += 1  # update the seed for next time
 
             if t.is_regular(backend=backend):
@@ -465,6 +462,3 @@ def grow_frt(
         return next(iter(frts))
     else:
         return frts
-
-
-Polytope.grow_frt = grow_frt

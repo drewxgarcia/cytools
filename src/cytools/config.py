@@ -20,8 +20,10 @@
 # -----------------------------------------------------------------------------
 
 # 'standard' imports
-import warnings
+import importlib
+import logging
 import os
+logger = logging.getLogger(__name__)
 
 # The number of CPU threads to use in some computations, such as finding the
 # extremal rays of a cone. When set to None, then it uses all available threads.
@@ -33,6 +35,7 @@ _mosek_license = (
 )
 _mosek_is_activated = None
 _mosek_error = ""
+_printed_mosek_error = False
 
 
 def check_mosek_license(silent=False):
@@ -61,38 +64,39 @@ def check_mosek_license(silent=False):
     global _mosek_error
     global _mosek_is_activated
     try:
-        import mosek
-
-        mosek.Env().Task(0, 0).optimize()
-        _mosek_is_activated = True
-        if not silent:
-            print("Mosek was successfully activated.")
+        mosek = importlib.import_module("mosek")
     except ImportError:
         _mosek_error = (
             "Info: Mosek is not installed."
         )
         _mosek_is_activated = False
-    except mosek.Error as e:
-        _mosek_error = (
-            "Info: Mosek is not activated. "
-            "An alternative optimizer will be used.\n"
-            f"Error encountered: {e}"
-        )
-        _mosek_is_activated = False
-    except:
-        _mosek_error = (
-            "Info: There was a problem with Mosek. "
-            "An alternative optimizer will be used."
-        )
-        _mosek_is_activated = False
-    if not silent:
-        print(_mosek_error)
+    else:
+        try:
+            mosek.Env().Task(0, 0).optimize()
+            _mosek_error = ""
+            _mosek_is_activated = True
+            if not silent:
+                logger.info("Mosek was successfully activated.")
+        except Exception as e:
+            if isinstance(e, mosek.Error):
+                _mosek_error = (
+                    "Info: Mosek is not activated. "
+                    "An alternative optimizer will be used.\n"
+                    f"Error encountered: {e}"
+                )
+            else:
+                _mosek_error = (
+                    "Info: There was a problem with Mosek. "
+                    "An alternative optimizer will be used."
+                )
+            _mosek_is_activated = False
+    if not silent and _mosek_error:
+        logger.info(_mosek_error)
 
 
 def mosek_is_activated():
     global _mosek_error
     global _mosek_is_activated
-    global _printed_mosek_error
     if _mosek_is_activated is None:
         check_mosek_license(silent=True)
     return _mosek_is_activated
@@ -126,35 +130,3 @@ def set_mosek_path(path):
     check_mosek_license()
 
 
-# Lock experimental features by default.
-_exp_features_enabled = False
-
-
-def enable_experimental_features():
-    """
-    **Description:**
-    Enables the experimental features of CYTools. For more information read the
-    [experimental features page](./experimental).
-
-    **Arguments:**
-    None.
-
-    **Returns:**
-    Nothing.
-
-    **Example:**
-    We enable the experimental features.
-    ```python {2}
-    import cytools
-    cytools.config.enable_experimental_features()
-    ```
-    """
-    global _exp_features_enabled
-    _exp_features_enabled = True
-    warnings.warn(
-        "\n**************************************************************\n"
-        "Warning: You have enabled experimental features of CYTools.\n"
-        "Some of these features may be broken or not fully tested,\n"
-        "and they may undergo significant changes in future versions.\n"
-        "**************************************************************\n"
-    )

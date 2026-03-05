@@ -18,16 +18,15 @@
 # Description:  This module contains various basic geometry helpers
 # -----------------------------------------------------------------------------
 
+# stdlib
+import math
+from collections import Counter
+
 # 3rd party imports
 import numpy as np
 
 # CYTools imports
-from cytools import Polytope
 from cytools.helpers import matrix
-
-# typing
-import math
-from numpy.typing import ArrayLike
 
 
 def get_bdry(self) -> set:
@@ -58,24 +57,18 @@ def get_bdry(self) -> set:
     ```
     """
     simps = self.triangulate().simplices()
-    edges = matrix.flatten_top(
+    edges = list(
+        matrix.flatten_top(
         [[(s[0], s[1]), (s[0], s[2]), (s[1], s[2])] for s in simps]
+        )
     )
 
-    # organize the edges
-    bdry = set()
-    while len(edges):
-        e = edges.pop()
-        try:
-            edges.pop(edges.index(e))
-        except:
-            bdry.add(frozenset(e))
+    # Boundary edges appear exactly once; interior edges appear twice.
+    # Counter replaces the O(n²) index+pop loop with a single O(n) pass.
+    counts = Counter(edges)
+    bdry = {frozenset(e) for e, c in counts.items() if c == 1}
 
     return bdry
-
-
-Polytope.get_bdry = get_bdry
-
 
 def ccw(A: list, B: list, C: list) -> bool:
     """
@@ -169,7 +162,7 @@ def is_primitive(pt: list) -> bool:
     return math.gcd(*pt) == 1
 
 
-def triangle_area_2x(pts: "ArrayLike") -> float:
+def triangle_area_2x(pts: np.ndarray) -> float:
     """
     **Description:**
     Calculate **twice** the area of the triangle defined by the convex hull of
@@ -200,7 +193,7 @@ def triangle_area_2x(pts: "ArrayLike") -> float:
     return abs(x0 * (y1 - y2) + x1 * (y2 - y0) + x2 * (y0 - y1))
 
 
-def check_3consecutive_sites(pts: "ArrayLike") -> "list | None":
+def check_3consecutive_sites(pts: np.ndarray) -> "list | None":
     """
     **Description:**
     Check if a 3xdim integral array, pts, consists of '3 consecutive sites'.

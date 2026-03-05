@@ -21,9 +21,9 @@
 
 # 'standard' imports
 import itertools
-
 # 3rd party imports
 import numpy as np
+import numpy.typing as npt
 import ppl
 
 # CYTools imports
@@ -66,9 +66,9 @@ class HPolytope(polytope.Polytope):
 
     def __init__(
         self,
-        ineqs: "ArrayLike" = None,
+        ineqs: npt.ArrayLike | None = None,
         dilate: bool = False,
-        backend: str = None,
+        backend: str | None = None,
         verbosity: int = 0,
     ) -> None:
         """
@@ -89,6 +89,9 @@ class HPolytope(polytope.Polytope):
         **Returns:**
         Nothing.
         """
+        if ineqs is None:
+            raise ValueError("Inequalities must be specified.")
+
         # save inputs
         ineqs = np.array(ineqs)
         self._ineqs = ineqs.copy()
@@ -149,7 +152,7 @@ class HPolytope(polytope.Polytope):
 
 # utils
 # -----
-def poly_h_to_v(hypers: "ArrayLike", verbosity: int = 0) -> ("ArrayLike", None):
+def poly_h_to_v(hypers: npt.ArrayLike, verbosity: int = 0) -> tuple[np.ndarray, ppl.C_Polyhedron]:
     """
     **Description:**
     Generate the V-representation of a polytope, given the H-representation.
@@ -215,7 +218,7 @@ def poly_h_to_v(hypers: "ArrayLike", verbosity: int = 0) -> ("ArrayLike", None):
     return pts, poly
 
 
-def lattice_points(verts: "ArrayLike", ineqs: "ArrayLike") -> "ArrayLike":
+def lattice_points(verts: npt.ArrayLike, ineqs: npt.ArrayLike) -> list[list[int]]:
     """
     **Description:**
     Enumerate all lattice points in a polytope with given vertices and
@@ -235,6 +238,9 @@ def lattice_points(verts: "ArrayLike", ineqs: "ArrayLike") -> "ArrayLike":
     **Returns:**
     The lattice points in the polytope.
     """
+    verts = np.asarray(verts)
+    ineqs = np.asarray(ineqs)
+
     # output variable
     _lattice_pts = []
 

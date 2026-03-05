@@ -11,23 +11,27 @@ license = {file = "LICENSE"}
 authors = [
   {name = "Liam McAllister Group", email = ""}
 ]
-requires-python = ">=3.9"
+requires-python = ">=3.14"
 dependencies = [
     "numpy",
+    "numba",
     "scipy",
     "joblib",
     "cvxopt",
     "python-flint",
+    "platformdirs",
     "pplpy",
     "ortools",
     "triangulumancer",
     "pypalp",
     "cygv",
+    "PyNormaliz",
     "regfans",
     "tqdm",
     "qpsolvers",
-    "requests",
-    "osqp"
+    "osqp",
+    "pyarrow>=23.0.1",
+    "huggingface-hub>=1.5.0",
 ]
 classifiers = [
   "Development Status :: 5 - Production/Stable",
@@ -39,22 +43,15 @@ classifiers = [
   "Programming Language :: Python",
   "Programming Language :: Python :: 3",
   "Programming Language :: Python :: 3 :: Only",
-  "Programming Language :: Python :: 3.9",
-  "Programming Language :: Python :: 3.10",
-  "Programming Language :: Python :: 3.11",
-  "Programming Language :: Python :: 3.12",
-  "Programming Language :: Python :: 3.13",
+  "Programming Language :: Python :: 3.14",
   "Topic :: Scientific/Engineering",
   "Topic :: Scientific/Engineering :: Mathematics",
   "Topic :: Scientific/Engineering :: Physics"
 ]
 
 [project.optional-dependencies]
-test = [
-  "pytest"
-]
 mosek = [
-  "Mosek"
+  "mosek"
 ]
 
 [project.urls]
@@ -62,8 +59,19 @@ Homepage = "https://cy.tools"
 Documentation = "https://cy.tools/docs/documentation/"
 Repository = "https://github.com/LiamMcAllisterGroup/cytools"
 
+[tool.pytest.ini_options]
+testpaths = ["tests", "benchmarks"]
+pythonpath = ["benchmarks"]
+python_files = ["test_*.py", "bench_*.py"]
+
 [tool.hatch.build.targets.wheel]
 packages = ["src/cytools"]
 
 [tool.hatch.build.targets.sdist]
 packages = ["src/cytools"]
+
+[dependency-groups]
+dev = [
+    "pytest>=8",
+    "pytest-benchmark>=5.2.3",
+]

@@ -41,10 +41,8 @@ from cytools.polytope import Polytope
 from cytools.polytopeface import PolytopeFace
 from cytools.triangulation import Triangulation
 from cytools.helpers import basic_geometry, matrix, misc
-from . import face_triangulations
 
 # typing
-from numpy.typing import ArrayLike
 from typing import Generator, Union
 
 
@@ -101,7 +99,7 @@ def _2d_frt_cone_ineqs(self, ambient_dim: int, verbosity: int=0) -> matrix.LIL:
     Each row is an inwards-facing hyperplane normal. I.e., a CPL inequality
     """
     # the output variable (doesn't need to be LIL object, but that is nice...)
-    ineqs = matrix.LIL(dtype=np.int16, width=ambient_dim)
+    ineqs = matrix.LIL(dtype=np.dtype(np.int16), width=ambient_dim)
 
     # relevant inputs
     simps = self.simplices()
@@ -172,9 +170,6 @@ def _2d_frt_cone_ineqs(self, ambient_dim: int, verbosity: int=0) -> matrix.LIL:
     return ineqs
 
 
-Triangulation._2d_frt_cone_ineqs = _2d_frt_cone_ineqs
-
-
 def _2d_s_cone_ineqs(self,
     poly,
     ambient_dim: int,
@@ -230,7 +225,7 @@ def _2d_s_cone_ineqs(self,
     Each row is an inwards-facing hyperplane normal enforcing starness.
     """
     # the output variable (doesn't need to be LIL object, but that is nice...)
-    ineqs = matrix.LIL(dtype=np.int16, width=ambient_dim)
+    ineqs = matrix.LIL(dtype=np.dtype(np.int16), width=ambient_dim)
 
     # get the homogenized points (for later use)
     npts = len(poly.points())
@@ -310,9 +305,6 @@ def _2d_s_cone_ineqs(self,
     return ineqs
 
 
-Triangulation._2d_s_cone_ineqs = _2d_s_cone_ineqs
-
-
 def _2d_frt_subfan_ineqs(self, ambient_dim: int) -> matrix.LIL:
     """
     **Description:**
@@ -358,7 +350,7 @@ def _2d_frt_subfan_ineqs(self, ambient_dim: int) -> matrix.LIL:
     inequality.
     """
     # the output variable (doesn't need to be LIL object, but that is nice...)
-    ineqs = matrix.LIL(dtype=np.int16, width=ambient_dim)
+    ineqs = matrix.LIL(dtype=np.dtype(np.int16), width=ambient_dim)
 
     # iterate over triples
     # This could be done more intelligently... some pairs of points will be
@@ -416,21 +408,18 @@ def _2d_frt_subfan_ineqs(self, ambient_dim: int) -> matrix.LIL:
     return ineqs
 
 
-PolytopeFace._2d_frt_subfan_ineqs = _2d_frt_subfan_ineqs
-
-
 # generate secondary cone/fan
 # ---------------------------
 def cone_of_permissible_heights(
-    triangs: [Triangulation],
+    triangs: list[Triangulation],
     npts: int,
-    poly: "Polytope" = None,
+    poly: "Polytope | None" = None,
     require_star: bool = False,
     dense: bool = False,
     big_ints: bool = False,
     as_cone: bool = True,
     verbosity: int = 0,
-) -> "matrix.LIL | Cone":
+) -> "matrix.LIL | Cone | np.ndarray":
     """
     **Description:**
     For an input set of 2-face triangulations, generate the cone whose strict
@@ -464,7 +453,7 @@ def cone_of_permissible_heights(
         raise ValueError("If `require_star=True`, then `poly` must be specified")
 
     # the output variable (doesn't need to be LIL object, but that is nice...)
-    ineqs = matrix.LIL(dtype=np.int16, width=npts)
+    ineqs = matrix.LIL(dtype=np.dtype(np.int16), width=npts)
 
     # iterate over face triangulations
     for i,face_triang in enumerate(triangs):
@@ -479,11 +468,18 @@ def cone_of_permissible_heights(
         # need to be... you can decide to pass a subset of faces)
         if (verbosity >= 2) and require_star:
             print("The 2-face inequalities...")
-        face_ineqs = _2d_frt_cone_ineqs(face_triang, npts, verbosity=verbosity-1)
+        face_ineqs = face_triang._2d_frt_cone_ineqs(
+            ambient_dim=npts, verbosity=verbosity - 1
+        )
         if require_star:
             if (verbosity >= 2):
                 print("The star inequalities...")
-            face_ineqs.append(_2d_s_cone_ineqs(face_triang, poly, npts, verbosity=verbosity-1))
+            assert poly is not None
+            face_ineqs.append(
+                face_triang._2d_s_cone_ineqs(
+                    poly=poly, ambient_dim=npts, verbosity=verbosity - 1
+                )
+            )
 
         ineqs.append(face_ineqs, tocopy=False)
 
@@ -498,14 +494,19 @@ def cone_of_permissible_heights(
 
     # return
     if as_cone:
-        return Cone(hyperplanes=ineqs, ambient_dim=npts, parse_inputs=(len(ineqs)==0))
+        cone_hyperplanes = np.asarray(ineqs.dense() if isinstance(ineqs, matrix.LIL) else ineqs)
+        return Cone(
+            hyperplanes=cone_hyperplanes,
+            ambient_dim=npts,
+            parse_inputs=(len(cone_hyperplanes) == 0),
+        )
     else:
         return ineqs
 
 
 def expanded_secondary_fan(
     self, dense: bool = False, big_ints: bool = False, as_cone: bool = True
-) -> "matrix.LIL | Cone":
+) -> "matrix.LIL | Cone | np.ndarray":
     """
     **Description:**
     See https://arxiv.org/abs/2309.10855
@@ -532,7 +533,7 @@ def expanded_secondary_fan(
     ambient_dim = len(self.labels)
 
     # the output variable (doesn't need to be LIL object, but that is nice...)
-    ineqs = matrix.LIL(dtype=np.int16, width=ambient_dim)
+    ineqs = matrix.LIL(dtype=np.dtype(np.int16), width=ambient_dim)
 
     # iterate over face triangulations
     for f in self.faces(2):
@@ -543,25 +544,26 @@ def expanded_secondary_fan(
         if big_ints:
             ineqs = ineqs.astype(int)
     if as_cone:
-        return Cone(hyperplanes=ineqs, ambient_dim=ambient_dim, parse_inputs=(len(ineqs)==0))
+        cone_hyperplanes = np.asarray(ineqs.dense() if isinstance(ineqs, matrix.LIL) else ineqs)
+        return Cone(
+            hyperplanes=cone_hyperplanes,
+            ambient_dim=ambient_dim,
+            parse_inputs=(len(cone_hyperplanes) == 0),
+        )
     else:
         return ineqs
-
-
-Polytope.expanded_secondary_fan = expanded_secondary_fan
-Polytope.gerald = expanded_secondary_fan
 
 
 # extend face-triangulations to FR(S)T
 # ------------------------------------
 def triangfaces_to_frt(
     self,
-    triangs: [Triangulation],
+    triangs: list[Triangulation],
     make_star: bool = False,
     check_heights: bool = False,
-    backend: str = None,
+    backend: str | None = None,
     verbosity: int = 0,
-) -> Triangulation:
+) -> Triangulation | None:
     """
     **Description:**
     See https://arxiv.org/abs/2309.10855
@@ -592,6 +594,7 @@ def triangfaces_to_frt(
     c = cone_of_permissible_heights(
         triangs, poly=self, npts=npts
     )
+    assert isinstance(c, Cone)
     h = c.find_interior_point(backend=backend, verbose=verbosity > 1)
 
     if h is None:
@@ -607,14 +610,11 @@ def triangfaces_to_frt(
     return t
 
 
-Polytope.triangfaces_to_frt = triangfaces_to_frt
-
-
 def triangfaces_to_frst(
     self,
-    triangs: [Triangulation],
+    triangs: list[Triangulation],
     check_heights: bool = False,
-    backend: str = None,
+    backend: str | None = None,
     verbosity: int = 0,
 ) -> Triangulation:
     """
@@ -650,21 +650,18 @@ def triangfaces_to_frst(
     )
 
 
-Polytope.triangfaces_to_frst = triangfaces_to_frst
-
-
 # generate ALL 2-face inequivalent hyperplanes/cones/FRSTs
 # --------------------------------------------------------
 def triangface_ineqs(
     self,
-    face_triangs: list = None,
+    face_triangs: list | None = None,
     require_star: bool = False,
     max_npts: int = 17,
     N_face_triangs: int = 1000,
     triang_method: str = "grow2d",
     return_triangs: bool = False,
     verbosity: int = 0,
-) -> [[matrix.LIL]]:
+) -> Union[list[list[matrix.LIL]], tuple[list[list[matrix.LIL]], list]]:
     """
     **Description:**
     Calculate the 2-face FRTs and their associated inequalities for this
@@ -718,9 +715,9 @@ def triangface_ineqs(
 
         # iterate over triangulations of this face
         for f_triang in f_triangs:
-            tmp_ineqs = _2d_frt_cone_ineqs(f_triang, npts)
+            tmp_ineqs = f_triang._2d_frt_cone_ineqs(ambient_dim=npts)
             if require_star:
-                tmp_ineqs.append(_2d_s_cone_ineqs(f_triang, self, npts))
+                tmp_ineqs.append(f_triang._2d_s_cone_ineqs(poly=self, ambient_dim=npts))
             ineqs[-1].append(tmp_ineqs)
 
     if not return_triangs:
@@ -729,16 +726,13 @@ def triangface_ineqs(
         return ineqs, face_triangs
 
 
-Polytope.triangface_ineqs = triangface_ineqs
-
-
 def ntfe_hypers(
     self,
     require_star: bool = False,
-    N: int = None,
-    seed: int = None,
-    face_ineqs: list = None,
-    face_triangs: list = None,
+    N: int | None = None,
+    seed: int | None = None,
+    face_ineqs: list | None = None,
+    face_triangs: list | None = None,
     max_npts: int = 17,
     N_face_triangs: int = 1000,
     triang_method: str = "grow2d",
@@ -893,17 +887,14 @@ def ntfe_hypers(
         return hypers
 
 
-Polytope.ntfe_hypers = ntfe_hypers
-
-
 def ntfe_cones(
     self,
-    hypers: ["ArrayLike"] = None,
+    hypers: list[np.ndarray] | None = None,
     require_star: bool = False,
-    N: int = None,
-    seed: int = None,
-    face_ineqs: list = None,
-    face_triangs: list = None,
+    N: int | None = None,
+    seed: int | None = None,
+    face_ineqs: list | None = None,
+    face_triangs: list | None = None,
     max_npts: int = 17,
     N_face_triangs: int = 1000,
     triang_method: str = "grow2d",
@@ -1036,23 +1027,20 @@ def ntfe_cones(
             for hyper in iter_wrapper(iterator)]
 
 
-Polytope.ntfe_cones = ntfe_cones
-
-
 def ntfe_frts(
     self: "Polytope",
-    cones: [Cone] = None,
-    hypers: ["ArrayLike"] = None,
+    cones: list[Cone] | None = None,
+    hypers: list[np.ndarray] | None = None,
     make_star: bool = False,
-    N: int = None,
-    seed: int = None,
-    face_ineqs: list = None,
-    face_triangs: list = None,
+    N: int | None = None,
+    seed: int | None = None,
+    face_ineqs: list | None = None,
+    face_triangs: list | None = None,
     max_npts: int = 17,
     N_face_triangs: int = 1000,
     triang_method: str = "fast",
     as_generator: bool = False,
-    backend: str = None,
+    backend: str | None = None,
     verbosity: int = 0,
 ):
     """
@@ -1126,6 +1114,7 @@ def ntfe_frts(
             as_generator=as_generator,
             verbosity=verbosity - 1,
         )
+    data = list(data)
 
     # randomly select N cones/hyperplanes
     # (might get fewer than N FRSTs, in case the cones aren't all solid)
@@ -1138,7 +1127,10 @@ def ntfe_frts(
     if as_generator:
         def gen():
             for datum in data:
-                c = Cone(hyperplanes=datum, parse_inputs=(len(datum)==0))
+                if isinstance(datum, Cone):
+                    c = datum
+                else:
+                    c = Cone(hyperplanes=datum, parse_inputs=(len(datum)==0))
                 h = c.find_interior_point(
                     backend=backend, verbose=verbosity > 1
                 )
@@ -1164,7 +1156,10 @@ def ntfe_frts(
     frsts = []
 
     def func(datum):
-        c = Cone(hyperplanes=datum, parse_inputs=(len(datum)==0))
+        if isinstance(datum, Cone):
+            c = datum
+        else:
+            c = Cone(hyperplanes=datum, parse_inputs=(len(datum)==0))
         h = c.find_interior_point(backend=backend, verbose=verbosity > 1)
 
         return self.triangulate(heights=h, make_star=make_star)
@@ -1181,22 +1176,19 @@ def ntfe_frts(
     return frsts
 
 
-Polytope.ntfe_frts = ntfe_frts
-
-
 def ntfe_frsts(
     self: "Polytope",
-    cones: [Cone] = None,
-    hypers: ["ArrayLike"] = None,
-    N: int = None,
-    seed: int = None,
-    face_ineqs: list = None,
-    face_triangs: list = None,
+    cones: list[Cone] | None = None,
+    hypers: list[np.ndarray] | None = None,
+    N: int | None = None,
+    seed: int | None = None,
+    face_ineqs: list | None = None,
+    face_triangs: list | None = None,
     max_npts: int = 17,
     N_face_triangs: int = 1000,
     triang_method: str = "fast",
     as_generator: bool = False,
-    backend: str = None,
+    backend: str | None = None,
     verbosity: int = 0,
 ):
     """
@@ -1257,6 +1249,3 @@ def ntfe_frsts(
         backend=backend,
         verbosity=verbosity,
     )
-
-
-Polytope.ntfe_frsts = ntfe_frsts

@@ -1,4 +1,5 @@
 import numpy as np
+import pytest
 
 from cytools import Cone
 
@@ -78,7 +79,9 @@ def test_is_solid():
 
 def test_tip_of_stretched_cone():
     c = Cone([[3, 2], [5, 3]])
-    tip = c.tip_of_stretched_cone(1).tolist()
+    tip_vec = c.tip_of_stretched_cone(1)
+    assert tip_vec is not None
+    tip = tip_vec.tolist()
     assert np.isclose(tip, [8.0, 5.0]).all()
 
 

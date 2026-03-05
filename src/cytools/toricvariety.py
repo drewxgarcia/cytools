@@ -33,6 +33,7 @@ from scipy.sparse import csr_matrix
 from cytools import config
 from cytools.calabiyau import CalabiYau
 from cytools.cone import Cone
+from cytools.helpers.misc import cached_result_on
 from cytools.utils import (
     gcd_list,
     solve_linear_system,
@@ -125,12 +126,6 @@ class ToricVariety:
         # Regularity is not checked since it is generally slow.
         if not triang.is_star():
             raise ValueError("The input triangulation must be star.")
-        if not triang.polytope().is_reflexive() and not config._exp_features_enabled:
-            raise Exception(
-                "The experimental features must be enabled to "
-                "construct toric varieties from triangulations "
-                "that are not from reflexive polytopes."
-            )
         self._triang = triang
         # Initialize remaining hidden attributes
         self._hash = None
@@ -150,11 +145,6 @@ class ToricVariety:
         self._fan_cones = dict()
         self._nef_part = None
         self._cy = None
-        if not self.is_compact() and not config._exp_features_enabled:
-            raise Exception(
-                "The experimental features must be enabled to "
-                "construct non-compact varieties."
-            )
 
     def clear_cache(self, recursive=False, only_in_basis=False):
         """
@@ -321,10 +311,7 @@ class ToricVariety:
         s = {v} # Create a set of toric varieties
         ```
         """
-        if self._hash is not None:
-            return self._hash
-        self._hash = hash((1, hash(self.triangulation())))
-        return self._hash
+        return cached_result_on(self, "_hash", lambda: hash((1, hash(self.triangulation()))))
 
     def is_compact(self):
         """
@@ -347,12 +334,10 @@ class ToricVariety:
         # True
         ```
         """
-        if self._is_compact is not None:
-            return self._is_compact
-        self._is_compact = (0,) * self.dim() in [
-            tuple(pt) for pt in self.polytope().interior_points()
-        ]
-        return self._is_compact
+        return cached_result_on(
+            self, "_is_compact",
+            lambda: (0,) * self.dim() in [tuple(pt) for pt in self.polytope().interior_points()],
+        )
 
     def triangulation(self):
         """
@@ -482,11 +467,12 @@ class ToricVariety:
         #        [ -6,   0,   3,   2,   0,   0,   1]])
         ```
         """
-        if self._glsm_charge_matrix is not None:
-            return np.array(self._glsm_charge_matrix)[:, (0 if include_origin else 1) :]
-        self._glsm_charge_matrix = self.polytope().glsm_charge_matrix(
-            include_origin=True,
-            points=self.polytope().points_to_indices(self.triangulation().points()),
+        cached_result_on(
+            self, "_glsm_charge_matrix",
+            lambda: self.polytope().glsm_charge_matrix(
+                include_origin=True,
+                points=self.polytope().points_to_indices(self.triangulation().points()),
+            ),
         )
         return np.array(self._glsm_charge_matrix)[:, (0 if include_origin else 1) :]
 
@@ -525,17 +511,15 @@ class ToricVariety:
         #        [0, 0]])
         ```
         """
-        if self._glsm_linrels is not None:
-            return np.array(self._glsm_linrels)[
-                (0 if include_origin else 1) :, (0 if include_origin else 1) :
-            ]
-        self._glsm_linrels = self.polytope().glsm_linear_relations(
-            include_origin=True,
-            points=self.polytope().points_to_indices(self.triangulation().points()),
+        cached_result_on(
+            self, "_glsm_linrels",
+            lambda: self.polytope().glsm_linear_relations(
+                include_origin=True,
+                points=self.polytope().points_to_indices(self.triangulation().points()),
+            ),
         )
-        return np.array(self._glsm_linrels)[
-            (0 if include_origin else 1) :, (0 if include_origin else 1) :
-        ]
+        sl = slice(0 if include_origin else 1, None)
+        return np.array(self._glsm_linrels)[sl, sl]
 
     def divisor_basis(self, include_origin=True, as_matrix=False):
         """
@@ -586,6 +570,7 @@ class ToricVariety:
                     ),
                 )
             )
+        assert self._divisor_basis is not None
         if len(self._divisor_basis.shape) == 1:
             if 0 in self._divisor_basis and not include_origin:
                 raise Exception(
@@ -593,6 +578,7 @@ class ToricVariety:
                     "origin, but it is included in the current basis."
                 )
             if as_matrix:
+                assert self._divisor_basis_mat is not None
                 return np.array(
                     self._divisor_basis_mat[:, (0 if include_origin else 1) :]
                 )
@@ -697,6 +683,7 @@ class ToricVariety:
                     ),
                 )
             )
+        assert self._curve_basis is not None
         if len(self._curve_basis.shape) == 1:
             if 0 in self._curve_basis and not include_origin:
                 raise Exception(
@@ -704,6 +691,7 @@ class ToricVariety:
                     "origin, but it is included in the current basis."
                 )
             if as_matrix:
+                assert self._curve_basis_mat is not None
                 return np.array(
                     self._curve_basis_mat[:, (0 if include_origin else 1) :]
                 )
@@ -818,6 +806,7 @@ class ToricVariety:
         args_id = ((not include_origin) * 1 if not in_basis else 0) + in_basis * 2
         if self._mori_cone[args_id] is not None:
             return self._mori_cone[args_id]
+        assert self._mori_cone[0] is not None
         rays = self._mori_cone[0].rays()
         basis = self.divisor_basis()
         if include_origin and not in_basis:
@@ -1082,12 +1071,10 @@ class ToricVariety:
         linear_relations = self.glsm_linear_relations(include_origin=False)
 
         # First compute the distinct intersection numbers
+        stacked = pts_ext[simps]                              # (N_simps, 5, 5)
+        inv_abs_dets = 1.0 / np.abs(np.linalg.det(stacked))  # (N_simps,) — batched
         distintnum_array = sorted(
-            [
-                [c for c in simp if c != 0]
-                + [1 / abs(np.linalg.det([pts_ext[p] for p in simp]))]
-                for simp in simps
-            ]
+            [list(simp[simp != 0]) + [inv_abs_dets[k]] for k, simp in enumerate(simps)]
         )
 
         frst = [[c for c in s if c != 0] for s in simps]
@@ -1178,24 +1165,37 @@ class ToricVariety:
                 raise RuntimeError("Failed to construct linear system.")
 
         # Construct Linear System
-        num_rows = len(linear_relations) * len(eqn_array)
-        C = np.array([0.0] * num_rows)
+        n_lin    = len(linear_relations)
+        n_eqn    = len(eqn_array)
+        num_rows = n_lin * n_eqn
+        C     = np.zeros(num_rows, dtype=float)
         M_row = []
         M_col = []
         M_val = []
-        row_ctr = 0
-        for eqn in eqn_array:
-            for lin in linear_relations:
-                if eqn[0] != eqn[1] and eqn[1] != eqn[2]:
-                    c_temp = c_dict[eqn]
-                    C[row_ctr] = sum([lin[cc[0] - 1] * cc[1] for cc in c_temp])
-                eqn_temp = eqn_dict[eqn]
-                for e in eqn_temp:
-                    M_row.append(row_ctr)
-                    M_col.append(e[1])
-                    M_val.append(lin[e[0] - 1])
-                row_ctr += 1
-        Mat = csr_matrix((M_val, (M_row, M_col)), dtype=np.float64)
+        # Outer loop over equations only; inner loop over linear_relations is vectorized.
+        for eqn_idx, eqn in enumerate(eqn_array):
+            row_base = eqn_idx * n_lin
+            rows     = np.arange(row_base, row_base + n_lin)
+
+            # --- RHS: all-distinct triple only ---
+            if eqn[0] != eqn[1] and eqn[1] != eqn[2]:
+                c_temp    = c_dict[eqn]                         # list of [pt_idx, weight]
+                c_idx     = np.array([cc[0] - 1 for cc in c_temp], dtype=int)
+                c_weights = np.array([cc[1]     for cc in c_temp], dtype=float)
+                C[row_base : row_base + n_lin] = linear_relations[:, c_idx] @ c_weights
+
+            # --- LHS: one block of n_lin entries per (fourth_idx, col) pair ---
+            for fourth_idx, col in eqn_dict[eqn]:
+                M_row.append(rows)
+                M_col.append(np.full(n_lin, col, dtype=int))
+                M_val.append(linear_relations[:, fourth_idx - 1])
+
+        if M_row:
+            M_row = np.concatenate(M_row)
+            M_col = np.concatenate(M_col)
+            M_val = np.concatenate(M_val)
+        Mat = csr_matrix((M_val, (M_row, M_col)), shape=(num_rows, len(variable_array)),
+                         dtype=np.float64)
         return Mat, C, distintnum_array, variable_array
 
     def _construct_intnum_equations(self):
@@ -1231,15 +1231,13 @@ class ToricVariety:
         pts_ext[:, -1] = 1
         linear_relations = self.glsm_linear_relations(include_origin=False)
         # First compute the distinct intersection numbers
+        simps = self.triangulation().simplices(as_indices=True)  # assign once
+        stacked = pts_ext[simps]
+        inv_abs_dets = 1.0 / np.abs(np.linalg.det(stacked))
         distintnum_array = sorted(
-            [
-                [c for c in simp if c != 0]
-                + [1 / abs(np.linalg.det([pts_ext[p] for p in simp]))]
-                for simp in self.triangulation().simplices(as_indices=True)
-            ]
+            [list(simp[simp != 0]) + [inv_abs_dets[k]] for k, simp in enumerate(simps)]
         )
-        frst = [[c for c in s if c != 0]
-                for s in self.triangulation().simplices(as_indices=True)]
+        frst = [[c for c in s if c != 0] for s in simps]
         simp_n = [
             {j for f in frst for j in combinations(f, n)}
             for n in range(2, dim)
@@ -1309,24 +1307,37 @@ class ToricVariety:
                         break
                 eqn_dict[c] += [(v[k], variable_dict[v])]
         # Construct Linear System
-        num_rows = len(linear_relations) * len(eqn_array)
-        C = np.zeros(num_rows, dtype=float)
+        n_lin    = len(linear_relations)
+        n_eqn    = len(eqn_array)
+        num_rows = n_lin * n_eqn
+        C     = np.zeros(num_rows, dtype=float)
         M_row = []
         M_col = []
         M_val = []
-        row_ctr = 0
-        for eqn in eqn_array:
-            for lin in linear_relations:
-                if len(set(eqn)) == dim - 1:
-                    c_temp = c_dict[eqn]
-                    C[row_ctr] = sum([lin[cc[0] - 1] * cc[1] for cc in c_temp])
-                eqn_temp = eqn_dict[eqn]
-                for e in eqn_temp:
-                    M_row.append(row_ctr)
-                    M_col.append(e[1])
-                    M_val.append(lin[e[0] - 1])
-                row_ctr += 1
-        Mat = csr_matrix((M_val, (M_row, M_col)), dtype=np.float64)
+        # Outer loop over equations only; inner loop over linear_relations is vectorized.
+        for eqn_idx, eqn in enumerate(eqn_array):
+            row_base = eqn_idx * n_lin
+            rows     = np.arange(row_base, row_base + n_lin)
+
+            # --- RHS: all-distinct (dim-1)-tuple only ---
+            if len(set(eqn)) == dim - 1:
+                c_temp    = c_dict[eqn]                         # list of (pt_idx, weight)
+                c_idx     = np.array([cc[0] - 1 for cc in c_temp], dtype=int)
+                c_weights = np.array([cc[1]     for cc in c_temp], dtype=float)
+                C[row_base : row_base + n_lin] = linear_relations[:, c_idx] @ c_weights
+
+            # --- LHS: one block of n_lin entries per (fourth_idx, col) pair ---
+            for fourth_idx, col in eqn_dict[eqn]:
+                M_row.append(rows)
+                M_col.append(np.full(n_lin, col, dtype=int))
+                M_val.append(linear_relations[:, fourth_idx - 1])
+
+        if M_row:
+            M_row = np.concatenate(M_row)
+            M_col = np.concatenate(M_col)
+            M_val = np.concatenate(M_val)
+        Mat = csr_matrix((M_val, (M_row, M_col)), shape=(num_rows, len(variable_array)),
+                         dtype=np.float64)
         return Mat, C, distintnum_array, variable_array
 
     def intersection_numbers(
@@ -1464,11 +1475,6 @@ class ToricVariety:
                 raise ValueError(
                     "Invalid linear system backend. " f"The options are: {backends}."
                 )
-            if exact_arithmetic and not config._exp_features_enabled:
-                raise ValueError(
-                    "The experimental features must be enabled to "
-                    "use exact arithmetic."
-                )
             # Construct the linear equations
             # Note that self.dim gives the dimension of the CY not the of the
             # variety
@@ -1516,17 +1522,19 @@ class ToricVariety:
                     intnums[tuple(int(round(j)) for j in ii[:-1])] = float_to_fmpq(
                         ii[-1]
                     )
+                solution_flat = np.asarray(solution).reshape(-1)
                 for i, ii in enumerate(variable_array):
-                    if abs(solution[i]) < round_to_zero_threshold:
+                    if abs(solution_flat[i]) < round_to_zero_threshold:
                         continue
-                    intnums[tuple(ii)] = float_to_fmpq(solution[i])
+                    intnums[tuple(ii)] = float_to_fmpq(float(solution_flat[i]))
             else:
                 for ii in distintnum_array:
                     intnums[tuple(int(round(j)) for j in ii[:-1])] = ii[-1]
+                solution_flat = np.asarray(solution).reshape(-1)
                 for i, ii in enumerate(variable_array):
-                    if abs(solution[i]) < round_to_zero_threshold:
+                    if abs(solution_flat[i]) < round_to_zero_threshold:
                         continue
-                    intnums[tuple(ii)] = solution[i]
+                    intnums[tuple(ii)] = solution_flat[i]
             if self.is_smooth():
                 if exact_arithmetic:
                     for ii in intnums:
@@ -1639,7 +1647,7 @@ class ToricVariety:
                 if 0 not in ii:
                     continue
                 self._intersection_numbers[args_id][ii] *= (
-                    -1 if sum(ii == 0) % 2 == 1 else 1
+                    -1 if sum(x == 0 for x in ii) % 2 == 1 else 1
                 )
         elif in_basis:
             basis = self.divisor_basis()
@@ -1741,13 +1749,13 @@ class ToricVariety:
         # True
         ```
         """
-        if self._is_smooth is not None:
-            return self._is_smooth
-        pts = self.triangulation().points()
-        pts = np.insert(pts, 0, np.ones(len(pts), dtype=int), axis=1)
-        simp = self.triangulation().simplices(as_indices=True)
-        self._is_smooth = all(abs(int(round(np.linalg.det(pts[s])))) == 1 for s in simp)
-        return self._is_smooth
+        def _compute():
+            pts = self.triangulation().points()
+            pts = np.insert(pts, 0, np.ones(len(pts), dtype=int), axis=1)
+            simp = self.triangulation().simplices(as_indices=True)
+            return all(abs(int(round(np.linalg.det(pts[s])))) == 1 for s in simp)
+
+        return cached_result_on(self, "_is_smooth", _compute)
 
     def canonical_divisor_is_smooth(self):
         """
@@ -1771,20 +1779,19 @@ class ToricVariety:
         # True
         ```
         """
-        if self._canon_div_is_smooth is not None:
-            return self._canon_div_is_smooth
-        pts_mpcp = {tuple(pt) for pt in self.polytope().points_not_interior_to_facets()}
-        ind_triang = list(set.union(*[set(s) for s in self._triang.simplices(as_indices=True)]))
-        pts_triang = {tuple(pt) for pt in self._triang.points()[ind_triang]}
-        sm = pts_mpcp.issubset(pts_triang) and (
-            True
-            if self.dim() <= 4
-            else all(
-                c.is_smooth() for c in self.fan_cones(self.dim() - 1, self.dim() - 2)
+        def _compute():
+            pts_mpcp = {tuple(pt) for pt in self.polytope().points_not_interior_to_facets()}
+            ind_triang = list(set.union(*[set(s) for s in self._triang.simplices(as_indices=True)]))
+            pts_triang = {tuple(pt) for pt in self._triang.points()[ind_triang]}
+            return pts_mpcp.issubset(pts_triang) and (
+                True
+                if self.dim() <= 4
+                else all(
+                    c.is_smooth() for c in self.fan_cones(self.dim() - 1, self.dim() - 2)
+                )
             )
-        )
-        self._canon_div_is_smooth = sm
-        return self._canon_div_is_smooth
+
+        return cached_result_on(self, "_canon_div_is_smooth", _compute)
 
     def effective_cone(self):
         """
@@ -1808,10 +1815,10 @@ class ToricVariety:
         # A 2-dimensional rational polyhedral cone in RR^2 generated by 6 rays
         ```
         """
-        if self._eff_cone is not None:
-            return self._eff_cone
-        self._eff_cone = Cone(self.curve_basis(include_origin=False, as_matrix=True).T)
-        return self._eff_cone
+        return cached_result_on(
+            self, "_eff_cone",
+            lambda: Cone(self.curve_basis(include_origin=False, as_matrix=True).T),
+        )
 
     def fan_cones(self, d=None, face_dim=None):
         """
@@ -1911,35 +1918,20 @@ class ToricVariety:
         if self._cy is not None:
             return self._cy
         if nef_partition is not None:
-            if not config._exp_features_enabled:
-                raise Exception(
-                    "The experimental features must be enabled to " "construct CICYs."
-                )
             self._cy = CalabiYau(self, nef_partition)
             self._nef_part = nef_partition
         else:
             if not self.triangulation().is_fine():
                 raise ValueError("Triangulation is non-fine.")
-            if not config._exp_features_enabled:
-                if self.dim() != 4:
-                    raise Exception(
-                        "The experimental features must be enabled to "
-                        "construct CYs with dimension other than 3... "
-                        f"observed dimension = {self.dim()}"
-                    )
-                if not self.triangulation().polytope().is_favorable(lattice="N"):
-                    raise Exception(
-                        "The experimental features must be enabled to "
-                        "construct non-favorable CYs..."
-                    )
 
             # check that we have sensical points
             triang = self.triangulation()
             poly   = triang.polytope()
 
-            if sorted(triang.labels) == sorted(poly.labels_not_facet):
+            triang_labels_sorted = sorted(triang.labels)
+            if triang_labels_sorted == sorted(poly.labels_not_facet):
                 pass
-            elif sorted(triang.labels) == sorted(poly.labels):
+            elif triang_labels_sorted == sorted(poly.labels):
                 pass
             else:
                 error_msg = "Calabi-Yau hypersurfaces must be constructed either from points not interior to facets or using all points.\n"

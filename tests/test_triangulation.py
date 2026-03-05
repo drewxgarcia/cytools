@@ -1,6 +1,7 @@
 import numpy as np
 
-from cytools import Polytope
+from cytools import Cone, Polytope
+from cytools.triangulation import Triangulation
 
 
 def test_ambient_dimension():
@@ -80,9 +81,11 @@ def test_is_equivalent():
             [1, 1, -1, -1],
         ]
     )
-    triangs_gen = p.all_triangulations()
+    triangs_gen = iter(p.all_triangulations())
     t1 = next(triangs_gen)
     t2 = next(triangs_gen)
+    assert isinstance(t1, Triangulation)
+    assert isinstance(t2, Triangulation)
     assert not t1.is_equivalent(t2)
     assert t1.is_equivalent(t2, on_faces_dim=2)
     assert t1.is_equivalent(t2, on_faces_dim=2, use_automorphisms=False)
@@ -154,7 +157,8 @@ def test_points_to_indices():
 
     pts_to_check = [[-1, -1, -6, -9], [0, 0, 0, 0], [0, 0, 1, 0]]
     indices = t.points_to_indices(pts_to_check)
-    pts_from_indices = [pts[i] for i in indices]
+    inds = np.asarray(indices, dtype=int).reshape(-1).tolist()
+    pts_from_indices = [pts[i] for i in inds]
     assert pts_from_indices == pts_to_check
 
 
@@ -164,7 +168,10 @@ def test_secondary_cone():
     )
     t = p.triangulate()
     sc = t.secondary_cone()
-    assert len(sc.hyperplanes()) == 3
+    if isinstance(sc, Cone):
+        assert len(sc.hyperplanes()) == 3
+    else:
+        assert len(sc) == 3
 
 
 def test_simplices():
@@ -188,8 +195,12 @@ def test_equality():
     p = Polytope(
         [[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1], [-1, -1, -6, -9]]
     )
-    triangs = p.all_triangulations(only_fine=False, only_star=False, only_regular=False)
+    triangs = iter(
+        p.all_triangulations(only_fine=False, only_star=False, only_regular=False)
+    )
     t1 = next(triangs)
     t2 = next(triangs)
+    assert isinstance(t1, Triangulation)
+    assert isinstance(t2, Triangulation)
     assert t1 == t1
     assert t1 != t2
