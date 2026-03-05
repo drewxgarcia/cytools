@@ -45,8 +45,8 @@ __all__ = [
 def check_for_updates():
     """
     **Description:**
-    Checks for updates of CYTools. It prints a message if a new version is
-    available, and displays a warning if the current version has a serious bug.
+    Checks for updates of cytools-dvg on PyPI. Prints a message if a newer
+    version is available.
 
     **Arguments:**
     None.
@@ -55,65 +55,25 @@ def check_for_updates():
     Nothing.
 
     **Example:**
-    We check for updates of CYTools. This is done automatically, so there is
-    usually no need to do this.
     ```python {2}
     import cytools
     cytools.check_for_updates()
     ```
     """
-    from ast import literal_eval
-    import requests
-
-    checked_version = False
-    checked_bugs = False
+    import json
+    import urllib.request
 
     try:
-        # get updated __init__ from github
-        p = requests.get(
-            "https://raw.githubusercontent.com/"
-            + "LiamMcAllisterGroup/cytools/main/cytools/"
-            + "__init__.py",
-            timeout=2,
-        )
-
-        # find/check the version in this file
-        for l in p.text.split("\n"):
-            if (not checked_version) and ("version =" in l):
-                checked_version = True
-
-                # parse version
-                latest_ver = tuple(int(c) for c in l.split('"')[1].split("."))
-                ver = tuple(int(c) for c in version.split("."))
-
-                # check
-                if latest_ver <= ver:
-                    continue
-
-                # local version is old -> print warning
-                print(
-                    "\nInfo: A more recent version of CYTools is available: "
-                    f"v{ver[0]}.{ver[1]}.{ver[2]} -> "
-                    f"v{latest_ver[0]}.{latest_ver[1]}.{latest_ver[2]}.\n"
-                    "We recommend upgrading before continuing.\n"
-                    "On Linux and macOS you can update CYTools by running "
-                    "'cytools --update'\n"
-                    "and on Windows you can do this by running the updater "
-                    "tool.\n"
-                )
-
-            elif (not checked_bugs) and ("versions_with_serious_bugs =" in l):
-                checked_bugs = True
-                bad_versions = literal_eval(l.split("=")[1].strip())
-                if version in bad_versions:
-                    print(
-                        "\n****************************\n"
-                        "Warning: This version of CYTools contains a serious"
-                        " bug. Please upgrade to the latest version.\n"
-                        "****************************\n"
-                    )
-
-            if checked_version and checked_bugs:
-                break
-    except:
+        url = "https://pypi.org/pypi/cytools-dvg/json"
+        with urllib.request.urlopen(url, timeout=2) as resp:
+            data = json.loads(resp.read())
+        latest = data["info"]["version"]
+        if tuple(int(x) for x in latest.split(".")) > tuple(int(x) for x in version.split(".")):
+            print(
+                f"\nInfo: A newer version of cytools-dvg is available: "
+                f"v{version} -> v{latest}\n"
+                "Upgrade with: pip install --upgrade cytools-dvg\n"
+                "           or: uv add cytools-dvg\n"
+            )
+    except Exception:
         pass

@@ -2367,6 +2367,10 @@ class Triangulation:
             )
 
         # prep-work
+        # Use sorted tuples as keys throughout instead of frozensets.
+        # A sorted tuple (a<=b<=c) is hashable and uniquely identifies the
+        # same subset as frozenset({a,b,c}), but is 3-5x cheaper to allocate
+        # and hash.  The algorithm is identical; only the key type changes.
         labels = set(self.labels) - {self.poly._label_origin}
         simplices = [labels.intersection(s) for s in self.simplices()]
 
@@ -2376,7 +2380,7 @@ class Triangulation:
 
             for s in simplices:
                 simplex_tuples[-1].update(
-                    frozenset(tup) for tup in itertools.combinations(s, dd)
+                    tuple(sorted(tup)) for tup in itertools.combinations(s, dd)
                 )
 
         # calculate the SR ideal
@@ -2385,13 +2389,17 @@ class Triangulation:
         for i in range(len(simplex_tuples) - 1):
             for tup in simplex_tuples[i]:
                 for j in labels:
-                    k = tup.union((j,))
+                    # Skip early: if j is already in tup the union has the
+                    # same size (not a new non-face candidate).
+                    if j in tup:
+                        continue
+
+                    k = tuple(sorted(tup + (j,)))
 
                     # skip if already checked
-                    if (k in checked) or (len(k) != len(tup) + 1):
+                    if k in checked:
                         continue
-                    else:
-                        checked.add(k)
+                    checked.add(k)
 
                     if k in simplex_tuples[i + 1]:
                         continue
@@ -2400,24 +2408,21 @@ class Triangulation:
                     in_SR = False
                     for order in range(1, i + 1):
                         for t in itertools.combinations(tup, order):
-                            if frozenset(t + (j,)) in SR_ideal:
+                            if tuple(sorted(t + (j,))) in SR_ideal:
                                 in_SR = True
                                 break
                         else:
-                            # frozenset(t+(j,)) was not in SR_ideal for any t
-                            # at this order
+                            # no sub-tuple t at this order had t+(j,) in SR_ideal
                             continue
 
-                        # there was a t at this order such that
-                        # frozenset(t+(j,)) was in SR_ideal for some
+                        # found a sub-face already in the ideal — not a generator
                         break
                     else:
-                        # frozenset(t+(j,)) was not in SR_ideal for any order
+                        # no sub-face in SR_ideal for any order — k is a generator
                         SR_ideal.add(k)
 
-        # return
-        sr_list = [tuple(sorted(s)) for s in SR_ideal]
-        self._sr_ideal = tuple(sorted(sr_list, key=lambda x: (len(x), x)))
+        # SR_ideal elements are already sorted tuples — no re-sort needed per element
+        self._sr_ideal = tuple(sorted(SR_ideal, key=lambda x: (len(x), x)))
         return self._sr_ideal
 
 

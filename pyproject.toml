@@ -3,12 +3,13 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "cytools"
+name = "cytools-dvg"
 version = "1.4.6"
 description = "A software package for analyzing Calabi-Yau hypersurfaces in toric varieties."
 readme = "README.md"
 license = {file = "LICENSE"}
 authors = [
+  {name = "Drew Garcia", email = ""},
   {name = "Liam McAllister Group", email = ""}
 ]
 requires-python = ">=3.14"
@@ -55,9 +56,9 @@ mosek = [
 ]
 
 [project.urls]
-Homepage = "https://cy.tools"
-Documentation = "https://cy.tools/docs/documentation/"
-Repository = "https://github.com/LiamMcAllisterGroup/cytools"
+Homepage = "https://github.com/drewxgarcia/cytools-dvg"
+Repository = "https://github.com/drewxgarcia/cytools-dvg"
+Upstream = "https://github.com/LiamMcAllisterGroup/cytools"
 
 [tool.pytest.ini_options]
 testpaths = ["tests", "benchmarks"]
