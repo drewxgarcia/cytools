@@ -1323,7 +1323,7 @@ class CalabiYau:
             zero_as_anticanonical = False
         args_id = (zero_as_anticanonical, in_basis, exact_arithmetic, format)
         if args_id in self._intersection_numbers:
-            return copy.copy(self._intersection_numbers[args_id])
+            return self._intersection_numbers[args_id]
 
         # do the calculation
         if (False, False, False, "dok") not in self._intersection_numbers or (
@@ -1477,7 +1477,7 @@ class CalabiYau:
                     (zero_as_anticanonical, in_basis, exact_arithmetic, "dok")
                 ]
             )
-        return copy.copy(self._intersection_numbers[args_id])
+        return self._intersection_numbers[args_id]
 
     def prime_toric_divisors(self):
         """

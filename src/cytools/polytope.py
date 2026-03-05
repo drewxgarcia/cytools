@@ -734,6 +734,7 @@ class Polytope:
         # Get the lattice points and their saturated inequalities
         # -------------------------------------------------------
         pts_optimal = [tuple(pt) for pt in pts_optimal]
+        pts_optimal_index = {pt: i for i, pt in enumerate(pts_optimal)}
         pts_optimal_all, saturating = saturating_lattice_pts(
             pts_optimal, self._ineqs_optimal, self.dim(), self._backend
         )
@@ -778,8 +779,8 @@ class Polytope:
             pt = tuple(pts_optimal_all[i])
 
             # find the label to use
-            if (labels_list != []) and (pt in pts_optimal):
-                label = labels_list[pts_optimal.index(pt)]
+            if (labels_list != []) and (pt in pts_optimal_index):
+                label = labels_list[pts_optimal_index[pt]]
             else:
                 label = last_default_label + 1
 

@@ -479,12 +479,12 @@ def filter_tensor_indices(tensor: dict, indices: list[int]) -> dict:
     # True
     ```
     """
-    # map from index to its count in indices object
+    # map from index to its position in indices — also used as O(1) membership test
     reindex = {ind: i for i, ind in enumerate(indices)}
 
     # only keep entries whose indices match those in indices
     filtered = {
-        key: val for key, val in tensor.items() if all(c in indices for c in key)
+        key: val for key, val in tensor.items() if all(c in reindex for c in key)
     }
 
     # return reindexed tensor (order defined by indices input)
