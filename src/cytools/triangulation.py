@@ -20,6 +20,7 @@
 
 # 'standard' imports
 import ast
+import bisect
 from collections.abc import Iterable
 import itertools
 import math
@@ -2367,36 +2368,145 @@ class Triangulation:
             )
 
         # prep-work
-        # Use sorted tuples as keys throughout instead of frozensets.
-        # A sorted tuple (a<=b<=c) is hashable and uniquely identifies the
-        # same subset as frozenset({a,b,c}), but is 3-5x cheaper to allocate
-        # and hash.  The algorithm is identical; only the key type changes.
+        # Use sorted tuples as keys throughout instead of frozensets:
+        # a sorted tuple uniquely identifies the same subset but is cheaper
+        # to allocate and hash.  itertools.combinations on a sorted input
+        # yields already-sorted sub-tuples — no per-tuple sort needed.
         labels = set(self.labels) - {self.poly._label_origin}
         simplices = [labels.intersection(s) for s in self.simplices()]
+        sorted_labels = sorted(labels)
 
+        # Build face sets for each dimension.
         simplex_tuples = []
         for dd in range(1, self.dim() + 1):
-            simplex_tuples.append(set())
-
+            st = set()
             for s in simplices:
-                simplex_tuples[-1].update(
-                    tuple(sorted(tup)) for tup in itertools.combinations(s, dd)
+                st.update(itertools.combinations(sorted(s), dd))
+            simplex_tuples.append(st)
+
+        # ---------------------------------------------------------------
+        # Degree-2 generators (pairs): no minimality check required.
+        #
+        # A pair (a, b) is a minimal non-face iff it is not in
+        # simplex_tuples[0] (the 1-faces = all labels) — trivially true —
+        # AND not in simplex_tuples[1] (all edges of the complex).
+        #
+        # Strategy: represent the edge set as a numpy boolean upper-triangle
+        # matrix indexed by position in sorted_labels.  Then every off-
+        # diagonal False entry is a degree-2 generator.  This replaces the
+        # inner Python loop over (edges × labels) with a single numpy op.
+        # ---------------------------------------------------------------
+        n = len(sorted_labels)
+        label_to_idx = {lbl: i for i, lbl in enumerate(sorted_labels)}
+
+        # Build adjacency matrix from edges (simplex_tuples[0] = singletons,
+        # simplex_tuples[1] = pairs that ARE faces)
+        adj = np.zeros((n, n), dtype=bool)
+        for (a, b) in simplex_tuples[1]:
+            i_a, i_b = label_to_idx[a], label_to_idx[b]
+            adj[i_a, i_b] = True
+            adj[i_b, i_a] = True
+
+        # Upper-triangle non-edges = degree-2 SR generators
+        SR_ideal = set()
+        rows, cols = np.where(~adj)
+        for r, c in zip(rows, cols):
+            if r < c:  # upper triangle only
+                SR_ideal.add((sorted_labels[r], sorted_labels[c]))
+
+        # ---------------------------------------------------------------
+        # Degree-3 generators (triples): vectorized using the adjacency
+        # matrix built above.
+        #
+        # For a pair (a, b) ∈ simplex_tuples[1] and label j ∉ {a, b}:
+        # candidate triple k = sorted(a, b, j).
+        # Minimality: k is covered iff some sub-pair of k is in SR_ideal.
+        # Sub-pairs of k are (a,b), (a,j), (b,j).
+        # (a,b) ∈ simplex_tuples[1] so it is never in SR_ideal.
+        # → covered iff (a,j) ∈ SR_ideal OR (b,j) ∈ SR_ideal
+        #   ↔  non_adj[a_idx, j_idx]  OR  non_adj[b_idx, j_idx]
+        # ---------------------------------------------------------------
+        non_adj = ~adj  # True where pair is NOT an edge → in degree-2 SR_ideal
+        sorted_labels_arr = np.array(sorted_labels)
+        all_idx = np.arange(n)
+
+        if len(simplex_tuples) > 2:
+            pairs_list = list(simplex_tuples[1])
+            a_idx = np.array([label_to_idx[p[0]] for p in pairs_list])
+            b_idx = np.array([label_to_idx[p[1]] for p in pairs_list])
+            triples3 = simplex_tuples[2]  # 3-faces of the complex
+
+            for pi in range(len(pairs_list)):
+                ai, bi = int(a_idx[pi]), int(b_idx[pi])
+                a_lbl, b_lbl = sorted_labels[ai], sorted_labels[bi]
+                # indices of labels not equal to a or b
+                mask_j = (all_idx != ai) & (all_idx != bi)
+                j_idxs = all_idx[mask_j]
+                # covered if (a,j) or (b,j) is a degree-2 SR generator
+                covered_mask = non_adj[ai, j_idxs] | non_adj[bi, j_idxs]
+                for ji in j_idxs[~covered_mask]:
+                    j_lbl = sorted_labels[int(ji)]
+                    k = tuple(sorted((a_lbl, b_lbl, j_lbl)))
+                    if k not in triples3:
+                        SR_ideal.add(k)
+
+        # ---------------------------------------------------------------
+        # Degree-4 generators (4-tuples): vectorized for i == 2.
+        #
+        # For triple (a, b, c) and label j ∉ {a, b, c}:
+        # covered iff any sub-pair (x, j) is in SR_ideal [checked via
+        # non_adj] OR any sub-triple (x, y, j) is in SR_ideal.
+        # We batch-reject most candidates using non_adj; the triple check
+        # is then done only for survivors.
+        # ---------------------------------------------------------------
+        if len(simplex_tuples) > 3:
+            triples_list = list(simplex_tuples[2])
+            quads4 = simplex_tuples[3]  # 4-faces of the complex
+
+            for tup in triples_list:
+                ta, tb, tc = tup  # already sorted (from combinations on sorted)
+                ai, bi, ci = label_to_idx[ta], label_to_idx[tb], label_to_idx[tc]
+                mask_j = (all_idx != ai) & (all_idx != bi) & (all_idx != ci)
+                j_idxs = all_idx[mask_j]
+                # covered by a sub-pair iff (ta,j), (tb,j), or (tc,j) is non-edge
+                pair_covered = (
+                    non_adj[ai, j_idxs]
+                    | non_adj[bi, j_idxs]
+                    | non_adj[ci, j_idxs]
                 )
+                survivors = j_idxs[~pair_covered]
+                for ji in survivors:
+                    j_lbl = sorted_labels[int(ji)]
+                    k = tuple(sorted((ta, tb, tc, j_lbl)))
+                    if k in quads4:
+                        continue
+                    # check sub-triple minimality (rarely reached)
+                    covered = (
+                        tuple(sorted((ta, tb, j_lbl))) in SR_ideal
+                        or tuple(sorted((ta, tc, j_lbl))) in SR_ideal
+                        or tuple(sorted((tb, tc, j_lbl))) in SR_ideal
+                    )
+                    if not covered:
+                        SR_ideal.add(k)
 
-        # calculate the SR ideal
-        SR_ideal, checked = set(), set()
+        # ---------------------------------------------------------------
+        # Degree-5+ generators: original Python loop for i >= 3.
+        # Extremely rare in practice (occur only for high-dimensional
+        # polytopes with complex combinatorics).
+        # ---------------------------------------------------------------
+        checked = set()
+        _insort = bisect.insort
 
-        for i in range(len(simplex_tuples) - 1):
+        for i in range(3, len(simplex_tuples) - 1):
             for tup in simplex_tuples[i]:
                 for j in labels:
-                    # Skip early: if j is already in tup the union has the
-                    # same size (not a new non-face candidate).
                     if j in tup:
                         continue
 
-                    k = tuple(sorted(tup + (j,)))
+                    lst = list(tup)
+                    _insort(lst, j)
+                    k = tuple(lst)
 
-                    # skip if already checked
                     if k in checked:
                         continue
                     checked.add(k)
@@ -2404,24 +2514,20 @@ class Triangulation:
                     if k in simplex_tuples[i + 1]:
                         continue
 
-                    # check it
-                    in_SR = False
+                    # check minimality against all smaller generators
+                    covered = False
                     for order in range(1, i + 1):
                         for t in itertools.combinations(tup, order):
-                            if tuple(sorted(t + (j,))) in SR_ideal:
-                                in_SR = True
+                            sub = list(t)
+                            _insort(sub, j)
+                            if tuple(sub) in SR_ideal:
+                                covered = True
                                 break
-                        else:
-                            # no sub-tuple t at this order had t+(j,) in SR_ideal
-                            continue
-
-                        # found a sub-face already in the ideal — not a generator
-                        break
-                    else:
-                        # no sub-face in SR_ideal for any order — k is a generator
+                        if covered:
+                            break
+                    if not covered:
                         SR_ideal.add(k)
 
-        # SR_ideal elements are already sorted tuples — no re-sort needed per element
         self._sr_ideal = tuple(sorted(SR_ideal, key=lambda x: (len(x), x)))
         return self._sr_ideal
 
