@@ -35,6 +35,9 @@ venv/
 .coverage.*
 htmlcov/
 
+# Benchmark baselines (too large for GitHub)
+benchmarks/baselines/
+
 # Local testing and scratch files
 private.py
 examples/
