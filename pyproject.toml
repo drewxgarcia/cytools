@@ -61,6 +61,7 @@ classifiers = [
 ]
 
 [project.optional-dependencies]
+datasets = ["huggingface-hub"]
 test = [
   "pytest"
 ]
@@ -74,7 +75,14 @@ gnn = [
 [dependency-groups]
 dev = [
   "pytest",
+  "pytest-benchmark",
 ]
+
+[tool.pytest.ini_options]
+testpaths = ["tests", "benchmarks"]
+pythonpath = ["benchmarks"]
+python_files = ["test_*.py", "bench_*.py"]
+markers = ["slow: long-running benchmarks (deselect with -m 'not slow')"]
 
 [tool.uv]
 default-groups = ["dev"]
