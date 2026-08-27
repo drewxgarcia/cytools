@@ -75,7 +75,9 @@ Two access modes are supported for each database:
 from __future__ import annotations
 
 import os
+import hashlib
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from dataclasses import dataclass
 from pathlib import Path
 from typing import NamedTuple
 
@@ -371,9 +373,315 @@ def _extract_vertices_from_table(table: pa.Table) -> list[np.ndarray]:
     return [np.array(col[i].as_py(), dtype=np.int32) for i in range(n_rows)]
 
 
-# Process-level cache: (vertex_counts_tuple, h11, h12, chi, n_facets, n_points,
-#                        n_dual_points, n, seed, str(resolved_dir)) → records
-_CACHE: dict[tuple, list[PolytopeRecord]] = {}
+# ---------------------------------------------------------------------------
+# Batch representation
+# ---------------------------------------------------------------------------
+
+
+def _ks_ids(vertex_values: np.ndarray, offsets: np.ndarray) -> np.ndarray:
+    """A stable identifier per row, derived from the stored vertices.
+
+    Content-derived rather than positional. A row's position depends on how the
+    database happens to be partitioned and on whatever filter produced the
+    scan, so a positional id would not survive re-partitioning or let two
+    differently-filtered scans be joined. Hashing the vertex bytes gives an id
+    that is the same in every scan that sees the row, which is what makes a
+    derived-results store joinable against the source.
+
+    64 bits over the full 438M-row database carries a birthday collision
+    probability of roughly 5e-3, so this is fine for keying derived results but
+    should not be treated as a cryptographic or globally unique identifier.
+    """
+    out = np.empty(len(offsets) - 1, dtype=np.int64)
+    for i in range(len(out)):
+        block = vertex_values[offsets[i] : offsets[i + 1]]
+        digest = hashlib.blake2b(
+            np.ascontiguousarray(block, dtype=np.int32).tobytes(),
+            digest_size=8,
+        ).digest()
+        out[i] = int.from_bytes(digest, "little", signed=True)
+    return out
+
+
+@dataclass
+class PolytopeBatch:
+    """A batch of KS polytopes held as flat columnar buffers.
+
+    Deliberately contains no :class:`~cytools.polytope.Polytope` objects. A
+    landscape-scale scan constructs one Python object per row only if something
+    asks it to, and :meth:`polytope` is the single place that happens. The
+    vertices of every row live in one contiguous ``(total_vertices, dim)``
+    array addressed by ``vertex_offsets``, so a batch can be handed to a
+    vectorised or compiled kernel without being taken apart first.
+
+    See :class:`PolytopeRecord` for the M-lattice convention of the ``h11``,
+    ``h12`` and ``euler_characteristic`` columns.
+    """
+
+    ks_ids: np.ndarray  # (n,) int64
+    vertex_values: np.ndarray  # (total_vertices, dim) int32, contiguous
+    vertex_offsets: np.ndarray  # (n+1,) int64
+    vertex_count: np.ndarray  # (n,) int
+    h11: np.ndarray  # (n,) int
+    h12: np.ndarray  # (n,) int
+    euler_characteristic: np.ndarray  # (n,) int
+
+    def __len__(self) -> int:
+        return len(self.ks_ids)
+
+    def vertices(self, i: int) -> np.ndarray:
+        """A zero-copy view of row *i*'s vertices, shaped ``(n_verts, dim)``.
+
+        In the order stored in the database, which is not necessarily the order
+        :meth:`~cytools.polytope.Polytope.vertices` returns -- constructing a
+        Polytope canonicalizes them. The two agree as sets.
+        """
+        return self.vertex_values[self.vertex_offsets[i] : self.vertex_offsets[i + 1]]
+
+    def iter_vertices(self):
+        """Yield each row's vertices as a view. No Polytope is constructed."""
+        off = self.vertex_offsets
+        for i in range(len(self)):
+            yield self.vertex_values[off[i] : off[i + 1]]
+
+    def polytope(self, i: int) -> Polytope:
+        """Materialize row *i* as a Polytope. The explicit opt-in."""
+        return Polytope(self.vertices(i))
+
+    def record(self, i: int) -> PolytopeRecord:
+        """Materialize row *i* as a :class:`PolytopeRecord`."""
+        return PolytopeRecord(
+            polytope=self.polytope(i),
+            vertex_count=int(self.vertex_count[i]),
+            h11=int(self.h11[i]),
+            h12=int(self.h12[i]),
+            euler_characteristic=int(self.euler_characteristic[i]),
+        )
+
+    def records(self) -> list[PolytopeRecord]:
+        """Materialize the whole batch. Constructs one Polytope per row."""
+        return [self.record(i) for i in range(len(self))]
+
+    def take(self, indices) -> "PolytopeBatch":
+        """A new batch with only *indices*, re-packed contiguously."""
+        indices = np.asarray(indices, dtype=np.int64)
+        blocks = [self.vertices(int(i)) for i in indices]
+        counts = np.array([len(b) for b in blocks], dtype=np.int64)
+        offsets = np.zeros(len(blocks) + 1, dtype=np.int64)
+        np.cumsum(counts, out=offsets[1:])
+        values = (
+            np.concatenate(blocks)
+            if blocks
+            else np.empty((0, self.vertex_values.shape[1]), dtype=np.int32)
+        )
+        return PolytopeBatch(
+            ks_ids=self.ks_ids[indices],
+            vertex_values=values,
+            vertex_offsets=offsets,
+            vertex_count=self.vertex_count[indices],
+            h11=self.h11[indices],
+            h12=self.h12[indices],
+            euler_characteristic=self.euler_characteristic[indices],
+        )
+
+
+def _resolve_4d_paths(counts, resolved_dir, stream, hf_token) -> list[Path]:
+    """Resolve one Parquet path per vertex count, checking existence up front."""
+    paths: list[Path] = []
+    for vc in counts:
+        if stream:
+            paths.append(_hf_download(_HF_4D_REPO, _hf_4d_filename(vc), hf_token))
+        else:
+            assert resolved_dir is not None
+            p = _db_path(vc, resolved_dir)
+            if not p.exists():
+                raise FileNotFoundError(
+                    f"Polytope database file not found: {p}\n"
+                    f"Set CYTOOLS_DB_DIR to the directory containing the "
+                    f".parquet files, or pass stream=True to download from "
+                    f"HuggingFace."
+                )
+            paths.append(p)
+    return paths
+
+
+def _scan_table(
+    *,
+    counts,
+    h11,
+    h12,
+    chi,
+    n_facets,
+    n_points,
+    n_dual_points,
+    n,
+    seed,
+    resolved_dir,
+    stream,
+    hf_token,
+) -> pa.Table:
+    """Scan the requested Parquet files down to one Arrow table.
+
+    Shared by :func:`load_polytopes` and :func:`scan_batches` so that filtering,
+    sampling and path resolution have exactly one implementation. Results are
+    intentionally not cached: the previous process-level cache retained whole
+    query results including live Polytope objects, which is unbounded retention
+    at landscape scale. The filesystem page cache already covers the cheap part.
+    """
+    arrow_filter = _build_arrow_filter(
+        h11, h12, chi, n_facets, n_points, n_dual_points
+    )
+    rng = np.random.default_rng(seed)
+    paths = _resolve_4d_paths(counts, resolved_dir, stream, hf_token)
+
+    # Each worker gets its own seeded rng derived from the parent seed, so
+    # results are deterministic per (seed, file) and independent across files.
+    def _load_one(args: tuple[Path, int]) -> pa.Table:
+        path, idx = args
+        file_rng = np.random.default_rng(None if seed is None else seed + idx)
+        return _load_table(path, arrow_filter, n, file_rng, _LOAD_COLUMNS)
+
+    tables: list[pa.Table]
+    if len(paths) <= 1:
+        tables = [_load_one((paths[0], 0))] if paths else []
+    else:
+        n_workers = min(len(paths), (os.cpu_count() or 1) * 2)
+        with ThreadPoolExecutor(max_workers=n_workers) as pool:
+            tables = list(pool.map(_load_one, ((p, i) for i, p in enumerate(paths))))
+
+    table = (
+        pa.concat_tables(tables)
+        if tables
+        else pa.table({col: [] for col in _LOAD_COLUMNS})
+    )
+
+    if n is not None and len(table) > n:
+        table = table.take(rng.choice(len(table), size=n, replace=False))
+
+    return table
+
+
+def scan_batches(
+    n_vertices: int | list[int] | None = None,
+    h11: int | None = None,
+    h12: int | None = None,
+    chi: int | None = None,
+    n_facets: int | None = None,
+    n_points: int | None = None,
+    n_dual_points: int | None = None,
+    n: int | None = None,
+    batch_size: int = 4096,
+    seed: int = 42,
+    db_dir: Path | str | None = None,
+    stream: bool = False,
+    hf_token: str | None = None,
+):
+    """
+    **Description:**
+    Scan the 4D Kreuzer-Skarke database and yield :class:`PolytopeBatch`
+    objects, without constructing a `Polytope` for any row.
+
+    This is the batch-native counterpart to :func:`load_polytopes`. That
+    function materializes one Python `Polytope` per row eagerly, which is fine
+    interactively but is the dominant cost of a landscape-scale scan: the
+    Parquet read hands back contiguous integer buffers, and building an object
+    per row immediately discards that layout. Use `scan_batches` when the work
+    is "apply a computation to many rows", and `load_polytopes` when you want
+    objects to poke at.
+
+    Filtering arguments match :func:`load_polytopes`, including the M-lattice
+    convention of `h11`/`h12`/`chi` documented on :class:`PolytopeRecord`.
+
+    **Arguments:**
+    - `n_vertices`: Vertex-count file(s) to scan. `None` scans all available.
+    - `h11`, `h12`, `chi`, `n_facets`, `n_points`, `n_dual_points`: Column
+        filters, pushed down to Parquet.
+    - `n`: Total rows to sample. `None` scans everything matching.
+    - `batch_size`: Rows per yielded batch.
+    - `seed`: Sampling seed.
+    - `db_dir`: Local database directory. Defaults to `CYTOOLS_DB_DIR`.
+    - `stream`: Download from HuggingFace instead of reading locally.
+    - `hf_token`: HuggingFace token, when streaming.
+
+    **Returns:**
+    *(generator)* Yields :class:`PolytopeBatch`.
+
+    **Example:**
+    Compute an invariant over many geometries without building the objects.
+    ```python {4}
+    from cytools.dataset import scan_batches
+    total = 0
+    for batch in scan_batches(n_vertices=[13, 14], n=10000):
+        for verts in batch.iter_vertices():
+            total += len(verts)
+    ```
+    """
+    resolved_dir = (
+        _resolve_dir(db_dir, DB_DIR, "CYTOOLS_DB_DIR", "4D polytope")
+        if not stream
+        else None
+    )
+
+    if n_vertices is None:
+        counts = (
+            _all_vertex_counts(resolved_dir) if not stream else list(range(5, 37))
+        )
+    elif isinstance(n_vertices, int):
+        counts = [n_vertices]
+    else:
+        counts = list(n_vertices)
+
+    table = _scan_table(
+        counts=counts,
+        h11=h11,
+        h12=h12,
+        chi=chi,
+        n_facets=n_facets,
+        n_points=n_points,
+        n_dual_points=n_dual_points,
+        n=n,
+        seed=seed,
+        resolved_dir=resolved_dir,
+        stream=stream,
+        hf_token=hf_token,
+    )
+
+    for start in range(0, len(table), batch_size):
+        yield _table_to_batch(table.slice(start, batch_size))
+
+
+def _table_to_batch(table: pa.Table) -> PolytopeBatch:
+    """Build a PolytopeBatch from an Arrow table without materializing rows."""
+    n_rows = len(table)
+    if not n_rows:
+        empty_i = np.empty(0, dtype=np.int64)
+        return PolytopeBatch(
+            ks_ids=empty_i,
+            vertex_values=np.empty((0, 4), dtype=np.int32),
+            vertex_offsets=np.zeros(1, dtype=np.int64),
+            vertex_count=empty_i,
+            h11=empty_i,
+            h12=empty_i,
+            euler_characteristic=empty_i,
+        )
+
+    blocks = _extract_vertices_from_table(table)
+    counts = np.array([len(b) for b in blocks], dtype=np.int64)
+    offsets = np.zeros(n_rows + 1, dtype=np.int64)
+    np.cumsum(counts, out=offsets[1:])
+    values = np.ascontiguousarray(np.concatenate(blocks), dtype=np.int32)
+
+    col = lambda name: table.column(name).to_numpy(zero_copy_only=False)  # noqa: E731
+
+    return PolytopeBatch(
+        ks_ids=_ks_ids(values, offsets),
+        vertex_values=values,
+        vertex_offsets=offsets,
+        vertex_count=col("vertex_count"),
+        h11=col("h11"),
+        h12=col("h12"),
+        euler_characteristic=col("euler_characteristic"),
+    )
 
 
 def _load_table(
@@ -604,62 +912,21 @@ def load_polytopes(
     else:
         counts = list(n_vertices)
 
-    arrow_filter = _build_arrow_filter(h11, h12, chi, n_facets, n_points, n_dual_points)
-
-    cache_key = (
-        tuple(counts), h11, h12, chi, n_facets, n_points, n_dual_points,
-        n, seed, stream, str(db_dir) if not stream else None,
+    table = _scan_table(
+        counts=counts,
+        h11=h11,
+        h12=h12,
+        chi=chi,
+        n_facets=n_facets,
+        n_points=n_points,
+        n_dual_points=n_dual_points,
+        n=n,
+        seed=seed,
+        resolved_dir=resolved_dir,
+        stream=stream,
+        hf_token=hf_token,
     )
-    if cache_key in _CACHE:
-        return _CACHE[cache_key]
-
-    rng = np.random.default_rng(seed)
-
-    # Resolve paths up-front so workers don't duplicate error checking
-    paths: list[Path] = []
-    for vc in counts:
-        if stream:
-            paths.append(_hf_download(_HF_4D_REPO, _hf_4d_filename(vc), hf_token))
-        else:
-            assert resolved_dir is not None
-            p = _db_path(vc, resolved_dir)
-            if not p.exists():
-                raise FileNotFoundError(
-                    f"Polytope database file not found: {p}\n"
-                    f"Set CYTOOLS_DB_DIR to the directory containing the "
-                    f".parquet files, or pass stream=True to download from "
-                    f"HuggingFace."
-                )
-            paths.append(p)
-
-    # When n is None (full scan) or multiple files are needed, load in parallel.
-    # Each worker gets its own seeded rng derived from the parent seed so results
-    # are deterministic per (seed, file) but independent across files.
-    def _load_one(args: tuple[Path, int]) -> pa.Table:
-        path, idx = args
-        file_rng = np.random.default_rng(None if seed is None else seed + idx)
-        return _load_table(path, arrow_filter, n, file_rng, _LOAD_COLUMNS)
-
-    n_workers = min(len(paths), (os.cpu_count() or 1) * 2)
-    tables: list[pa.Table]
-    if len(paths) <= 1:
-        tables = [_load_one((paths[0], 0))] if paths else []
-    else:
-        with ThreadPoolExecutor(max_workers=n_workers) as pool:
-            tables = list(pool.map(_load_one, ((p, i) for i, p in enumerate(paths))))
-
-    full_table = (
-        pa.concat_tables(tables) if tables
-        else pa.table({col: [] for col in _LOAD_COLUMNS})
-    )
-
-    if n is not None and len(full_table) > n:
-        idx = rng.choice(len(full_table), size=n, replace=False)
-        full_table = full_table.take(idx)
-
-    records = _table_to_records(full_table)
-    _CACHE[cache_key] = records
-    return records
+    return _table_to_records(table)
 
 
 def load_sample(
