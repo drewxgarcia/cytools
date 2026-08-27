@@ -598,7 +598,11 @@ def solve_linear_system(
     - `M`: The matrix.
     - `C`: The constant term.
     - `backend`: The solver to use. Options are "all", "sksparse" and "scipy".
-        When set to "all" it tries all available backends.
+        When set to "all" it tries the backends in order and returns the first
+        solution that passes the residual check. "sksparse" uses a CHOLMOD
+        Cholesky factorization of the normal equations and is the faster of the
+        two; "scipy" uses SuperLU and serves as the fallback for systems CHOLMOD
+        rejects.
     - `check`: Whether to explicitly check the solution to the linear system.
     - `backend_error_tol`: Error tolerance for the solution.
     - `verbosity`: The verbosity level.
@@ -641,14 +645,24 @@ def solve_linear_system(
                 return solution
 
     elif backend == "sksparse":
-        try:
-            from sksparse.cholmod import cholesky_AAt
+        # Solve the normal equations (M^T M) x = -M^T C with a CHOLMOD
+        # Cholesky factorization.
+        #
+        # scikit-sparse is a hard requirement (>=0.5.0), so a failed import is
+        # a broken installation and propagates. Only a genuine numerical or
+        # shape failure counts as "this backend cannot solve it", which is what
+        # lets the "all" waterfall fall through to scipy.
+        from sksparse.cholmod import CholmodError, cho_factor
 
-            factor = cholesky_AAt(M.transpose())
-            solution = factor(-M.transpose() * C)
-        except Exception:
+        Mt = M.transpose()
+
+        try:
+            solution = cho_factor((Mt @ M).tocsc()).solve(-Mt.dot(C))
+            solution = np.asarray(solution).ravel()
+        except (CholmodError, ArithmeticError, ValueError) as e:
+            solution = None
             if verbosity >= 1:
-                print("Linear backend error: sksparse failed.")
+                print(f"Linear backend error: sksparse failed ({e}).")
 
     elif backend == "scipy":
         try:
@@ -663,7 +677,7 @@ def solve_linear_system(
 
     if check:
         res = M.dot(solution) + C
-        max_error = max(abs(s) for s in res.flat)
+        max_error = np.abs(res).max()
 
         if max_error > backend_error_tol:
             if verbosity >= 1:
