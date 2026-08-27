@@ -2467,6 +2467,16 @@ class Triangulation:
             x3x5, x4x5, x1x3x4
         Don't include things like x2x3x5 since it is a multiple of x3x5.
 
+        :::note
+        If a point of the triangulation belongs to no simplex, which can happen
+        only for a non-fine triangulation, the pairs joining it to each point
+        that *is* used are included even though they are not strictly minimal:
+        the unused point is a non-face on its own. Pairs of two unused points
+        are not included. This is long-standing behaviour and is covered by
+        `tests/test_sr_ideal.py`. For fine triangulations every point is used
+        and the output is exactly the set of minimal non-faces.
+        :::
+
         **Arguments:**
         None.
 
@@ -2495,57 +2505,133 @@ class Triangulation:
             )
 
         # prep-work
-        labels = set(self.labels) - {self.poly._label_origin}
-        simplices = [labels.intersection(s) for s in self.simplices()]
+        #
+        # Point subsets are represented as integer bitmasks rather than
+        # frozensets: one bit per non-origin label. Union becomes `|`, subset
+        # size becomes int.bit_count(), and "is this point already in the
+        # subset" becomes a mask test -- all C-level int operations with no
+        # allocation, where the frozenset formulation allocated a new object
+        # for every candidate subset it considered and hashed it to look it up.
+        labels = [ll for ll in self.labels if ll != self.poly._label_origin]
+        bit_of = {ll: 1 << i for i, ll in enumerate(labels)}
 
-        simplex_tuples = []
-        for dd in range(1, self.dim() + 1):
-            simplex_tuples.append(set())
+        dim = self.dim()
 
-            for s in simplices:
-                simplex_tuples[-1].update(
-                    frozenset(tup) for tup in itertools.combinations(s, dd)
-                )
+        # each simplex as a bitmask, with the origin dropped
+        simplex_masks = []
+        for s in self.simplices():
+            mask = 0
+            for ll in s:
+                bit = bit_of.get(ll)
+                if bit is not None:
+                    mask |= bit
+            simplex_masks.append(mask)
 
-        # calculate the SR ideal
-        SR_ideal, checked = set(), set()
+        n_labels = len(labels)
+        all_mask = (1 << n_labels) - 1
 
-        for i in range(len(simplex_tuples) - 1):
-            for tup in simplex_tuples[i]:
-                for j in labels:
-                    k = tup.union((j,))
+        # faces[dd-1] = every size-dd subset of some simplex, i.e. the faces of
+        # the complex. Enumerating submasks with the standard `(sub - 1) & mask`
+        # walk visits each subset of a simplex exactly once, so every size comes
+        # out of one pass instead of re-running combinations per size.
+        faces = [set() for _ in range(dim)]
+        for mask in simplex_masks:
+            sub = mask
+            while sub:
+                count = sub.bit_count()
+                if count <= dim:
+                    faces[count - 1].add(sub)
+                sub = (sub - 1) & mask
 
-                    # skip if already checked
-                    if (k in checked) or (len(k) != len(tup) + 1):
+        # co[i] = the points that share a simplex with point i (including i).
+        # Packed as a bitmask so intersecting neighbourhoods is a single `&`.
+        co = [0] * n_labels
+        for mask in simplex_masks:
+            sub = mask
+            while sub:
+                low = sub & -sub
+                co[low.bit_length() - 1] |= mask
+                sub ^= low
+
+        SR_ideal = set()
+
+        # Size-2 generators are the pairs of points that never share a simplex,
+        # provided at least one of the two lies in a simplex at all. A point
+        # belonging to no simplex is not itself a face, so pairing it with
+        # another such point gives a non-minimal set; pairing it with a genuine
+        # vertex does give a generator. `j not in co[i]` is exactly "no simplex
+        # contains both", so masking against `~co[i]` yields the pairs directly
+        # rather than testing every point against every other point.
+        singletons = faces[0]
+        for i in range(n_labels):
+            bit_i = 1 << i
+            i_is_face = bit_i in singletons
+
+            # restrict to j > i so each pair is emitted once
+            others = all_mask & ~co[i] & ~((bit_i << 1) - 1)
+            while others:
+                low = others & -others
+                others ^= low
+                if i_is_face or (low in singletons):
+                    SR_ideal.add(bit_i | low)
+
+        # Larger generators. A minimal non-face of size m is a set that is not
+        # itself a face while every one of its codimension-one subsets is. Such
+        # a set can only extend a face by a point adjacent to all of it -- were
+        # some point of `tup` not adjacent, that pair would already be a
+        # size-2 generator and `tup + point` a multiple of it -- so candidates
+        # come from the intersected neighbourhood rather than from every label.
+        for m in range(3, dim + 1):
+            prev_faces = faces[m - 2]
+            cur_faces = faces[m - 1]
+            seen = set()
+
+            for tup in prev_faces:
+                common = all_mask
+                sub = tup
+                while sub:
+                    low = sub & -sub
+                    common &= co[low.bit_length() - 1]
+                    sub ^= low
+
+                cands = common & ~tup
+                while cands:
+                    low = cands & -cands
+                    cands ^= low
+
+                    k = tup | low
+                    if k in seen:
                         continue
-                    else:
-                        checked.add(k)
+                    seen.add(k)
 
-                    if k in simplex_tuples[i + 1]:
+                    if k in cur_faces:
                         continue
 
-                    # check it
-                    in_SR = False
-                    for order in range(1, i + 1):
-                        for t in itertools.combinations(tup, order):
-                            if frozenset(t + (j,)) in SR_ideal:
-                                in_SR = True
-                                break
-                        else:
-                            # frozenset(t+(j,)) was not in SR_ideal for any t
-                            # at this order
-                            continue
+                    # minimality: drop each point in turn and require a face
+                    minimal = True
+                    sub = k
+                    while sub:
+                        bit = sub & -sub
+                        if (k ^ bit) not in prev_faces:
+                            minimal = False
+                            break
+                        sub ^= bit
 
-                        # there was a t at this order such that
-                        # frozenset(t+(j,)) was in SR_ideal for some
-                        break
-                    else:
-                        # frozenset(t+(j,)) was not in SR_ideal for any order
+                    if minimal:
                         SR_ideal.add(k)
 
-        # return
-        self._sr_ideal = [tuple(sorted(s)) for s in SR_ideal]
-        self._sr_ideal = tuple(sorted(self._sr_ideal, key=lambda x: (len(x), x)))
+        # map the bitmasks back to labels
+        label_at_bit = {bit: ll for ll, bit in bit_of.items()}
+        out = []
+        for mask in SR_ideal:
+            sub, entry = mask, []
+            while sub:
+                low = sub & -sub
+                entry.append(label_at_bit[low])
+                sub ^= low
+            out.append(tuple(sorted(entry)))
+
+        self._sr_ideal = tuple(sorted(out, key=lambda x: (len(x), x)))
         return self._sr_ideal
 
 

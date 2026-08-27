@@ -567,16 +567,17 @@ def filter_tensor_indices(tensor: dict, indices: list[int]) -> dict:
     ```
     """
     # map from index to its count in indices object
+    #
+    # this doubles as the membership test below: `c in reindex` is a dict lookup,
+    # whereas `c in indices` scanned the list for every coordinate of every key
     reindex = {ind: i for i, ind in enumerate(indices)}
 
-    # only keep entries whose indices match those in indices
-    filtered = {
-        key: val for key, val in tensor.items() if all(c in indices for c in key)
-    }
-
-    # return reindexed tensor (order defined by indices input)
+    # keep entries whose indices all appear in `indices`, reindexed
+    # (order defined by indices input)
     return {
-        tuple(sorted(reindex[c] for c in key)): val for key, val in filtered.items()
+        tuple(sorted(reindex[c] for c in key)): val
+        for key, val in tensor.items()
+        if all(c in reindex for c in key)
     }
 
 
