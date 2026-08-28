@@ -2297,6 +2297,7 @@ class CalabiYau:
         n_pts = pts_ext.shape[0]
         mori_cap_rays = set()
         simp_2d_all = set()
+        twoface_circuits = []
         # We start by finding circuits in 2-faces and their respective Mori cone
         # rays. These correspond to flips to other CYs or to non-fine
         # triangulations. We also keep track of all 2d simplices for later.
@@ -2315,28 +2316,38 @@ class CalabiYau:
                     simp_2d.add(ss)
                     simp_2d_all.add(ss)
             simps = list(simp_2d)
-            m = np.empty((4,5),dtype=int)
+            # collect the circuits first, then take all their null spaces in one
+            # batched SVD rather than one scipy call per circuit
             for i in range(len(simps)):
                 for j in range(i,len(simps)):
                     comm_pts = list(simps[i] & simps[j])
                     if len(comm_pts) == 2:
-                        diff_pts = list(simps[i] ^ simps[j])
-                        m[:2,:] = pts_ext[diff_pts]
-                        m[2:,:] = pts_ext[comm_pts]
-                        # use flint nullspace...
-                        v = null_space(m.T)[:,0]
-                        if v[0] < 0:
-                            v *= -1
-                        g = gcd_list(v)
-                        v = [int(round(i/g)) for i in v]
-                        full_v = [(diff_pts[k],v[k]) for k in range(2)] + [(comm_pts[k],v[k+2]) for k in range(2) if v[k+2]]
-                        mori_cap_rays.add(tuple(sorted(full_v)))
+                        twoface_circuits.append(
+                            (list(simps[i] ^ simps[j]), comm_pts)
+                        )
+        if twoface_circuits:
+            mats = np.empty((len(twoface_circuits), 4, 5), dtype=float)
+            for k, (diff_pts, comm_pts) in enumerate(twoface_circuits):
+                mats[k, :2, :] = pts_ext[diff_pts]
+                mats[k, 2:, :] = pts_ext[comm_pts]
+            vecs, _ = _batched_null_vectors(mats.transpose(0, 2, 1))
+
+            for k, (diff_pts, comm_pts) in enumerate(twoface_circuits):
+                v = vecs[k]
+                if v[0] < 0:
+                    v = -v
+                g = gcd_list(v)
+                v = [int(round(x/g)) for x in v]
+                full_v = [(diff_pts[q],v[q]) for q in range(2)] + [(comm_pts[q],v[q+2]) for q in range(2) if v[q+2]]
+                mori_cap_rays.add(tuple(sorted(full_v)))
+
         # Now find we find the remaining rays. We do this by taking each 2-simplex
         # in each 2-face and considering all possible circuits with points of the
         # two containing facets.
         if verbosity >= 1:
             print("origin circuits...")
-        m = np.empty((6,5),dtype=int)
+        # same shape as above: enumerate the circuits, then one batched SVD
+        origin_circuits = []
         for s2d in simp_2d_all:
             f1 = None
             f2 = None
@@ -2349,29 +2360,34 @@ class CalabiYau:
                         break
             pts_f1 = f1.difference(f2)
             pts_f2 = f2.difference(f1)
+            comm_pts = list(s2d)+[0]
             for p1 in pts_f1:
                 for p2 in pts_f2:
-                    diff_pts = [p1,p2]
-                    comm_pts = list(s2d)+[0]
-                    m[:2,:] = pts_ext[diff_pts]
-                    m[2:,:] = pts_ext[comm_pts]
-                    # use flint nullspace...
-                    v = null_space(m.T)
-                    if v.shape[1] != 1:
-                        warnings.warn(f"Kernel dimension {v.shape[1]}.")
-                        continue
-                    v = v[:,0]
-                    if v[0] < 0:
-                        v *= -1
-                    g = gcd_list(v)
-                    v = [int(round(i/g)) for i in v]
-                    full_v = sorted([(diff_pts[k],v[k]) for k in range(2)] + [(comm_pts[k],v[k+2]) for k in range(4) if v[k+2]])
-                    if full_v[0][0] == 0 and full_v[0][1] == 0:
-                        continue
-                    elif full_v[0][0] == 0 and full_v[0][1] > 0:
-                        print("Warning: Positive coefficient of origin.")
-                        continue
-                    mori_cap_rays.add(tuple(full_v))
+                    origin_circuits.append(([p1,p2], comm_pts))
+
+        if origin_circuits:
+            mats = np.empty((len(origin_circuits), 6, 5), dtype=float)
+            for k, (diff_pts, comm_pts) in enumerate(origin_circuits):
+                mats[k, :2, :] = pts_ext[diff_pts]
+                mats[k, 2:, :] = pts_ext[comm_pts]
+            vecs, null_dims = _batched_null_vectors(mats.transpose(0, 2, 1))
+
+            for k, (diff_pts, comm_pts) in enumerate(origin_circuits):
+                if null_dims[k] != 1:
+                    warnings.warn(f"Kernel dimension {null_dims[k]}.")
+                    continue
+                v = vecs[k]
+                if v[0] < 0:
+                    v = -v
+                g = gcd_list(v)
+                v = [int(round(x/g)) for x in v]
+                full_v = sorted([(diff_pts[q],v[q]) for q in range(2)] + [(comm_pts[q],v[q+2]) for q in range(4) if v[q+2]])
+                if full_v[0][0] == 0 and full_v[0][1] == 0:
+                    continue
+                elif full_v[0][0] == 0 and full_v[0][1] > 0:
+                    print("Warning: Positive coefficient of origin.")
+                    continue
+                mori_cap_rays.add(tuple(full_v))
         # Build the ray matrix from COO triples in one construction. Assigning
         # into a dok_matrix element by element ran __setitem__ once per nonzero
         # -- 21,000 times at h11=20, each doing index validation -- and was 43%
@@ -2402,6 +2418,44 @@ class CalabiYau:
         if format=="sparse":
             return new_rays
         return Cone(new_rays.todense(), check=False)
+
+
+def _batched_null_vectors(mats: np.ndarray):
+    """
+    **Description:**
+    Null-space vectors of a stack of matrices, from one batched SVD.
+
+    Replaces a per-matrix ``scipy.linalg.null_space`` call. The circuit matrices
+    in :meth:`CalabiYau.mori_cone_cap` are 5x4 and 5x6 with one-dimensional null
+    spaces, and there are thousands of them per geometry -- 5,664 at h11=20 --
+    so the per-call overhead of a separate SVD dominates the arithmetic.
+
+    Selects the same vector ``null_space(...)[:, 0]`` would: the right singular
+    vector at index ``rank``, using the same tolerance rule.
+
+    **Arguments:**
+    - `mats`: Stack of shape ``(n, rows, cols)``.
+
+    **Returns:**
+    *(tuple)* ``(vectors, null_dim)``, where ``vectors[i]`` spans the null space
+        of ``mats[i]`` and ``null_dim[i]`` is its dimension.
+    """
+    mats = np.asarray(mats, dtype=float)
+    n, n_rows, n_cols = mats.shape
+    if not n:
+        return np.empty((0, n_cols)), np.empty(0, dtype=int)
+
+    _, sing, vh = np.linalg.svd(mats, full_matrices=True)
+
+    # scipy.linalg.null_space's default tolerance
+    rcond = max(n_rows, n_cols) * np.finfo(float).eps
+    tol = sing.max(axis=1, keepdims=True) * rcond
+    rank = (sing > tol).sum(axis=1)
+    null_dim = n_cols - rank
+
+    picked = np.clip(rank, 0, n_cols - 1)
+    vectors = np.take_along_axis(vh, picked[:, None, None], axis=1)[:, 0, :]
+    return vectors, null_dim
 
 
 class Invariants:
