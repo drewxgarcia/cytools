@@ -1071,34 +1071,54 @@ class ToricVariety:
         ```
         """
         points = self.triangulation().points()
-        simps = self.triangulation().simplices(as_indices=True)
+        simps = np.asarray(self.triangulation().simplices(as_indices=True))
 
         # Origin is at index 0
         pts_ext = np.empty( (points.shape[0], points.shape[1] + 1), dtype=int )
         pts_ext[:, :-1] = points
         pts_ext[:, -1] = 1
 
-        linear_relations = self.glsm_linear_relations(include_origin=False)
-
-        # First compute the distinct intersection numbers
-        distintnum_array = sorted(
-            [
-                [c for c in simp if c != 0]
-                + [1 / abs(np.linalg.det([pts_ext[p] for p in simp]))]
-                for simp in simps
-            ]
+        linear_relations = np.asarray(
+            self.glsm_linear_relations(include_origin=False), dtype=np.float64
         )
 
-        frst = [[c for c in s if c != 0] for s in simps]
-        simp_2 = {j for f in frst for j in combinations(f, 2)}
-        simp_3 = {j for f in frst for j in combinations(f, 3)}
+        # First compute the distinct intersection numbers.
+        #
+        # One batched determinant over the whole (n_simps, d+1, d+1) stack,
+        # rather than a Python list of rows and a separate LAPACK call per
+        # simplex.
+        n_simps = len(simps)
+        inv_abs_dets = 1.0 / np.abs(np.linalg.det(pts_ext[simps]))
+
+        # Drop the origin from each simplex. Every simplex of a full-dimensional
+        # star triangulation contains it exactly once, so the nonzero labels
+        # reshape cleanly; the general path is kept for anything that does not.
+        nonzero = simps != 0
+        counts = nonzero.sum(axis=1)
+        if n_simps and (counts == counts[0]).all():
+            faces = simps[nonzero].reshape(n_simps, int(counts[0]))
+        else:
+            faces = np.array([[c for c in s if c != 0] for s in simps])
+
+        # sorted() on [i0, i1, i2, i3, value] rows, done on the index columns
+        order = np.lexsort(faces.T[::-1])
+        faces = faces[order]
+        inv_abs_dets = inv_abs_dets[order]
+
+        face_rows = faces.tolist()
+        distintnum_array = [
+            row + [val] for row, val in zip(face_rows, inv_abs_dets.tolist())
+        ]
+
+        simp_2 = {j for f in face_rows for j in combinations(f, 2)}
+        simp_3 = {j for f in face_rows for j in combinations(f, 3)}
 
         # We construct and solve the linear system M*x + C = 0, where M is
         # a rectangular mxn matrix and C is a vector.
         ###################################################################
-        ### Define dictionaries, to be used to construct the linear system
+        ### Define the variables and equations
         ###################################################################
-        ## Dictionary of variables
+        ## Variables
         # Most intersection numbers are trivially zero, find the possibly
         # nonzero intersection numbers.
         variable_array_1 = [
@@ -1129,17 +1149,7 @@ class ToricVariety:
         variable_array = sorted(variable_array_1 + variable_array_2 + variable_array_3)
         variable_dict = {vv: v for v, vv in enumerate(variable_array)}
 
-        ## Dictionary to construct C
-        # C is constructed by adding/subtracting distinct intersection
-        # numbers.
-        c_dict = {s: [] for s in simp_3}
-        for d in distintnum_array:
-            c_dict[(d[0], d[1], d[2])] += [[d[3], d[4]]]
-            c_dict[(d[0], d[1], d[3])] += [[d[2], d[4]]]
-            c_dict[(d[0], d[2], d[3])] += [[d[1], d[4]]]
-            c_dict[(d[1], d[2], d[3])] += [[d[0], d[4]]]
-
-        ## Dictionary to construct M
+        ## Equations
         eqn_array_1 = [tuple(s) for s in simp_3]
         eqn_array_2 = [
             tuple(j)
@@ -1148,53 +1158,111 @@ class ToricVariety:
         ]
         eqn_array_3 = [(i, i, i) for i in range(1, len(pts_ext))]
         eqn_array = sorted(eqn_array_1 + eqn_array_2 + eqn_array_3)
-        eqn_dict = {eq: [] for eq in eqn_array}
+        eqn_index = {eq: q for q, eq in enumerate(eqn_array)}
+
+        ###################################################################
+        ### Flatten the system into index arrays
+        ###################################################################
+        # Each variable contributes to one to three equations, with the
+        # remaining index of the quadruple as the coefficient selector. The
+        # earlier version accumulated these into a dict of lists keyed by
+        # equation, then walked it inside a triple-nested loop appending to
+        # Python lists -- about 79,000 appends per geometry, and 78% of this
+        # function's runtime between the two phases. Recording (equation,
+        # coefficient, variable) directly lets the matrix be assembled with
+        # array operations instead.
+        ent_eqn: list[int] = []
+        ent_coord: list[int] = []
+        ent_var: list[int] = []
+        e_append, c_append, v_append = (
+            ent_eqn.append,
+            ent_coord.append,
+            ent_var.append,
+        )
+
         for v in variable_array:
-            if v[0] == v[3]:
-                eqn_dict[(v[0], v[1], v[2])] += [[v[3], variable_dict[v]]]
-            elif v[0] == v[2]:
-                eqn_dict[(v[0], v[1], v[2])] += [[v[3], variable_dict[v]]]
-                eqn_dict[(v[0], v[1], v[3])] += [[v[2], variable_dict[v]]]
-            elif v[0] == v[1] and v[2] == v[3]:
-                eqn_dict[(v[0], v[1], v[2])] += [[v[3], variable_dict[v]]]
-                eqn_dict[(v[0], v[2], v[3])] += [[v[1], variable_dict[v]]]
-            elif v[0] == v[1]:
-                eqn_dict[(v[0], v[1], v[2])] += [[v[3], variable_dict[v]]]
-                eqn_dict[(v[0], v[1], v[3])] += [[v[2], variable_dict[v]]]
-                eqn_dict[(v[0], v[2], v[3])] += [[v[1], variable_dict[v]]]
-            elif v[1] == v[3]:
-                eqn_dict[(v[0], v[1], v[2])] += [[v[3], variable_dict[v]]]
-                eqn_dict[(v[1], v[2], v[3])] += [[v[0], variable_dict[v]]]
-            elif v[1] == v[2]:
-                eqn_dict[(v[0], v[1], v[2])] += [[v[3], variable_dict[v]]]
-                eqn_dict[(v[0], v[1], v[3])] += [[v[2], variable_dict[v]]]
-                eqn_dict[(v[1], v[2], v[3])] += [[v[0], variable_dict[v]]]
-            elif v[2] == v[3]:
-                eqn_dict[(v[0], v[1], v[2])] += [[v[3], variable_dict[v]]]
-                eqn_dict[(v[0], v[2], v[3])] += [[v[1], variable_dict[v]]]
-                eqn_dict[(v[1], v[2], v[3])] += [[v[0], variable_dict[v]]]
+            v0, v1, v2, v3 = v
+            vi = variable_dict[v]
+
+            if v0 == v3:
+                e_append(eqn_index[(v0, v1, v2)]); c_append(v3); v_append(vi)
+            elif v0 == v2:
+                e_append(eqn_index[(v0, v1, v2)]); c_append(v3); v_append(vi)
+                e_append(eqn_index[(v0, v1, v3)]); c_append(v2); v_append(vi)
+            elif v0 == v1 and v2 == v3:
+                e_append(eqn_index[(v0, v1, v2)]); c_append(v3); v_append(vi)
+                e_append(eqn_index[(v0, v2, v3)]); c_append(v1); v_append(vi)
+            elif v0 == v1:
+                e_append(eqn_index[(v0, v1, v2)]); c_append(v3); v_append(vi)
+                e_append(eqn_index[(v0, v1, v3)]); c_append(v2); v_append(vi)
+                e_append(eqn_index[(v0, v2, v3)]); c_append(v1); v_append(vi)
+            elif v1 == v3:
+                e_append(eqn_index[(v0, v1, v2)]); c_append(v3); v_append(vi)
+                e_append(eqn_index[(v1, v2, v3)]); c_append(v0); v_append(vi)
+            elif v1 == v2:
+                e_append(eqn_index[(v0, v1, v2)]); c_append(v3); v_append(vi)
+                e_append(eqn_index[(v0, v1, v3)]); c_append(v2); v_append(vi)
+                e_append(eqn_index[(v1, v2, v3)]); c_append(v0); v_append(vi)
+            elif v2 == v3:
+                e_append(eqn_index[(v0, v1, v2)]); c_append(v3); v_append(vi)
+                e_append(eqn_index[(v0, v2, v3)]); c_append(v1); v_append(vi)
+                e_append(eqn_index[(v1, v2, v3)]); c_append(v0); v_append(vi)
             else:
                 raise RuntimeError("Failed to construct linear system.")
 
-        # Construct Linear System
-        num_rows = len(linear_relations) * len(eqn_array)
-        C = np.array([0.0] * num_rows)
-        M_row = []
-        M_col = []
-        M_val = []
-        row_ctr = 0
-        for eqn in eqn_array:
-            for lin in linear_relations:
-                if eqn[0] != eqn[1] and eqn[1] != eqn[2]:
-                    c_temp = c_dict[eqn]
-                    C[row_ctr] = sum([lin[cc[0] - 1] * cc[1] for cc in c_temp])
-                eqn_temp = eqn_dict[eqn]
-                for e in eqn_temp:
-                    M_row.append(row_ctr)
-                    M_col.append(e[1])
-                    M_val.append(lin[e[0] - 1])
-                row_ctr += 1
-        Mat = csr_matrix((M_val, (M_row, M_col)), dtype=np.float64)
+        # C is built from the distinct intersection numbers. Only equations on
+        # three distinct indices receive a contribution, which is exactly the
+        # set of triples coming from the simplices.
+        rhs_eqn: list[int] = []
+        rhs_coord: list[int] = []
+        rhs_val: list[float] = []
+        for row, val in zip(face_rows, inv_abs_dets.tolist()):
+            a, b, c, d = row
+            rhs_eqn.append(eqn_index[(a, b, c)]); rhs_coord.append(d)
+            rhs_eqn.append(eqn_index[(a, b, d)]); rhs_coord.append(c)
+            rhs_eqn.append(eqn_index[(a, c, d)]); rhs_coord.append(b)
+            rhs_eqn.append(eqn_index[(b, c, d)]); rhs_coord.append(a)
+            rhs_val.extend((val, val, val, val))
+
+        ###################################################################
+        ### Assemble
+        ###################################################################
+        n_lin = len(linear_relations)
+        n_eqn = len(eqn_array)
+        n_var = len(variable_array)
+        num_rows = n_lin * n_eqn
+        lin_offsets = np.arange(n_lin, dtype=np.int64)
+
+        # Every (equation, linear relation) pair is one row, so an entry
+        # recorded above becomes n_lin entries of the sparse matrix.
+        ent_eqn_arr = np.asarray(ent_eqn, dtype=np.int64)
+        ent_coord_arr = np.asarray(ent_coord, dtype=np.int64)
+        ent_var_arr = np.asarray(ent_var, dtype=np.int64)
+
+        if len(ent_eqn_arr):
+            M_row = (ent_eqn_arr[:, None] * n_lin + lin_offsets).ravel()
+            M_col = np.repeat(ent_var_arr, n_lin)
+            M_val = linear_relations[:, ent_coord_arr - 1].T.ravel()
+        else:
+            M_row = M_col = np.empty(0, dtype=np.int64)
+            M_val = np.empty(0, dtype=np.float64)
+
+        Mat = csr_matrix(
+            (M_val, (M_row, M_col)), shape=(num_rows, n_var), dtype=np.float64
+        )
+
+        if rhs_eqn:
+            rhs_eqn_arr = np.asarray(rhs_eqn, dtype=np.int64)
+            rhs_coord_arr = np.asarray(rhs_coord, dtype=np.int64)
+            rhs_val_arr = np.asarray(rhs_val, dtype=np.float64)
+            C_row = (rhs_eqn_arr[:, None] * n_lin + lin_offsets).ravel()
+            C_contrib = (
+                linear_relations[:, rhs_coord_arr - 1].T * rhs_val_arr[:, None]
+            ).ravel()
+            C = np.bincount(C_row, weights=C_contrib, minlength=num_rows)
+        else:
+            C = np.zeros(num_rows)
+
         return Mat, C, distintnum_array, variable_array
 
     def _construct_intnum_equations(self):
