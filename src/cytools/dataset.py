@@ -505,6 +505,207 @@ def _resolve_4d_paths(counts, resolved_dir, stream, hf_token) -> list[Path]:
     return paths
 
 
+def _dnf_constraints(dnf) -> list[tuple]:
+    """Flatten the single-conjunction DNF filter into (column, value) pairs."""
+    if not dnf:
+        return []
+    # _build_arrow_filter emits exactly one conjunction of equality tuples
+    return [(col, val) for col, op, val in dnf[0] if op == "="]
+
+
+def _row_group_can_match(metadata, rg_index: int, constraints, col_index) -> bool:
+    """Whether a row group could contain a matching row, from its statistics.
+
+    Recovers the row-group pruning that ``pq.read_table(filters=...)`` does
+    natively, since ``iter_batches`` takes no filter. Conservative: any missing
+    or unusable statistic means the row group is kept.
+    """
+    if not constraints:
+        return True
+
+    rg = metadata.row_group(rg_index)
+    for col, val in constraints:
+        j = col_index.get(col)
+        if j is None:
+            continue
+        stats = rg.column(j).statistics
+        if stats is None or not stats.has_min_max:
+            continue
+        if val < stats.min or val > stats.max:
+            return False
+    return True
+
+
+def _iter_record_batches(
+    *,
+    counts,
+    h11,
+    h12,
+    chi,
+    n_facets,
+    n_points,
+    n_dual_points,
+    n,
+    seed,
+    resolved_dir,
+    stream,
+    hf_token,
+    batch_size: int,
+):
+    """Stream matching rows as Arrow record batches, bounded by *batch_size*.
+
+    The single scan implementation behind both :func:`load_polytopes` and
+    :func:`scan_batches`, so filtering, sampling and path resolution cannot
+    drift apart between them.
+
+    Memory is bounded by `batch_size`, not by how many rows match. The earlier
+    implementation read every matching row into one table and then sliced it,
+    which cost about 6.9 kB per row held simultaneously -- roughly 6.9 GB at a
+    million rows and far beyond any machine for the full database, so the batch
+    API could not actually be used at the scale it exists for.
+
+    Results are not cached. The previous process-level cache retained whole
+    query results including live Polytope objects, which is unbounded retention
+    at landscape scale, for a saving the filesystem page cache already provides.
+    """
+    dnf = _build_arrow_filter(h11, h12, chi, n_facets, n_points, n_dual_points)
+    expr = pq.filters_to_expression(dnf) if dnf else None
+    paths = _resolve_4d_paths(counts, resolved_dir, stream, hf_token)
+    if not paths:
+        return
+
+    gens = []
+    for idx, path in enumerate(paths):
+        file_rng = np.random.default_rng(None if seed is None else seed + idx)
+        gens.append(_stream_one_file(path, dnf, expr, file_rng, batch_size))
+
+    if n is None:
+        # Nothing to apportion; drain every file, interleaved so a consumer that
+        # stops early still sees a spread of vertex counts.
+        active = list(gens)
+        while active:
+            still_active = []
+            for gen in active:
+                try:
+                    batch = next(gen)
+                except StopIteration:
+                    continue
+                if batch.num_rows:
+                    yield batch
+                still_active.append(gen)
+            active = still_active
+        return
+
+    # A capped scan is apportioned across the requested vertex counts rather
+    # than taken from whichever file happens to come first. Without this, a
+    # small `n` is served entirely out of paths[0]: the first file yields a
+    # full batch_size batch, which is sliced down to n and exhausts the budget,
+    # so `n_vertices=[13, 14, 15], n=16` returns sixteen 13-vertex polytopes.
+    base, extra = divmod(n, len(gens))
+    budgets = [base + (1 if i < extra else 0) for i in range(len(gens))]
+    produced = [0] * len(gens)
+    exhausted = [False] * len(gens)
+    total = 0
+
+    def pull(i, want):
+        """Take up to *want* rows from file *i*; None once it is drained."""
+        while True:
+            try:
+                batch = next(gens[i])
+            except StopIteration:
+                exhausted[i] = True
+                return None
+            if batch.num_rows:
+                return batch.slice(0, want) if batch.num_rows > want else batch
+
+    # First pass: honour each file's share.
+    while total < n and not all(exhausted):
+        progressed = False
+        for i in range(len(gens)):
+            if total >= n:
+                break
+            want = min(budgets[i] - produced[i], n - total)
+            if want <= 0 or exhausted[i]:
+                continue
+            batch = pull(i, want)
+            if batch is None:
+                continue
+            produced[i] += batch.num_rows
+            total += batch.num_rows
+            progressed = True
+            yield batch
+        if not progressed:
+            break
+
+    # Second pass: some files had fewer matching rows than their share, so top
+    # up from whichever still have rows.
+    while total < n and not all(exhausted):
+        progressed = False
+        for i in range(len(gens)):
+            if total >= n:
+                break
+            if exhausted[i]:
+                continue
+            batch = pull(i, n - total)
+            if batch is None:
+                continue
+            produced[i] += batch.num_rows
+            total += batch.num_rows
+            progressed = True
+            yield batch
+        if not progressed:
+            break
+
+
+def _stream_one_file(path: Path, dnf, expr, rng, batch_size: int):
+    """Yield record batches from one file with memory bounded by *batch_size*.
+
+    Uses ``ParquetFile.iter_batches`` rather than the dataset Scanner. The row
+    groups here hold ~988,000 rows each, and the Scanner decodes a whole row
+    group before handing back a batch -- 672 MB of Arrow buffers to produce 500
+    rows, even with readahead disabled. ``iter_batches`` slices within a row
+    group and holds ~50 MB for the same request.
+
+    The cost is that ``iter_batches`` takes no filter, so the predicate is
+    applied per batch and row-group pruning is done from column statistics
+    instead.
+    """
+    pf = pq.ParquetFile(path)
+    metadata = pf.metadata
+    constraints = _dnf_constraints(dnf)
+    col_index = {
+        metadata.schema.column(j).name: j
+        for j in range(metadata.num_columns)
+    }
+
+    candidates = [
+        rg
+        for rg in range(metadata.num_row_groups)
+        if _row_group_can_match(metadata, rg, constraints, col_index)
+    ]
+    if not candidates:
+        return
+
+    # Random row-group order: file order correlates with how the database was
+    # generated, so a prefix taken in file order is a biased sample.
+    for i in rng.permutation(len(candidates)):
+        rg = candidates[int(i)]
+        for batch in pf.iter_batches(
+            batch_size=batch_size, columns=_LOAD_COLUMNS, row_groups=[rg]
+        ):
+            if not batch.num_rows:
+                continue
+            if expr is not None:
+                table = pa.Table.from_batches([batch]).filter(expr)
+                if not table.num_rows:
+                    continue
+                for filtered in table.to_batches():
+                    if filtered.num_rows:
+                        yield filtered
+            else:
+                yield batch
+
+
 def _scan_table(
     *,
     counts,
@@ -520,45 +721,32 @@ def _scan_table(
     stream,
     hf_token,
 ) -> pa.Table:
-    """Scan the requested Parquet files down to one Arrow table.
+    """Collect a scan into one table.
 
-    Shared by :func:`load_polytopes` and :func:`scan_batches` so that filtering,
-    sampling and path resolution have exactly one implementation. Results are
-    intentionally not cached: the previous process-level cache retained whole
-    query results including live Polytope objects, which is unbounded retention
-    at landscape scale. The filesystem page cache already covers the cheap part.
+    For :func:`load_polytopes`, which materializes a Polytope per row anyway
+    and so is already bounded by the object graph rather than by the Arrow
+    buffers. Prefer :func:`scan_batches` at scale.
     """
-    arrow_filter = _build_arrow_filter(
-        h11, h12, chi, n_facets, n_points, n_dual_points
+    batches = list(
+        _iter_record_batches(
+            counts=counts,
+            h11=h11,
+            h12=h12,
+            chi=chi,
+            n_facets=n_facets,
+            n_points=n_points,
+            n_dual_points=n_dual_points,
+            n=n,
+            seed=seed,
+            resolved_dir=resolved_dir,
+            stream=stream,
+            hf_token=hf_token,
+            batch_size=4096,
+        )
     )
-    rng = np.random.default_rng(seed)
-    paths = _resolve_4d_paths(counts, resolved_dir, stream, hf_token)
-
-    # Each worker gets its own seeded rng derived from the parent seed, so
-    # results are deterministic per (seed, file) and independent across files.
-    def _load_one(args: tuple[Path, int]) -> pa.Table:
-        path, idx = args
-        file_rng = np.random.default_rng(None if seed is None else seed + idx)
-        return _load_table(path, arrow_filter, n, file_rng, _LOAD_COLUMNS)
-
-    tables: list[pa.Table]
-    if len(paths) <= 1:
-        tables = [_load_one((paths[0], 0))] if paths else []
-    else:
-        n_workers = min(len(paths), (os.cpu_count() or 1) * 2)
-        with ThreadPoolExecutor(max_workers=n_workers) as pool:
-            tables = list(pool.map(_load_one, ((p, i) for i, p in enumerate(paths))))
-
-    table = (
-        pa.concat_tables(tables)
-        if tables
-        else pa.table({col: [] for col in _LOAD_COLUMNS})
-    )
-
-    if n is not None and len(table) > n:
-        table = table.take(rng.choice(len(table), size=n, replace=False))
-
-    return table
+    if not batches:
+        return pa.table({col: [] for col in _LOAD_COLUMNS})
+    return pa.Table.from_batches(batches)
 
 
 def scan_batches(
@@ -631,7 +819,7 @@ def scan_batches(
     else:
         counts = list(n_vertices)
 
-    table = _scan_table(
+    for record_batch in _iter_record_batches(
         counts=counts,
         h11=h11,
         h12=h12,
@@ -644,10 +832,9 @@ def scan_batches(
         resolved_dir=resolved_dir,
         stream=stream,
         hf_token=hf_token,
-    )
-
-    for start in range(0, len(table), batch_size):
-        yield _table_to_batch(table.slice(start, batch_size))
+        batch_size=batch_size,
+    ):
+        yield _table_to_batch(pa.Table.from_batches([record_batch]))
 
 
 def _table_to_batch(table: pa.Table) -> PolytopeBatch:
