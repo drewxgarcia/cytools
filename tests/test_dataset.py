@@ -133,8 +133,11 @@ def test_batch_buffers_are_consistent():
         for i in range(len(b)):
             v = b.vertices(i)
             assert v.shape == (int(b.vertex_count[i]), 4)
-            # a view into the flat buffer, not a copy
-            assert v.base is b.vertex_values
+            # a view into the flat buffer, not a copy. Checked by shared
+            # memory rather than identity of .base: vertex_values is itself a
+            # reshaped view of Arrow's child buffer, so a row's base is that
+            # buffer, not vertex_values.
+            assert np.shares_memory(v, b.vertex_values)
 
 
 def test_batch_agrees_with_load_polytopes():
@@ -250,3 +253,84 @@ def test_streaming_memory_does_not_grow_with_n():
         f"Arrow allocation grew from {small/1e6:.0f}MB to {large/1e6:.0f}MB "
         "for 50x the rows; the scan is not streaming"
     )
+
+
+def test_ks_ids_uniform_and_ragged_paths_agree():
+    """The vectorised hash must not depend on how rows are batched.
+
+    ks_ids are computed column-wise over a uniform-width block when a batch
+    comes from one vertex-count file, and grouped by width when it is ragged.
+    Both must give a row the same id, or a derived-results store stops joining
+    the moment a query spans files.
+    """
+    single = _batches(n_vertices=[13], n=60, batch_size=60)
+    assert single, "expected a batch"
+    batch = single[0]
+
+    blocks = [batch.vertices(i) for i in range(len(batch))]
+    expected = [int(x) for x in batch.ks_ids]
+
+    # append a row of a different width to force the ragged path
+    other = _batches(n_vertices=[14], n=1, batch_size=1)[0]
+    blocks.append(other.vertices(0))
+
+    counts = np.array([len(b) for b in blocks], dtype=np.int64)
+    offsets = np.zeros(len(blocks) + 1, dtype=np.int64)
+    np.cumsum(counts, out=offsets[1:])
+    ragged = ds._ks_ids(np.concatenate(blocks).astype(np.int32), offsets)
+
+    assert [int(x) for x in ragged[: len(expected)]] == expected
+
+
+def test_ks_ids_do_not_collide_over_a_large_sample():
+    """Distinct geometries must get distinct ids in practice."""
+    seen = {}
+    collisions = 0
+    rows = 0
+    for batch in _batches(n_vertices=[13, 14, 15], n=20_000, batch_size=8192):
+        for i in range(len(batch)):
+            rows += 1
+            key = int(batch.ks_ids[i])
+            data = batch.vertices(i).tobytes()
+            if seen.setdefault(key, data) != data:
+                collisions += 1
+
+    assert rows, "no rows scanned"
+    assert collisions == 0, f"{collisions} distinct geometries shared an id"
+
+
+def test_row_set_is_invariant_to_batch_size():
+    """A capped scan must select the same rows regardless of batch_size.
+
+    The order is not stable -- the round-robin across vertex-count files
+    interleaves differently -- but the set of selected rows must not move, or
+    the same query returns different data run to run.
+    """
+    def id_set(batch_size):
+        return {
+            int(i)
+            for b in _batches(
+                n_vertices=[13, 14, 15], n=600, batch_size=batch_size
+            )
+            for i in b.ks_ids
+        }
+
+    small, medium, large = id_set(64), id_set(301), id_set(4096)
+    assert small == medium == large
+    assert len(small) == 600
+
+
+def test_batch_values_survive_the_arrow_table():
+    """The zero-copy buffer must keep the Arrow data alive.
+
+    vertex_values is a reshaped view of Arrow's child buffer rather than a
+    copy, so the batch has to hold that buffer alive after the table it came
+    from is gone.
+    """
+    import gc
+
+    batch = _batches(n_vertices=[13], n=200, batch_size=200)[0]
+    snapshot = np.array(batch.vertices(0), copy=True)
+    for _ in range(3):
+        gc.collect()
+    assert np.array_equal(batch.vertices(0), snapshot)

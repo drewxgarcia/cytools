@@ -378,29 +378,80 @@ def _extract_vertices_from_table(table: pa.Table) -> list[np.ndarray]:
 # ---------------------------------------------------------------------------
 
 
+# FNV-1a 64-bit constants. A vectorised mix over the coordinate columns, rather
+# than a cryptographic digest per row: hashing row by row made ks_id 68% of the
+# whole scan (one blake2b, one tobytes and one int.from_bytes per row), which
+# defeated the point of a columnar reader.
+_FNV_OFFSET = np.uint64(0xCBF29CE484222325)
+_FNV_PRIME = np.uint64(0x100000001B3)
+
+
 def _ks_ids(vertex_values: np.ndarray, offsets: np.ndarray) -> np.ndarray:
     """A stable identifier per row, derived from the stored vertices.
 
     Content-derived rather than positional. A row's position depends on how the
     database happens to be partitioned and on whatever filter produced the
     scan, so a positional id would not survive re-partitioning or let two
-    differently-filtered scans be joined. Hashing the vertex bytes gives an id
+    differently-filtered scans be joined. Hashing the vertex data gives an id
     that is the same in every scan that sees the row, which is what makes a
     derived-results store joinable against the source.
+
+    The row width is mixed in first, so rows from different vertex-count files
+    cannot collide merely by sharing a coordinate prefix.
 
     64 bits over the full 438M-row database carries a birthday collision
     probability of roughly 5e-3, so this is fine for keying derived results but
     should not be treated as a cryptographic or globally unique identifier.
     """
-    out = np.empty(len(offsets) - 1, dtype=np.int64)
-    for i in range(len(out)):
-        block = vertex_values[offsets[i] : offsets[i + 1]]
-        digest = hashlib.blake2b(
-            np.ascontiguousarray(block, dtype=np.int32).tobytes(),
-            digest_size=8,
-        ).digest()
-        out[i] = int.from_bytes(digest, "little", signed=True)
+    n_rows = len(offsets) - 1
+    if n_rows <= 0:
+        return np.empty(0, dtype=np.int64)
+
+    counts = np.diff(offsets)
+    n_coords = vertex_values.shape[1]
+
+    if bool((counts == counts[0]).all()):
+        # uniform width: one contiguous block per row, so the whole batch mixes
+        # column by column with no Python-level iteration over rows
+        width = int(counts[0]) * n_coords
+        block = (
+            np.ascontiguousarray(vertex_values, dtype=np.int32)
+            .reshape(n_rows, width)
+            .view(np.uint32)
+            .astype(np.uint64)
+        )
+        return _fnv1a(block, width)
+
+    # ragged batch: group the rows by width so each group can still be
+    # vectorised, rather than falling back to a per-row loop
+    out = np.empty(n_rows, dtype=np.int64)
+    for count in np.unique(counts):
+        rows = np.flatnonzero(counts == count)
+        width = int(count) * n_coords
+        block = np.empty((len(rows), width), dtype=np.uint64)
+        for j, i in enumerate(rows):
+            block[j] = (
+                np.ascontiguousarray(
+                    vertex_values[offsets[i] : offsets[i + 1]], dtype=np.int32
+                )
+                .reshape(-1)
+                .view(np.uint32)
+                .astype(np.uint64)
+            )
+        out[rows] = _fnv1a(block, width)
     return out
+
+
+def _fnv1a(block: np.ndarray, width: int) -> np.ndarray:
+    """FNV-1a over the columns of *block*, one vectorised step per column."""
+    h = np.full(len(block), _FNV_OFFSET, dtype=np.uint64)
+    with np.errstate(over="ignore"):
+        h ^= np.uint64(width)
+        h *= _FNV_PRIME
+        for c in range(width):
+            h ^= block[:, c]
+            h *= _FNV_PRIME
+    return h.view(np.int64)
 
 
 @dataclass
@@ -607,16 +658,31 @@ def _iter_record_batches(
     exhausted = [False] * len(gens)
     total = 0
 
+    # Rows left over from a batch that was larger than the caller wanted. They
+    # must be kept rather than dropped: discarding the tail made *which* rows a
+    # capped scan returns depend on batch_size, so the same query with a
+    # different batch_size sampled different polytopes and produced different
+    # ks_ids.
+    pending: list = [None] * len(gens)
+
     def pull(i, want):
         """Take up to *want* rows from file *i*; None once it is drained."""
         while True:
-            try:
-                batch = next(gens[i])
-            except StopIteration:
-                exhausted[i] = True
-                return None
-            if batch.num_rows:
-                return batch.slice(0, want) if batch.num_rows > want else batch
+            batch = pending[i]
+            if batch is None:
+                try:
+                    batch = next(gens[i])
+                except StopIteration:
+                    exhausted[i] = True
+                    return None
+            if not batch.num_rows:
+                pending[i] = None
+                continue
+            if batch.num_rows <= want:
+                pending[i] = None
+                return batch
+            pending[i] = batch.slice(want)
+            return batch.slice(0, want)
 
     # First pass: honour each file's share.
     while total < n and not all(exhausted):
@@ -837,6 +903,47 @@ def scan_batches(
         yield _table_to_batch(pa.Table.from_batches([record_batch]))
 
 
+def _batch_buffers(table: pa.Table):
+    """The vertices column as one flat ``(total_vertices, dim)`` array + offsets.
+
+    Arrow already stores a list<list<int32>> column as a single contiguous child
+    buffer plus offsets, which is exactly the layout PolytopeBatch wants. The
+    uniform case therefore reshapes that buffer in place instead of splitting it
+    into per-row views and concatenating them back together -- a full copy of
+    data that was already contiguous.
+    """
+    n_rows = len(table)
+    col = table.column("vertices").combine_chunks()
+    outer = col.offsets.to_numpy(zero_copy_only=False)
+    inner = col.values
+    inner_off = inner.offsets.to_numpy(zero_copy_only=False)
+
+    strides = np.diff(outer)
+    coord_widths = np.diff(inner_off)
+
+    offsets = np.zeros(n_rows + 1, dtype=np.int64)
+    np.cumsum(strides, out=offsets[1:])
+
+    uniform = (
+        strides.size
+        and coord_widths.size
+        and bool((coord_widths == coord_widths[0]).all())
+    )
+
+    if uniform:
+        n_coords = int(coord_widths[0])
+        flat = inner.values.to_numpy(zero_copy_only=False)
+        first = int(inner_off[int(outer[0])])
+        total = int(offsets[-1])
+        values = flat[first : first + total * n_coords].reshape(total, n_coords)
+        return values, offsets
+
+    # ragged coordinate widths: nothing to reuse, rebuild row by row
+    blocks = _extract_vertices_from_table(table)
+    values = np.ascontiguousarray(np.concatenate(blocks), dtype=np.int32)
+    return values, offsets
+
+
 def _table_to_batch(table: pa.Table) -> PolytopeBatch:
     """Build a PolytopeBatch from an Arrow table without materializing rows."""
     n_rows = len(table)
@@ -852,11 +959,7 @@ def _table_to_batch(table: pa.Table) -> PolytopeBatch:
             euler_characteristic=empty_i,
         )
 
-    blocks = _extract_vertices_from_table(table)
-    counts = np.array([len(b) for b in blocks], dtype=np.int64)
-    offsets = np.zeros(n_rows + 1, dtype=np.int64)
-    np.cumsum(counts, out=offsets[1:])
-    values = np.ascontiguousarray(np.concatenate(blocks), dtype=np.int32)
+    values, offsets = _batch_buffers(table)
 
     col = lambda name: table.column(name).to_numpy(zero_copy_only=False)  # noqa: E731
 
