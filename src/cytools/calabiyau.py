@@ -2420,6 +2420,84 @@ class CalabiYau:
         return Cone(new_rays.todense(), check=False)
 
 
+def configure_gv_subprocess(method: str = "forkserver", preload=("cygv", "numpy")):
+    """
+    **Description:**
+    Make `cygv`'s per-call subprocess cheap, by choosing the multiprocessing
+    start method it inherits.
+
+    `cygv.compute_gv` runs the Rust kernel in a fresh `multiprocessing.Process`
+    on every call. That is not avoidable from here: the Rust side installs a
+    process-global Ctrl+C handler that can only be set once, so calling the
+    kernel twice in one interpreter panics with `MultipleHandlers`. What *is*
+    avoidable is the cost of that process. `Process()` honours the global start
+    method, and on macOS the default is `spawn`, which re-imports numpy, mpmath
+    and cygv in the child and pickles the generators and intersection-number
+    dict across a pipe every time.
+
+    Measured on a favorable h11=10 Calabi-Yau, best of five, identical
+    invariants and checksums throughout::
+
+        max_deg    spawn    forkserver
+              1   137 ms        8 ms     17.6x
+              4   135 ms       15 ms      8.9x
+              8   431 ms      299 ms      1.4x
+
+    So roughly 130 ms per call is start-up rather than computation, which is why
+    the cost was previously observed to be independent of `max_deg` and never to
+    amortize.
+
+    :::warning
+    The start method is **process-global**, which is why this is opt-in rather
+    than a default. Two consequences worth knowing:
+
+    - It is not inherited by `spawn`-ed children, so a worker process that
+      computes GV invariants must call this itself -- for example from a
+      `ProcessPoolExecutor` initializer.
+    - `forkserver` forks from a clean preloaded server, so it avoids the
+      fork-after-threads hazards that make plain `fork` segfault with this
+      project's compiled dependencies. Prefer it over `"fork"`.
+    :::
+
+    **Arguments:**
+    - `method`: Start method to install, normally `"forkserver"`.
+    - `preload`: Modules for the forkserver to import once, so children do not.
+
+    **Returns:**
+    *(str)* The start method that was in effect before, or `None` if it could
+        not be changed.
+
+    **Example:**
+    ```python {3}
+    from cytools.calabiyau import configure_gv_subprocess
+    configure_gv_subprocess()
+    cy.compute_gvs(max_deg=4)   # no longer pays ~130 ms of spawn per call
+    ```
+    """
+    import multiprocessing as mp
+
+    previous = mp.get_start_method(allow_none=True)
+    if previous == method:
+        return previous
+
+    try:
+        mp.set_start_method(method, force=True)
+    except (RuntimeError, ValueError) as e:
+        warnings.warn(
+            f"Could not set the multiprocessing start method to {method!r} "
+            f"({e}); cygv will keep paying full subprocess start-up per call."
+        )
+        return None
+
+    if method == "forkserver" and preload:
+        try:
+            mp.set_forkserver_preload(list(preload))
+        except Exception:
+            pass
+
+    return previous
+
+
 def _batched_null_vectors(mats: np.ndarray):
     """
     **Description:**
