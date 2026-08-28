@@ -1538,105 +1538,17 @@ class Triangulation:
 
         elif backend == "native":
             # calculate hyperplanes via the null-space of a homogenization of
-            # the points in adjacent simplcies
-
-            # get the ambient labels
-            if hasattr(self, "_ambient_triangulation"):
-                ambient_labels = self._ambient_triangulation.labels
-            else:
-                ambient_labels = self.labels
-
-            # get the ambient dimension and a map from labels to indices
-            ambient_dim = len(ambient_labels)
-            labels2inds = {v: i for i, v in enumerate(ambient_labels)}
-
-            # get the simplices and the actual dimension
-            simps = [set(s) for s in self.simplices()]
-            dim = self.dim()
-
-            # container for matrix
-            m = np.zeros((dim + 1, dim + 2), dtype=int)
-            m[-1, :] = 1  # (homogenization)
-
-            # container for hyperplane normal
-            full_v = np.zeros(ambient_dim, dtype=int)
-
-            # small optimization
-            # (star triangulations all share 0th point, the origin, so it can
-            #  be removed from consideration, effectively reducing dimension)
-            if self.is_star():
-                simps = [s - {self.poly._label_origin} for s in simps]
-                dim -= 1
-
-                m[:-1, -1] = self.points(which=self.poly._label_origin, optimal=True)
-
-            # find adjacent simplices (those sharing a facet) via a
-            # facet->simplices incidence map, rather than scanning all O(n^2)
-            # pairs of simplices
-            facet_to_simps = {}
-            for idx, s in enumerate(simps):
-                for pt in s:
-                    facet = frozenset(s - {pt})
-                    facet_to_simps.setdefault(facet, []).append(idx)
-
-            # cache the optimal coordinates of every point once, rather than
-            # re-fetching them for each adjacent pair
-            all_labels = list(set().union(*simps))
-            all_opt = self.points(which=all_labels, optimal=True)
-            opt_pts = {lbl: all_opt[i] for i, lbl in enumerate(all_labels)}
-
-            # calculate the hyperplanes
-            null_vecs = set()
-            for idxs in facet_to_simps.values():
-                # an interior facet joins exactly two simplices; a boundary
-                # facet joins one (and is not flippable)
-                if len(idxs) != 2:
-                    continue
-                s1 = simps[idxs[0]]
-                s2 = simps[idxs[1]]
-
-                # the two opposite vertices and the shared facet
-                diff_pts = list(s1 ^ s2)
-                comm_pts = list(s1 & s2)
-
-                for c, pt in enumerate(diff_pts):
-                    m[:-1, c] = opt_pts[pt]
-                for c, pt in enumerate(comm_pts):
-                    m[:-1, 2 + c] = opt_pts[pt]
-
-                # calculate nullspace/hyperplane ineq
-                # (quicker than the determinant method)
-                v = flint.fmpz_mat(m.tolist()).nullspace()[0]
-                v = np.array(v.transpose().tolist()[0], dtype=int)
-
-                # ensure the sign is correct
-                if v[0] < 0:
-                    v *= -1
-
-                # Reduce the vector
-                g = math.gcd(*v.tolist())
-                if g != 1:
-                    v //= g
-
-                # Construct the full vector (including all points)
-                for k, pt in enumerate(diff_pts):
-                    full_v[labels2inds[pt]] = v[k]
-                for k, pt in enumerate(comm_pts):
-                    full_v[labels2inds[pt]] = v[k + 2]
-
-                if self.is_star():
-                    full_v[labels2inds[self.poly._label_origin]] = v[-1]
-
-                null_vecs.add(tuple(full_v))
-
-                # clear full_v
-                for pt in diff_pts:
-                    full_v[labels2inds[pt]] = 0
-                for pt in comm_pts:
-                    full_v[labels2inds[pt]] = 0
-
-            # organize the hyperplanes
-            hyps = list(null_vecs)
+            # the points in adjacent simplices
+            #
+            # Done in batch. Each interior facet contributes one hyperplane,
+            # obtained from the null space of a (dim+1) x (dim+2) integer
+            # matrix. That null space is one-dimensional, so the null vector is
+            # the generalized cross product -- component j is the signed minor
+            # obtained by deleting column j -- which lets every facet be handled
+            # by a handful of batched determinants instead of one exact flint
+            # solve per facet. The minors are verified exactly below, so
+            # nothing rests on the floating-point determinant being right.
+            hyps = _secondary_cone_hyperplanes_native(self)
 
         # save the answer
         self._secondary_cone[args_id] = hyps
@@ -3338,3 +3250,241 @@ def random_triangulations_fair_generator(
         # update counters
         step_ctr += 1
         step_per_tri_ctr += 1
+
+
+# Number of facets whose batched null vector failed exact verification and had
+# to be recomputed with flint. Should stay at zero; see
+# tests/test_secondary_cone.py.
+_secondary_cone_fallbacks = 0
+
+
+def _secondary_cone_hyperplanes_native(triang) -> list:
+    """
+    **Description:**
+    Secondary-cone hyperplanes of a triangulation, computed in batch.
+
+    Each interior facet -- one shared by exactly two simplices -- contributes
+    one hyperplane, the null vector of a ``(dim+1) x (dim+2)`` integer matrix
+    homogenizing the two opposite vertices, the shared facet, and (for star
+    triangulations) the origin.
+
+    That matrix has one more column than rows, so its null space is
+    one-dimensional and the null vector is the generalized cross product:
+    component ``j`` is ``(-1)**j`` times the minor obtained by deleting column
+    ``j``. Every facet's minors therefore come from ``dim+2`` batched
+    determinants, in place of one exact ``flint`` null-space solve per facet.
+
+    The determinants are taken in floating point and rounded, then **verified
+    exactly**: the integer product ``M v`` must vanish. Any facet failing that
+    check falls back to ``flint``, so correctness does not depend on the
+    floating-point path. In practice the minors of these matrices are tiny
+    (single digits for typical Kreuzer-Skarke input) against float64's exact
+    integer range of 2**53, so the fallback is not expected to trigger.
+
+    **Arguments:**
+    - `triang`: The [`Triangulation`](./triangulation) to work on.
+
+    **Returns:**
+    *(list)* The hyperplane normals, as tuples over the ambient labels.
+    """
+    # ambient labels, so a restricted triangulation reports in its parent's
+    # coordinates
+    if hasattr(triang, "_ambient_triangulation"):
+        ambient_labels = list(triang._ambient_triangulation.labels)
+    else:
+        ambient_labels = list(triang.labels)
+    ambient_dim = len(ambient_labels)
+    labels2inds = {v: i for i, v in enumerate(ambient_labels)}
+
+    dim = triang.dim()
+    n_cols = dim + 2
+    is_star = triang.is_star()
+    origin = triang.poly._label_origin
+
+    simps = np.asarray(triang.simplices())
+    if not len(simps):
+        return []
+
+    if is_star:
+        # star triangulations all share the origin, so it can be dropped,
+        # effectively reducing the dimension
+        keep = simps != origin
+        counts = keep.sum(axis=1)
+        if not (counts == counts[0]).all():
+            return _secondary_cone_hyperplanes_flint(triang)
+        simps = simps[keep].reshape(len(simps), int(counts[0]))
+
+    simps = np.sort(simps, axis=1)
+    n_simps, width = simps.shape
+    if width < 2:
+        return []
+
+    # Group (simplex, dropped vertex) pairs by facet. Sorting the facets and
+    # finding equal runs replaces the incidence dictionary, and keeps the
+    # result deterministic.
+    facets = np.empty((n_simps, width, width - 1), dtype=simps.dtype)
+    for c in range(width):
+        facets[:, c, :] = np.delete(simps, c, axis=1)
+    flat_facets = facets.reshape(-1, width - 1)
+    flat_dropped = simps.reshape(-1)
+
+    order = np.lexsort(flat_facets.T[::-1])
+    sorted_facets = flat_facets[order]
+    sorted_dropped = flat_dropped[order]
+
+    starts_mask = np.ones(len(sorted_facets), dtype=bool)
+    starts_mask[1:] = (sorted_facets[1:] != sorted_facets[:-1]).any(axis=1)
+    starts = np.flatnonzero(starts_mask)
+    group_sizes = np.diff(np.append(starts, len(sorted_facets)))
+
+    # an interior facet joins exactly two simplices; a boundary facet joins one
+    # and is not flippable
+    interior = starts[group_sizes == 2]
+    if not len(interior):
+        return []
+
+    shared = sorted_facets[interior]           # (n_pairs, width-1)
+    opposite_a = sorted_dropped[interior]      # (n_pairs,)
+    opposite_b = sorted_dropped[interior + 1]
+    n_pairs = len(interior)
+
+    # optimal coordinates of every label used, fetched once
+    used = np.unique(simps)
+    coords = np.asarray(triang.points(which=used.tolist(), optimal=True))
+    row_of = np.full(int(used.max()) + 1, -1, dtype=np.int64)
+    row_of[used] = np.arange(len(used))
+
+    n_coords = coords.shape[1]
+    mats = np.zeros((n_pairs, n_coords + 1, n_cols), dtype=np.int64)
+    mats[:, -1, :] = 1  # homogenization
+    mats[:, :-1, 0] = coords[row_of[opposite_a]]
+    mats[:, :-1, 1] = coords[row_of[opposite_b]]
+    mats[:, :-1, 2 : 2 + (width - 1)] = coords[row_of[shared]].transpose(0, 2, 1)
+    if is_star:
+        mats[:, :-1, -1] = np.asarray(
+            triang.points(which=origin, optimal=True)
+        )
+
+    # generalized cross product via signed minors
+    null = np.empty((n_pairs, n_cols), dtype=np.int64)
+    mats_float = mats.astype(np.float64)
+    for j in range(n_cols):
+        minors = np.linalg.det(np.delete(mats_float, j, axis=2))
+        sign = -1 if (j % 2) else 1
+        null[:, j] = np.rint(minors).astype(np.int64) * sign
+
+    # normalize sign, then reduce by the gcd
+    np.negative(null, out=null, where=(null[:, :1] < 0))
+    gcds = np.gcd.reduce(np.abs(null), axis=1)
+    gcds[gcds == 0] = 1
+    null //= gcds[:, None]
+
+    # exact verification: M v must vanish over the integers
+    residual = np.einsum("nij,nj->ni", mats, null)
+    suspect = np.flatnonzero(
+        (residual != 0).any(axis=1) | (null == 0).all(axis=1)
+    )
+    if len(suspect):
+        # Correct but slow: the batched path is self-healing, so a bug in it
+        # shows up as a silent loss of speed rather than a wrong answer. Count
+        # the repairs so tests can assert the fast path is actually being used.
+        global _secondary_cone_fallbacks
+        _secondary_cone_fallbacks += int(len(suspect))
+        for i in suspect:
+            null[i] = _flint_nullvector(mats[i])
+
+    # scatter into the ambient label space
+    cols = np.empty((n_pairs, n_cols), dtype=np.int64)
+    amb = np.full(int(max(ambient_labels)) + 1, -1, dtype=np.int64)
+    for lbl, idx in labels2inds.items():
+        amb[lbl] = idx
+    cols[:, 0] = amb[opposite_a]
+    cols[:, 1] = amb[opposite_b]
+    cols[:, 2 : 2 + (width - 1)] = amb[shared]
+    if is_star:
+        cols[:, -1] = labels2inds[origin]
+
+    full = np.zeros((n_pairs, ambient_dim), dtype=np.int64)
+    np.put_along_axis(full, cols, null, axis=1)
+
+    # Deduplicate through a set of tuples, exactly as the per-facet
+    # implementation did. np.unique would also work and would additionally make
+    # the order deterministic, but the order of these hyperplanes propagates
+    # through the Mori cone generators to user-visible output such as
+    # compute_curve_volumes, so it is preserved here rather than changed as a
+    # side effect of a performance rewrite.
+    return list({tuple(row) for row in full.tolist()})
+
+
+def _flint_nullvector(mat) -> np.ndarray:
+    """Exact null vector of *mat* via flint, sign- and gcd-normalized."""
+    v = flint.fmpz_mat(np.asarray(mat).tolist()).nullspace()[0]
+    v = np.array(v.transpose().tolist()[0], dtype=np.int64)
+    if v[0] < 0:
+        v = -v
+    g = math.gcd(*v.tolist())
+    if g not in (0, 1):
+        v //= g
+    return v
+
+
+def _secondary_cone_hyperplanes_flint(triang) -> list:
+    """Per-facet flint fallback, for triangulations the batched path rejects."""
+    ambient_labels = list(
+        triang._ambient_triangulation.labels
+        if hasattr(triang, "_ambient_triangulation")
+        else triang.labels
+    )
+    labels2inds = {v: i for i, v in enumerate(ambient_labels)}
+    dim = triang.dim()
+
+    simps = [set(s) for s in triang.simplices()]
+    mat = np.zeros((dim + 1, dim + 2), dtype=int)
+    mat[-1, :] = 1
+    full_v = np.zeros(len(ambient_labels), dtype=int)
+
+    if triang.is_star():
+        simps = [s - {triang.poly._label_origin} for s in simps]
+        mat[:-1, -1] = triang.points(
+            which=triang.poly._label_origin, optimal=True
+        )
+
+    facet_to_simps = {}
+    for idx, s in enumerate(simps):
+        for pt in s:
+            facet_to_simps.setdefault(frozenset(s - {pt}), []).append(idx)
+
+    all_labels = list(set().union(*simps))
+    all_opt = triang.points(which=all_labels, optimal=True)
+    opt_pts = {lbl: all_opt[i] for i, lbl in enumerate(all_labels)}
+
+    null_vecs = set()
+    for idxs in facet_to_simps.values():
+        if len(idxs) != 2:
+            continue
+        s1, s2 = simps[idxs[0]], simps[idxs[1]]
+        diff_pts = list(s1 ^ s2)
+        comm_pts = list(s1 & s2)
+
+        for c, pt in enumerate(diff_pts):
+            mat[:-1, c] = opt_pts[pt]
+        for c, pt in enumerate(comm_pts):
+            mat[:-1, 2 + c] = opt_pts[pt]
+
+        v = _flint_nullvector(mat)
+
+        for k, pt in enumerate(diff_pts):
+            full_v[labels2inds[pt]] = v[k]
+        for k, pt in enumerate(comm_pts):
+            full_v[labels2inds[pt]] = v[k + 2]
+        if triang.is_star():
+            full_v[labels2inds[triang.poly._label_origin]] = v[-1]
+
+        null_vecs.add(tuple(full_v))
+
+        for pt in diff_pts:
+            full_v[labels2inds[pt]] = 0
+        for pt in comm_pts:
+            full_v[labels2inds[pt]] = 0
+
+    return list(null_vecs)

@@ -1620,11 +1620,12 @@ class ToricVariety:
             dim = self.dim()
             canon_intnum = defaultdict(lambda: 0)
             for ii in intnums:
-                choices = set(
-                    tuple(c for i, c in enumerate(ii) if i != j) for j in range(dim)
-                )
-                for c in choices:
-                    canon_intnum[(0,) + c] -= intnums[ii]
+                # dropping index j from a tuple is slicing, not a filtered
+                # genexpr over enumerate() -- that ran ~154,000 times per
+                # sixteen geometries to do nothing but this
+                val = intnums[ii]
+                for c in {ii[:j] + ii[j + 1 :] for j in range(dim)}:
+                    canon_intnum[(0,) + c] -= val
             # Now we round all intersection numbers of the form K_0i...j to
             # integers if the CY is smooth. Otherwise, we only remove the zero
             # elements
