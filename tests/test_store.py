@@ -278,3 +278,83 @@ def test_unpicklable_payload_is_fine_serially(store):
 def test_non_dict_payload_result_is_rejected(store):
     with pytest.raises(TypeError, match="must return a dict"):
         materialize("q", lambda v: 42, store=store, scan=make_scan(range(2)))
+
+
+def test_missing_prunes_and_stops_early(store, monkeypatch):
+    """missing() must read as few parts as it can.
+
+    Two independent mechanisms, both asserted by counting reads rather than by
+    measuring memory, which would be flaky:
+
+    - parts whose recorded id range cannot contain any queried id are skipped
+      without being opened;
+    - the scan stops as soon as every queried id has been found.
+
+    Note these ids are sequential, so ranges are tight and pruning is effective.
+    Real ks_ids are content hashes spread over the whole int64 range, where
+    pruning does nothing and only the early exit helps.
+    """
+    import pyarrow.parquet as pq
+
+    import cytools.store as store_mod
+
+    materialize("q", payload, store=store, scan=make_scan(range(50), batch_size=5))
+    n_parts = store.stats("q")["n_parts"]
+    assert n_parts == 10
+
+    reads = []
+    real_read_table = pq.read_table
+
+    def counting_read_table(path, *args, **kwargs):
+        reads.append(str(path))
+        return real_read_table(path, *args, **kwargs)
+
+    monkeypatch.setattr(store_mod.pq, "read_table", counting_read_table)
+
+    # entirely outside every part's range: nothing should be opened at all
+    reads.clear()
+    assert len(store.missing("q", [10_001, 10_002])) == 2
+    pruned = len(reads)
+
+    # present, and in the lowest-id part: found and then stopped
+    reads.clear()
+    assert len(store.missing("q", [0, 1, 2])) == 0
+    early = len(reads)
+
+    # absent but inside the overall range: every candidate part is consulted
+    reads.clear()
+    assert len(store.missing("q", [-1, 7, 999])) == 2
+    full = len(reads)
+
+    assert pruned == 0, f"out-of-range query still opened {pruned} parts"
+    assert early < n_parts, f"no early exit: opened {early} of {n_parts} parts"
+    assert full > early, (
+        f"an absent in-range id opened {full} parts, not more than the "
+        f"{early} needed for a present one"
+    )
+
+
+def test_missing_agrees_with_known_ids(store):
+    """The bounded path and the whole-store path must give the same answer."""
+    materialize("q", payload, store=store, scan=make_scan(range(40), batch_size=6))
+
+    query = np.array([0, 5, 39, 40, 100, -3], dtype=np.int64)
+    known = store.known_ids("q")
+
+    bounded = store.missing("q", query)
+    naive = query[~np.isin(query, known)]
+
+    assert bounded.tolist() == naive.tolist()
+
+
+def test_parts_are_written_sorted_by_id(store):
+    """Parts are sorted by ks_id, so their statistics are tight."""
+    import pyarrow.parquet as pq
+
+    materialize("q", payload, store=store, scan=make_scan(range(30), batch_size=30))
+    for path in store._parts("q"):
+        ids = pq.read_table(path, columns=["ks_id"]).column("ks_id").to_pylist()
+        assert ids == sorted(ids)
+
+    for _path, lo, hi in store._part_ranges("q"):
+        assert lo is not None and hi is not None and lo <= hi

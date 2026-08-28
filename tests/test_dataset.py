@@ -334,3 +334,25 @@ def test_batch_values_survive_the_arrow_table():
     for _ in range(3):
         gc.collect()
     assert np.array_equal(batch.vertices(0), snapshot)
+
+
+def test_capped_scans_are_nested_in_n():
+    """Growing n must add rows, not resample.
+
+    A capped scan takes a prefix of each file's seeded row-group ordering, so a
+    larger n is a superset of a smaller one. This is what makes growing a sweep
+    cheap against a derived store: the previously computed rows are all still
+    present and get skipped, rather than a fresh random subset being drawn. The
+    earlier read-everything-then-sample implementation did not have this
+    property.
+    """
+    def id_set(n):
+        return {
+            int(i)
+            for b in _batches(n_vertices=[13, 14], n=n, batch_size=32)
+            for i in b.ks_ids
+        }
+
+    small, medium, large = id_set(60), id_set(120), id_set(400)
+    assert len(small) == 60 and len(medium) == 120 and len(large) == 400
+    assert small <= medium <= large
