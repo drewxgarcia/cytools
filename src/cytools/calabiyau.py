@@ -28,7 +28,7 @@ import warnings
 import cygv
 import numpy as np
 from scipy.linalg import null_space
-from scipy.sparse import dok_matrix
+from scipy.sparse import coo_matrix, dok_matrix
 
 # CYTools imports
 from cytools import config
@@ -2372,10 +2372,23 @@ class CalabiYau:
                         print("Warning: Positive coefficient of origin.")
                         continue
                     mori_cap_rays.add(tuple(full_v))
-        mori_cap_matrix = dok_matrix((len(mori_cap_rays),len(pts_ext)), dtype=int)
-        for i,r in enumerate(mori_cap_rays):
-            for rr in r:
-                mori_cap_matrix[i,rr[0]] = rr[1]
+        # Build the ray matrix from COO triples in one construction. Assigning
+        # into a dok_matrix element by element ran __setitem__ once per nonzero
+        # -- 21,000 times at h11=20, each doing index validation -- and was 43%
+        # of this function.
+        rows = []
+        cols = []
+        vals = []
+        for i, r in enumerate(mori_cap_rays):
+            for col, val in r:
+                rows.append(i)
+                cols.append(col)
+                vals.append(val)
+        mori_cap_matrix = coo_matrix(
+            (vals, (rows, cols)),
+            shape=(len(mori_cap_rays), len(pts_ext)),
+            dtype=int,
+        ).tocsr()
         if not exclude_origin and not in_basis:
             new_rays = mori_cap_matrix
         elif exclude_origin and not in_basis:
