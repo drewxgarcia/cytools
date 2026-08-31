@@ -40,6 +40,8 @@ import scipy.sparse as sp
 from scipy.optimize import linprog
 from tqdm import tqdm
 
+from cytools._typing import FaceTriangulationMethod
+
 # CYTools imports
 from cytools.cone import Cone
 from cytools.helpers import matrix, misc
@@ -911,7 +913,7 @@ def triangface_ineqs(
     require_star: bool = False,
     max_npts: int = 17,
     N_face_triangs: int = 1000,
-    triang_method: str = "grow2d",
+    triang_method: FaceTriangulationMethod = "grow2d",
     return_triangs: Literal[False] = False,
     verbosity: int = 0,
 ) -> list: ...
@@ -924,7 +926,7 @@ def triangface_ineqs(
     require_star: bool = False,
     max_npts: int = 17,
     N_face_triangs: int = 1000,
-    triang_method: str = "grow2d",
+    triang_method: FaceTriangulationMethod = "grow2d",
     *,
     return_triangs: Literal[True],
     verbosity: int = 0,
@@ -937,7 +939,7 @@ def triangface_ineqs(
     require_star: bool = False,
     max_npts: int = 17,
     N_face_triangs: int = 1000,
-    triang_method: str = "grow2d",
+    triang_method: FaceTriangulationMethod = "grow2d",
     return_triangs: bool = False,
     verbosity: int = 0,
 ) -> list | tuple[list, list]:
@@ -1016,7 +1018,7 @@ def ntfe_hypers(
     face_triangs: list | None = None,
     max_npts: int = 17,
     N_face_triangs: int = 1000,
-    triang_method: str = "grow2d",
+    triang_method: FaceTriangulationMethod = "grow2d",
     as_generator: Literal[False] = False,
     separate_boring: bool = True,
     verbosity: int = 0,
@@ -1033,7 +1035,7 @@ def ntfe_hypers(
     face_triangs: list | None = None,
     max_npts: int = 17,
     N_face_triangs: int = 1000,
-    triang_method: str = "grow2d",
+    triang_method: FaceTriangulationMethod = "grow2d",
     *,
     as_generator: Literal[True],
     separate_boring: bool = True,
@@ -1050,7 +1052,7 @@ def ntfe_hypers(
     face_triangs: list | None = None,
     max_npts: int = 17,
     N_face_triangs: int = 1000,
-    triang_method: str = "grow2d",
+    triang_method: FaceTriangulationMethod = "grow2d",
     as_generator: bool = False,
     separate_boring: bool = True,
     verbosity: int = 0,
@@ -1210,7 +1212,7 @@ def ntfe_cones(
     face_triangs: list | None = None,
     max_npts: int = 17,
     N_face_triangs: int = 1000,
-    triang_method: str = "grow2d",
+    triang_method: FaceTriangulationMethod = "grow2d",
     as_generator: Literal[False] = False,
     separate_boring: bool = True,
     verbosity=0,
@@ -1228,7 +1230,7 @@ def ntfe_cones(
     face_triangs: list | None = None,
     max_npts: int = 17,
     N_face_triangs: int = 1000,
-    triang_method: str = "grow2d",
+    triang_method: FaceTriangulationMethod = "grow2d",
     *,
     as_generator: Literal[True],
     separate_boring: bool = True,
@@ -1246,7 +1248,7 @@ def ntfe_cones(
     face_triangs: list | None = None,
     max_npts: int = 17,
     N_face_triangs: int = 1000,
-    triang_method: str = "grow2d",
+    triang_method: FaceTriangulationMethod = "grow2d",
     as_generator: bool = False,
     separate_boring: bool = True,
     verbosity=0,
@@ -1404,7 +1406,7 @@ def ntfe_frts(
     face_triangs: list | None = None,
     max_npts: int = 17,
     N_face_triangs: int = 1000,
-    triang_method: str = "grow2d",
+    triang_method: FaceTriangulationMethod = "grow2d",
     as_generator: bool = False,
     n_jobs: int | None = None,
     heights_only: bool = False,
@@ -1576,7 +1578,7 @@ def ntfe_frsts(
     face_triangs: list | None = None,
     max_npts: int = 17,
     N_face_triangs: int = 1000,
-    triang_method: str = "grow2d",
+    triang_method: FaceTriangulationMethod = "grow2d",
     as_generator: bool = False,
     n_jobs: int | None = None,
     heights_only: bool = False,

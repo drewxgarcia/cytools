@@ -34,6 +34,7 @@ from scipy.sparse import csr_matrix
 
 # CYTools imports
 import cytools.config as config
+from cytools._typing import IntnumFormat, LinearSolverBackend
 from cytools.utils import (
     array_float_to_fmpq,
     finalize_intersection_numbers,
@@ -1440,9 +1441,9 @@ class ToricVariety:
     def intersection_numbers(
         self,
         in_basis=False,
-        format="dok",
+        format: IntnumFormat = "dok",
         zero_as_anticanonical=False,
-        backend="all",
+        backend: LinearSolverBackend = "all",
         check=True,
         backend_error_tol=1e-3,
         round_to_zero_threshold=1e-3,

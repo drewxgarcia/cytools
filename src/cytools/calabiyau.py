@@ -34,7 +34,16 @@ from scipy.sparse import coo_matrix
 
 # CYTools imports
 import cytools.config as config
-from cytools._typing import Matrix, Vector, VectorOrMatrix
+from cytools._typing import (
+    IntnumFormat,
+    InvariantFormat,
+    InvariantKind,
+    LinearSolverBackend,
+    Matrix,
+    ProcessStartMethod,
+    Vector,
+    VectorOrMatrix,
+)
 from cytools.utils import (
     finalize_intersection_numbers,
     gcd_list,
@@ -1215,9 +1224,9 @@ class CalabiYau:
     def intersection_numbers(
         self,
         in_basis=False,
-        format="dok",
+        format: IntnumFormat = "dok",
         zero_as_anticanonical=False,
-        backend="all",
+        backend: LinearSolverBackend = "all",
         check=True,
         backend_error_tol=1e-3,
         round_to_zero_threshold=1e-3,
@@ -2074,14 +2083,14 @@ class CalabiYau:
     # ---
     def _compute_gvs_gws(
         self,
-        gv_or_gw: str,
+        gv_or_gw: InvariantKind,
         mcap_generators: Matrix | None = None,
         grading_vec: Vector | None = None,
         max_deg: int | None = None,
         min_points: int | None = None,
         target_points: Matrix | None = None,
         basis: VectorOrMatrix | None = None,
-        format: str | None = None,
+        format: InvariantFormat | None = None,
     ):
         """
         **Description:**
@@ -2189,7 +2198,7 @@ class CalabiYau:
         min_points: int | None = None,
         target_points: Matrix | None = None,
         basis: VectorOrMatrix | None = None,
-        format: str | None = None,
+        format: InvariantFormat | None = None,
     ):
         """
         **Description:**
@@ -2232,7 +2241,7 @@ class CalabiYau:
         min_points: int | None = None,
         target_points: Matrix | None = None,
         basis: VectorOrMatrix | None = None,
-        format: str | None = None,
+        format: InvariantFormat | None = None,
     ):
         """
         **Description:**
@@ -2423,7 +2432,9 @@ class CalabiYau:
         return Cone(new_rays.todense(), check=False)
 
 
-def configure_gv_subprocess(method: str = "forkserver", preload=("cygv", "numpy")):
+def configure_gv_subprocess(
+    method: ProcessStartMethod = "forkserver", preload=("cygv", "numpy")
+):
     """
     **Description:**
     Make `cygv`'s per-call subprocess cheap, by choosing the multiprocessing

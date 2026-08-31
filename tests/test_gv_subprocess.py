@@ -6,10 +6,12 @@ once. The subprocess is unavoidable; its start-up cost is not.
 """
 
 import multiprocessing as mp
+from typing import cast
 
 import numpy as np
 import pytest
 
+from cytools._typing import ProcessStartMethod
 from cytools.calabiyau import configure_gv_subprocess
 
 cygv = pytest.importorskip("cygv")
@@ -45,7 +47,10 @@ def test_is_idempotent(restore_start_method):
 def test_unknown_method_warns_and_does_not_change_anything(restore_start_method):
     configure_gv_subprocess("forkserver")
     with pytest.warns(UserWarning, match="start method"):
-        assert configure_gv_subprocess("not-a-real-method") is None
+        assert (
+            configure_gv_subprocess(cast(ProcessStartMethod, "not-a-real-method"))
+            is None
+        )
     assert mp.get_start_method() == "forkserver"
 
 

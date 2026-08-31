@@ -28,7 +28,7 @@ import numpy as np
 # CYTools imports
 import cytools.polytope as polytope
 from cytools._backends.ppl import ppl
-from cytools._typing import Matrix
+from cytools._typing import Matrix, PolytopeBackend
 from cytools.utils import gcd_list
 
 
@@ -69,7 +69,7 @@ class HPolytope(polytope.Polytope):
         self,
         ineqs: Matrix | None = None,
         dilate: bool = False,
-        backend: str | None = None,
+        backend: PolytopeBackend | None = None,
         verbosity: int = 0,
     ) -> None:
         """

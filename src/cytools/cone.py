@@ -56,7 +56,16 @@ from cytools._backends.ppl import ppl
 
 # CYTools imports
 from cytools._extensions import lazy_method
-from cytools._typing import Matrix, Vector
+from cytools._typing import (
+    ExtremalityMethod,
+    ExtremalRaysMethod,
+    FeasibilityBackend,
+    InteriorPointBackend,
+    Matrix,
+    PointednessBackend,
+    StretchedConeBackend,
+    Vector,
+)
 from cytools.helpers.arithmetic import gcd_reduce
 
 
@@ -784,7 +793,7 @@ class Cone:
         self,
         tol: float = 1e-4,
         minimal: bool = True,
-        method: str = "extremalrays",
+        method: ExtremalRaysMethod = "extremalrays",
         verbose: bool = False,
     ) -> np.ndarray:
         """
@@ -1236,7 +1245,7 @@ class Cone:
     def tip_of_stretched_cone(
         self,
         c: float = 1,
-        backend: str | None = None,
+        backend: StretchedConeBackend | None = None,
         check: bool = True,
         constraint_error_tol: float = 5e-2,
         max_iter: int = 10**6,
@@ -1414,7 +1423,9 @@ class Cone:
                 return None
         return solution
 
-    def find_grading_vector(self, backend=None):
+    def find_grading_vector(
+        self, backend: InteriorPointBackend | None = None
+    ) -> np.ndarray | None:
         r"""
         **Description:**
         Finds a grading vector for the cone, i.e. a vector $\mathbf{v}$ such
@@ -1449,7 +1460,7 @@ class Cone:
         c: float = 1,
         lower: float | None = None,
         integral: bool = False,
-        backend: str | None = None,
+        backend: InteriorPointBackend | None = None,
         check: bool = True,
         show_hints: bool = False,
         verbose: bool = False,
@@ -1700,6 +1711,8 @@ class Cone:
             )
         if grading_vector is None:
             grading_vector = self.find_grading_vector()
+        if grading_vector is None:
+            raise RuntimeError("Could not find a grading vector for this cone.")
         finite_max_coord = max_coord is not None
         coord_bound = max_coord if max_coord is not None else cp_model.INT32_MAX - 1
 
@@ -1975,7 +1988,9 @@ class Cone:
     # aliases
     is_full_dimensional = is_solid
 
-    def is_pointed(self, backend: str = "dual", tol: float = 1e-7) -> bool:
+    def is_pointed(
+        self, backend: PointednessBackend = "dual", tol: float = 1e-7
+    ) -> bool:
         """
         **Description:**
         Returns True if the cone is pointed (i.e. strongly convex). A cone is
@@ -2400,7 +2415,7 @@ def is_extremal(
     R: Matrix,
     i: int,
     extFlags: list[bool] | None = None,
-    method: str = "lp",
+    method: ExtremalityMethod = "lp",
     tol: float = 1e-4,
 ) -> tuple[int, bool | None, Exception | None]:
     """
@@ -2466,7 +2481,7 @@ def feasibility(
     hyperplanes: Matrix | Sequence[Mapping[int, float]],
     c: float,
     ambient_dim: int,
-    backend: str,
+    backend: FeasibilityBackend,
     lower_bound: float | None = None,
     verbose: bool = False,
 ) -> np.ndarray | None:

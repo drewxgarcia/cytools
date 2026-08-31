@@ -29,6 +29,7 @@ import numpy as np
 
 # CYTools imports
 from cytools._extensions import lazy_method
+from cytools._typing import TriangulationBackend
 from cytools.utils import lll_reduce
 
 if TYPE_CHECKING:
@@ -683,7 +684,7 @@ class PolytopeFace:
         heights: list | None = None,
         simplices: Iterable | None = None,
         check_input_simplices: bool = True,
-        backend: str = "cgal",
+        backend: TriangulationBackend = "cgal",
         verbosity=0,
     ) -> Triangulation:
         """

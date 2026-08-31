@@ -1,15 +1,39 @@
 """Public choice types stay aligned with the runtime contracts they describe."""
 
-from typing import get_args
+from typing import get_args, get_type_hints
 
 from cytools._typing import (
+    AutomorphismAction,
+    ExtremalityMethod,
+    ExtremalRaysMethod,
+    FaceTriangulationMethod,
+    FeasibilityBackend,
+    InteriorPointBackend,
     IntnumFormat,
+    InvariantFormat,
+    InvariantKind,
     Lattice,
     LinearSolverBackend,
+    NormalFormBackend,
+    PointednessBackend,
+    PolytopeBackend,
     PolytopeFormat,
     PolytopeInputType,
     PolytopeSource,
+    ProcessStartMethod,
+    RandomTriangulationBackend,
+    SecondaryConeBackend,
+    StretchedConeBackend,
+    TriangulationBackend,
 )
+from cytools.calabiyau import CalabiYau, configure_gv_subprocess
+from cytools.cone import Cone, feasibility, is_extremal
+from cytools.ntfe.face_triangulations import face_triangs
+from cytools.ntfe.ntfe import triangface_ineqs
+from cytools.polytope import Polytope
+from cytools.polytopeface import PolytopeFace
+from cytools.toricvariety import ToricVariety
+from cytools.triangulation import Triangulation
 from cytools.utils import fetch_polytopes, read_polytopes, solve_linear_system
 
 
@@ -20,6 +44,46 @@ def test_choice_aliases_are_exact():
     assert get_args(PolytopeSource) == ("auto", "database", "web")
     assert get_args(PolytopeFormat) == ("ks", "ws")
     assert get_args(PolytopeInputType) == ("file", "str")
+    assert get_args(PolytopeBackend) == ("ppl", "qhull", "palp")
+    assert get_args(AutomorphismAction) == ("left", "right")
+    assert get_args(NormalFormBackend) == ("native", "palp")
+    assert get_args(TriangulationBackend) == ("cgal", "qhull", "topcom")
+    assert get_args(RandomTriangulationBackend) == ("cgal", "qhull")
+    assert get_args(SecondaryConeBackend) == ("native", "topcom")
+    assert get_args(ExtremalRaysMethod) == (
+        "extremalrays",
+        "legacy",
+        "lp",
+        "nnls",
+    )
+    assert get_args(ExtremalityMethod) == ("lp", "nnls")
+    assert get_args(PointednessBackend) == ("dual", "null", "lp", "nnls")
+    assert get_args(StretchedConeBackend) == (
+        "mosek",
+        "osqp",
+        "cvxopt",
+        "highs",
+        "glop",
+    )
+    assert get_args(InteriorPointBackend) == (
+        "highs",
+        "glop",
+        "scip",
+        "cpsat",
+        "mosek",
+        "osqp",
+        "cvxopt",
+    )
+    assert get_args(FeasibilityBackend) == ("highs", "glop", "scip", "cpsat")
+    assert get_args(FaceTriangulationMethod) == (
+        "fast",
+        "fair",
+        "grow2d",
+        "dualgnn",
+    )
+    assert get_args(InvariantFormat) == ("dok", "coo")
+    assert get_args(InvariantKind) == ("gv", "gw")
+    assert get_args(ProcessStartMethod) == ("fork", "forkserver", "spawn")
 
 
 def test_notebook_facing_annotations_use_the_shared_aliases():
@@ -28,3 +92,49 @@ def test_notebook_facing_annotations_use_the_shared_aliases():
     assert read_polytopes.__annotations__["input_type"] is PolytopeInputType
     assert read_polytopes.__annotations__["format"] is PolytopeFormat
     assert solve_linear_system.__annotations__["backend"] is LinearSolverBackend
+
+
+def test_domain_annotations_use_operation_specific_aliases():
+    namespace = {
+        "CalabiYau": CalabiYau,
+        "Cone": Cone,
+        "Polytope": Polytope,
+        "PolytopeFace": PolytopeFace,
+        "ToricVariety": ToricVariety,
+        "Triangulation": Triangulation,
+    }
+
+    def choice(function, parameter):
+        return get_type_hints(function, globalns=function.__globals__ | namespace)[
+            parameter
+        ]
+
+    assert choice(Polytope.__init__, "backend") == PolytopeBackend | None
+    assert choice(Polytope.automorphisms, "action") is AutomorphismAction
+    assert choice(Polytope.normal_form, "backend") is NormalFormBackend
+    assert choice(Polytope.triangulate, "backend") is TriangulationBackend
+    assert (
+        choice(Polytope.random_triangulations_fast, "backend")
+        is RandomTriangulationBackend
+    )
+    assert choice(Polytope.hpq, "lattice") is Lattice
+    assert choice(PolytopeFace.triangulate, "backend") is TriangulationBackend
+    assert choice(Triangulation.__init__, "backend") is TriangulationBackend
+    assert (
+        choice(Triangulation.secondary_cone, "backend") == SecondaryConeBackend | None
+    )
+    assert choice(Cone.extremal_rays, "method") is ExtremalRaysMethod
+    assert choice(Cone.is_pointed, "backend") is PointednessBackend
+    assert choice(Cone.tip_of_stretched_cone, "backend") == (
+        StretchedConeBackend | None
+    )
+    assert choice(Cone.find_interior_point, "backend") == (InteriorPointBackend | None)
+    assert choice(is_extremal, "method") is ExtremalityMethod
+    assert choice(feasibility, "backend") is FeasibilityBackend
+    assert choice(ToricVariety.intersection_numbers, "format") is IntnumFormat
+    assert choice(ToricVariety.intersection_numbers, "backend") is LinearSolverBackend
+    assert choice(CalabiYau.intersection_numbers, "format") is IntnumFormat
+    assert choice(CalabiYau.compute_gvs, "format") == InvariantFormat | None
+    assert choice(configure_gv_subprocess, "method") is ProcessStartMethod
+    assert choice(face_triangs, "triang_method") is FaceTriangulationMethod
+    assert choice(triangface_ineqs, "triang_method") is FaceTriangulationMethod

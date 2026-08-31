@@ -106,9 +106,12 @@ inside `@overload` stubs, never where it would catch a typo.
       (`LinearSolverBackend`, `IntnumFormat`, `Lattice`, `PolytopeSource`, …)
       from the values each function accepts. Avoid one overly broad `Backend`
       alias: a value valid for one engine boundary may be invalid at another.
-- [ ] **4.2** Apply them to the public API surface. The notebook-facing
-      `read_polytopes`, `fetch_polytopes`, and sparse-solver boundary are typed;
-      domain classes remain to be migrated in reviewed batches.
+- [x] **4.2** Apply them to the public API surface. Polytope construction and
+      normal forms, triangulation, cone algorithms, intersection-number and
+      invariant formats, Hodge lattices, and NTFE face sampling now expose the
+      exact choices accepted by their runtime validation. Solver names used by
+      regularity checks deliberately remain `str`: that set is supplied at
+      runtime by installed `qpsolvers` plugins rather than by CYTools.
       *Done when:* `ty` flags a bad literal at a call site.
 
 ## Phase 5 — Duplication

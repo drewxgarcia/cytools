@@ -43,7 +43,17 @@ from tqdm import tqdm
 import cytools.config as config
 from cytools._backends.ppl import ppl
 from cytools._extensions import lazy_method
-from cytools._typing import Matrix, Vector, VectorOrMatrix
+from cytools._typing import (
+    AutomorphismAction,
+    Lattice,
+    Matrix,
+    NormalFormBackend,
+    PolytopeBackend,
+    RandomTriangulationBackend,
+    TriangulationBackend,
+    Vector,
+    VectorOrMatrix,
+)
 from cytools.utils import gcd_list, instanced_lru_cache, integral_nullspace, lll_reduce
 
 if TYPE_CHECKING:
@@ -144,7 +154,7 @@ class Polytope:
         self,
         points: Matrix,
         labels: Sequence | None = None,
-        backend: str | None = None,
+        backend: PolytopeBackend | None = None,
         deterministic_glsm_basis: bool = False,
     ) -> None:
         """
@@ -577,7 +587,7 @@ class Polytope:
     # =======
     # (all methods here should be @property)
     @property
-    def backend(self) -> str:
+    def backend(self) -> PolytopeBackend:
         """
         **Description:**
         Returns the backend.
@@ -1766,7 +1776,7 @@ class Polytope:
     def automorphisms(
         self,
         square_to_one: bool = False,
-        action: str = "right",
+        action: AutomorphismAction = "right",
         as_dictionary: Literal[False] = False,
     ) -> np.ndarray: ...
 
@@ -1774,7 +1784,7 @@ class Polytope:
     def automorphisms(
         self,
         square_to_one: bool = False,
-        action: str = "right",
+        action: AutomorphismAction = "right",
         *,
         as_dictionary: Literal[True],
     ) -> list[dict]: ...
@@ -1782,7 +1792,7 @@ class Polytope:
     def automorphisms(
         self,
         square_to_one: bool = False,
-        action: str = "right",
+        action: AutomorphismAction = "right",
         as_dictionary: bool = False,
     ) -> np.ndarray | list[dict]:
         r"""
@@ -2004,7 +2014,7 @@ class Polytope:
         return copy.deepcopy(self._Z2_actions)
 
     def normal_form(
-        self, affine_transform: bool = False, backend: str = "palp"
+        self, affine_transform: bool = False, backend: NormalFormBackend = "palp"
     ) -> np.ndarray:
         r"""
         **Description:**
@@ -2322,7 +2332,9 @@ class Polytope:
             self._normal_form[args_id] = np.array(Vmin).T
         return np.array(self._normal_form[args_id])
 
-    def is_linearly_equivalent(self, other: Polytope, backend: str = "palp") -> bool:
+    def is_linearly_equivalent(
+        self, other: Polytope, backend: NormalFormBackend = "palp"
+    ) -> bool:
         r"""
         **Description:**
         Returns True if the polytopes can be transformed into each other by an
@@ -2355,7 +2367,9 @@ class Polytope:
 
         return our_normal_form == other_normal_form
 
-    def is_affinely_equivalent(self, other: Polytope, backend: str = "palp") -> bool:
+    def is_affinely_equivalent(
+        self, other: Polytope, backend: NormalFormBackend = "palp"
+    ) -> bool:
         """
         **Description:**
         Returns True if the polytopes can be transformed into each other by an
@@ -2449,7 +2463,7 @@ class Polytope:
         check_input_simplices: bool = True,
         heights: Vector | None = None,
         check_heights: bool = True,
-        backend: str = "cgal",
+        backend: TriangulationBackend = "cgal",
         verbosity: int = 1,
     ) -> Triangulation:
         """
@@ -2598,7 +2612,7 @@ class Polytope:
         only_fine: bool = True,
         include_points_interior_to_facets: bool | None = None,
         points: Sequence | None = None,
-        backend: str = "cgal",
+        backend: RandomTriangulationBackend = "cgal",
         seed: int | None = None,
     ) -> Iterator[Triangulation]:
         """
@@ -2700,7 +2714,7 @@ class Polytope:
         make_star: bool | None = None,
         include_points_interior_to_facets: bool | None = None,
         points: Sequence | None = None,
-        backend: str = "cgal",
+        backend: RandomTriangulationBackend = "cgal",
         seed: int | None = None,
     ) -> Iterator[Triangulation]:
         r"""
@@ -3188,7 +3202,7 @@ class Polytope:
     # hodge
     # =====
     @instanced_lru_cache(maxsize=None)
-    def hpq(self, p: int, q: int, lattice: str = "N") -> int:
+    def hpq(self, p: int, q: int, lattice: Lattice = "N") -> int:
         """
         **Description:**
         Returns the Hodge number $h^{p,q}$ of the Calabi-Yau obtained as the
@@ -3276,14 +3290,23 @@ class Polytope:
             return hpq
         raise RuntimeError("Error computing Hodge numbers.")
 
-    h11 = lambda self, lattice="N": self.hpq(1, 1, lattice=lattice)
-    h12 = lambda self, lattice="N": self.hpq(1, 2, lattice=lattice)
-    h21 = h12
-    h13 = lambda self, lattice="N": self.hpq(1, 3, lattice=lattice)
-    h31 = h13
-    h22 = lambda self, lattice="N": self.hpq(2, 2, lattice=lattice)
+    def h11(self, lattice: Lattice = "N") -> int:
+        return self.hpq(1, 1, lattice=lattice)
 
-    def chi(self, lattice: str) -> int:
+    def h12(self, lattice: Lattice = "N") -> int:
+        return self.hpq(1, 2, lattice=lattice)
+
+    h21 = h12
+
+    def h13(self, lattice: Lattice = "N") -> int:
+        return self.hpq(1, 3, lattice=lattice)
+
+    h31 = h13
+
+    def h22(self, lattice: Lattice = "N") -> int:
+        return self.hpq(2, 2, lattice=lattice)
+
+    def chi(self, lattice: Lattice) -> int:
         """
         **Description:**
         Computes the Euler characteristic of the Calabi-Yau obtained as the
@@ -3353,7 +3376,7 @@ class Polytope:
         # return
         return int(self._chi)
 
-    def is_favorable(self, lattice: str) -> bool:
+    def is_favorable(self, lattice: Lattice) -> bool:
         """
         **Description:**
         Returns True if the Calabi-Yau hypersurface arising from this polytope
@@ -4123,7 +4146,7 @@ class Polytope:
 # utils
 # -----
 def poly_v_to_h(
-    pts: Matrix, backend: str
+    pts: Matrix, backend: PolytopeBackend
 ) -> tuple[np.ndarray, ppl.C_Polyhedron | None]:
     """
     **Description:**
@@ -4197,7 +4220,7 @@ def saturating_lattice_pts(
     pts_in: list[tuple],
     ineqs: Matrix | None = None,
     dim: int | None = None,
-    backend: str | None = None,
+    backend: PolytopeBackend | None = None,
 ) -> tuple[np.ndarray, list[frozenset]]:
     """
     **Description:**
@@ -4273,7 +4296,7 @@ def saturating_lattice_pts(
     return pts, satd
 
 
-def is_reflexive_barebones(points: Matrix, backend: str = "qhull") -> bool:
+def is_reflexive_barebones(points: Matrix, backend: PolytopeBackend = "qhull") -> bool:
     """
     **Description:**
     Minimal code to check if conv(points) is reflexive.

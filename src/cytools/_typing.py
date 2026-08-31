@@ -58,15 +58,81 @@ PolytopeFormat: TypeAlias = Literal["ks", "ws"]
 #: Container accepted by :func:`cytools.read_polytopes`.
 PolytopeInputType: TypeAlias = Literal["file", "str"]
 
+#: Convex-hull engine used to construct a :class:`cytools.Polytope`.
+PolytopeBackend: TypeAlias = Literal["ppl", "qhull", "palp"]
+
+#: Side on which polytope automorphism matrices act.
+AutomorphismAction: TypeAlias = Literal["left", "right"]
+
+#: Engine used to compute a Kreuzer--Skarke normal form.
+NormalFormBackend: TypeAlias = Literal["native", "palp"]
+
+#: Engine used to construct a triangulation.
+TriangulationBackend: TypeAlias = Literal["cgal", "qhull", "topcom"]
+
+#: Triangulation engines that accept sampled heights.
+RandomTriangulationBackend: TypeAlias = Literal["cgal", "qhull"]
+
+#: Strategy used to sample fine triangulations of large two-faces.
+FaceTriangulationMethod: TypeAlias = Literal["fast", "fair", "grow2d", "dualgnn"]
+
+#: Engine used to compute a triangulation's secondary cone.
+SecondaryConeBackend: TypeAlias = Literal["native", "topcom"]
+
+#: Cone ray-pruning algorithm, including the historical ``"lp"`` alias.
+ExtremalRaysMethod: TypeAlias = Literal["extremalrays", "legacy", "lp", "nnls"]
+
+#: Algorithm used to test whether one ray is extremal.
+ExtremalityMethod: TypeAlias = Literal["lp", "nnls"]
+
+#: Algorithm used to test whether a cone is pointed.
+PointednessBackend: TypeAlias = Literal["dual", "null", "lp", "nnls"]
+
+#: Optimizer accepted by :meth:`cytools.Cone.tip_of_stretched_cone`.
+StretchedConeBackend: TypeAlias = Literal["mosek", "osqp", "cvxopt", "highs", "glop"]
+
+#: Optimizer accepted by :meth:`cytools.Cone.find_interior_point`.
+InteriorPointBackend: TypeAlias = Literal[
+    "highs", "glop", "scip", "cpsat", "mosek", "osqp", "cvxopt"
+]
+
+#: Linear/integer optimizer used by the cone feasibility kernel.
+FeasibilityBackend: TypeAlias = Literal["highs", "glop", "scip", "cpsat"]
+
+#: Serialized representation of Gopakumar--Vafa or Gromov--Witten invariants.
+InvariantFormat: TypeAlias = Literal["dok", "coo"]
+
+#: Invariant family selected by the shared GV/GW implementation.
+InvariantKind: TypeAlias = Literal["gv", "gw"]
+
+#: Start method supported by Python's multiprocessing module.
+ProcessStartMethod: TypeAlias = Literal["fork", "forkserver", "spawn"]
+
 __all__ = [
+    "AutomorphismAction",
+    "ExtremalityMethod",
+    "ExtremalRaysMethod",
+    "FaceTriangulationMethod",
+    "FeasibilityBackend",
     "IntnumFormat",
+    "InteriorPointBackend",
+    "InvariantFormat",
+    "InvariantKind",
     "Lattice",
     "LinearSolverBackend",
     "Matrix",
+    "NormalFormBackend",
+    "PointednessBackend",
+    "PolytopeBackend",
     "PolytopeFormat",
     "PolytopeInputType",
     "PolytopeSource",
+    "ProcessStartMethod",
+    "RandomTriangulationBackend",
     "Scalar",
+    "SecondaryConeBackend",
+    "StretchedConeBackend",
+    "TriangulationBackend",
     "Vector",
     "VectorOrMatrix",
 ]

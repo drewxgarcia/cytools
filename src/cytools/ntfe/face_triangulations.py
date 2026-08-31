@@ -31,6 +31,7 @@ from typing import Union
 import numpy as np
 
 from cytools._backends import openmp
+from cytools._typing import FaceTriangulationMethod
 from cytools.helpers import basic_geometry
 
 # CYTools imports
@@ -124,7 +125,7 @@ def face_triangs(
     only_regular: bool = True,
     max_npts: int | None = None,
     N_face_triangs: int = 1000,
-    triang_method: str = "grow2d",
+    triang_method: FaceTriangulationMethod = "grow2d",
     dualgnn_model=None,
     seed: int | None = None,
     verbosity: int = 0,

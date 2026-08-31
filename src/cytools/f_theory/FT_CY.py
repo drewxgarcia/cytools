@@ -30,7 +30,7 @@ import pandas as pd
 import pyarrow as pa
 import pyarrow.parquet as pq
 
-from cytools._typing import Lattice
+from cytools._typing import Lattice, PolytopeBackend
 from cytools.f_theory import Uplift_functions as UF
 
 # CYTools imports
@@ -1896,7 +1896,7 @@ def fetch_orientifolds(
     sample_seed: int | None = None,
     timeout: int = 60,
     as_list: bool = True,
-    backend: str | None = None,
+    backend: PolytopeBackend | None = None,
     deterministic_glsm_basis: bool = False,
     dualize: bool = False,
     favorable: bool | None = None,
@@ -2022,7 +2022,7 @@ def fetch_F_Theory_uplifts(
     sample_seed: int | None = None,
     timeout: int = 60,
     as_list: bool = True,
-    backend: str | None = None,
+    backend: PolytopeBackend | None = None,
     deterministic_glsm_basis: bool = False,
     dualize: bool = False,
     favorable: bool | None = None,

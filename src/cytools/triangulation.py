@@ -35,7 +35,15 @@ from scipy.spatial import ConvexHull
 
 # CYTools imports
 from cytools._extensions import lazy_method
-from cytools._typing import Matrix, Vector, VectorOrMatrix
+from cytools._typing import (
+    InteriorPointBackend,
+    Matrix,
+    RandomTriangulationBackend,
+    SecondaryConeBackend,
+    TriangulationBackend,
+    Vector,
+    VectorOrMatrix,
+)
 from cytools.helpers.arithmetic import gcd_reduce, primitive
 from cytools.utils import gcd_list, lll_reduce
 
@@ -146,7 +154,7 @@ class Triangulation:
         check_input_simplices: bool = True,
         heights: Vector | None = None,
         check_heights: bool = True,
-        backend: str = "cgal",
+        backend: TriangulationBackend = "cgal",
         verbosity: int = 1,
     ) -> None:
         """
@@ -208,12 +216,13 @@ class Triangulation:
             raise ValueError("All point labels must exist in the polytope.")
 
         # backend
-        backend = backend.lower()
-        if backend not in ["qhull", "cgal", "topcom", None]:
+        normalized_backend = backend.lower()
+        if normalized_backend not in ("qhull", "cgal", "topcom"):
             raise ValueError(
-                f"Invalid backend, {backend}. "
-                + f"Options: {['qhull', 'cgal', 'topcom', None]}."
+                f"Invalid backend, {normalized_backend}. "
+                + f"Options: {['qhull', 'cgal', 'topcom']}."
             )
+        backend = normalized_backend
 
         # initialize attributes
         # ---------------------
@@ -1465,7 +1474,7 @@ class Triangulation:
     @overload
     def secondary_cone(
         self,
-        backend: str | None = None,
+        backend: SecondaryConeBackend | None = None,
         include_points_not_in_triangulation: bool = True,
         as_cone: Literal[True] = True,
         on_faces_dim: int | None = None,
@@ -1475,7 +1484,7 @@ class Triangulation:
     @overload
     def secondary_cone(
         self,
-        backend: str | None = None,
+        backend: SecondaryConeBackend | None = None,
         include_points_not_in_triangulation: bool = True,
         *,
         as_cone: Literal[False],
@@ -1485,7 +1494,7 @@ class Triangulation:
 
     def secondary_cone(
         self,
-        backend: str | None = None,
+        backend: SecondaryConeBackend | None = None,
         include_points_not_in_triangulation: bool = True,
         as_cone: bool = True,
         on_faces_dim: int | None = None,
@@ -1702,7 +1711,11 @@ class Triangulation:
         # return
         return self._is_regular
 
-    def heights(self, integral: bool = False, backend: str | None = None) -> np.ndarray:
+    def heights(
+        self,
+        integral: bool = False,
+        backend: InteriorPointBackend | None = None,
+    ) -> np.ndarray:
         """
         **Description:**
         Returns a height vector if the triangulation is regular. An
@@ -3015,7 +3028,7 @@ def random_triangulations_fast_generator(
     max_retries: int = 500,
     make_star: bool = False,
     only_fine: bool = True,
-    backend: str = "cgal",
+    backend: RandomTriangulationBackend = "cgal",
     seed: int | None = None,
     verbosity: int = 0,
 ) -> Generator[Triangulation, None, None]:
@@ -3144,7 +3157,7 @@ def random_triangulations_fair_generator(
     fine_tune_steps: int = 8,
     max_retries: int = 50,
     make_star: bool = False,
-    backend: str = "cgal",
+    backend: RandomTriangulationBackend = "cgal",
     seed: int | None = None,
 ) -> Generator[Triangulation, None, None]:
     r"""
