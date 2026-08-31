@@ -15,9 +15,11 @@ The website is not contacted; every test forces `source="database"`.
 
 import types
 
+import numpy as np
 import pytest
 
 from cytools import fetch_polytopes
+from cytools.utils import _fetch_from_database
 
 
 def _fetch(**kwargs):
@@ -141,3 +143,55 @@ def test_database_source_rejects_5d():
 def test_inconsistent_euler_characteristic_still_rejected():
     with pytest.raises(ValueError, match="Euler characteristic"):
         fetch_polytopes(h11=5, h21=3, chi=999, lattice="N", limit=1, source="database")
+
+
+def test_database_generator_supports_an_unbounded_limit(monkeypatch):
+    """`limit=None` must not be compared with the yielded-row counter."""
+    import cytools.dataset as dataset
+    import cytools.polytope as polytope_module
+
+    class Batch:
+        def iter_vertices(self):
+            yield np.array([[1, 0], [0, 1], [-1, -1]])
+            yield np.array([[1, 0], [0, 1], [-1, -2]])
+
+    scan_args = {}
+
+    def fake_scan_batches(**kwargs):
+        scan_args.update(kwargs)
+        return [Batch()]
+
+    built = []
+
+    def fake_polytope(vertices, **kwargs):
+        value = (vertices.tolist(), kwargs)
+        built.append(value)
+        return value
+
+    monkeypatch.setattr(dataset, "scan_batches", fake_scan_batches)
+    monkeypatch.setattr(polytope_module, "Polytope", fake_polytope)
+
+    result = list(
+        _fetch_from_database(
+            h11=None,
+            h12=None,
+            chi=None,
+            n_points=None,
+            n_vertices=3,
+            n_dual_points=None,
+            n_facets=None,
+            limit=None,
+            scan_limit=None,
+            favorable=None,
+            lattice="N",
+            backend=None,
+            deterministic_glsm_basis=False,
+            dualize=False,
+            seed=42,
+            db_dir=None,
+        )
+    )
+
+    assert result == built
+    assert len(result) == 2
+    assert scan_args["n"] is None

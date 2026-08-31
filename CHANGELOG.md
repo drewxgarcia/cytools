@@ -71,6 +71,12 @@ are occasionally published a day or two later.
   triangulation, face, cone, toric-variety, or Calabi–Yau implementations.
 - Source formatting, Pyflakes linting, and ty type checking are now reproducible
   development dependencies and required CI checks.
+- Notebook-facing source, format, lattice, and sparse-solver choices now use
+  constrained type aliases, giving IDEs exact autocomplete instead of bare
+  `str` parameters.
+- Landscape auto-parallelism now follows measured payload scaling: up to four
+  workers for combinatorial geometry and one for BLAS-bound volume columns.
+  An explicit `workers=` value remains an expert override.
 - CI now exercises the `cvxopt`, `gnn`, `normaliz`, and `performance` extras in
   independent backend cells while keeping the default development environment
   portable and free of incompatible optional native runtimes.

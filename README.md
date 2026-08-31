@@ -32,7 +32,7 @@ base is available at runtime as `cytools.upstream_version`.
 
 ## Quick example
 
-After [installing CYTools](INSTALL.md), compute the Hodge numbers of the quintic Calabi-Yau threefold:
+After [installing CYTools Workbench](INSTALL.md), compute the Hodge numbers of the quintic Calabi-Yau threefold:
 
 ```python
 from cytools import Polytope

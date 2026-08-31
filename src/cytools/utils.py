@@ -41,7 +41,16 @@ import scipy.sparse as sp
 
 # CYTools imports
 import cytools.config as config
-from cytools._typing import Matrix, VectorOrMatrix
+from cytools._typing import (
+    IntnumFormat,
+    Lattice,
+    LinearSolverBackend,
+    Matrix,
+    PolytopeFormat,
+    PolytopeInputType,
+    PolytopeSource,
+    VectorOrMatrix,
+)
 from cytools.helpers.arithmetic import gcd_reduce, primitive
 
 if TYPE_CHECKING:
@@ -158,7 +167,8 @@ def gcd_list(arr):
     - `arr`: The values.
 
     **Returns:**
-    The gcd. Zero for an all-zero input, matching the float path.
+    The gcd. Zero for an all-zero *or empty* input, matching `math.gcd()` and
+    `np.gcd.reduce`.
 
     **Example:**
     ```python {2}
@@ -174,11 +184,31 @@ def gcd_list(arr):
     # measured 2.6-3x slower overall, for a branch they never take.
     # dtype.kind rather than np.issubdtype: the latter is a Python-level call
     # costing about a microsecond, which is most of a float caller's budget
+    #
+    # The empty-input guards live inside the type branches rather than in front
+    # of `functools.reduce`. `reduce` has no initializer here, so an empty
+    # sequence would raise instead of returning the gcd's identity -- and
+    # callers do reach this with an empty list, since the Mori-ray assembly in
+    # `toricvariety` builds one whenever a curve's intersection numbers are all
+    # zero. Zero is what both exact paths already give (`gcd_reduce(empty)` and
+    # `math.gcd()`).
+    #
+    # An initializer of 0 would also fix it -- `gcd_float(0, x) == abs(x)`, so
+    # it is a true identity -- but only for two or more elements. `reduce(f,
+    # [x])` returns `x` unchanged, sign included, and callers divide a whole
+    # row by the result, so introducing an abs() for one-element input would
+    # flip Mori rays. Hence the explicit guards.
     if type(arr) is np.ndarray:
         if arr.dtype.kind in "iu":
             return int(gcd_reduce(arr))
-    elif type(arr) in (list, tuple) and arr and all(type(x) is int for x in arr):
-        return math.gcd(*[abs(x) for x in arr])
+        if not arr.size:
+            return 0
+    elif type(arr) in (list, tuple):
+        if not arr:
+            return 0
+        # math.gcd is sign-insensitive, so no abs() pass is needed first
+        if all(type(x) is int for x in arr):
+            return math.gcd(*arr)
 
     return functools.reduce(gcd_float, arr)
 
@@ -695,7 +725,7 @@ def finalize_intersection_numbers(
     zero_as_anticanonical: bool,
     in_basis: bool,
     exact_arithmetic: bool,
-    format: str,
+    format: IntnumFormat,
 ) -> "dict | np.ndarray":
     """
     **Description:**
@@ -787,7 +817,7 @@ class PerformanceWarning(UserWarning):
 def solve_linear_system(
     M: sp.csr_matrix,
     C: list[float],
-    backend: str = "all",
+    backend: LinearSolverBackend = "all",
     check: bool = True,
     backend_error_tol: float = 1e-4,
     verbosity: int = 0,
@@ -827,7 +857,7 @@ def solve_linear_system(
     ```
     """
     # input checking
-    backends = ["all", "sksparse", "scipy"]
+    backends: tuple[LinearSolverBackend, ...] = ("all", "sksparse", "scipy")
     if backend not in backends:
         raise ValueError(f"Invalid backend... options are {backends}.")
 
@@ -1304,13 +1334,13 @@ def set_curve_basis(
 # -----------------
 def polytope_generator(
     input: str,
-    input_type: str = "file",
-    format: str = "ks",
+    input_type: PolytopeInputType = "file",
+    format: PolytopeFormat = "ks",
     backend: str | None = None,
     deterministic_glsm_basis: bool = False,
     dualize: bool = False,
     favorable: bool | None = None,
-    lattice: str | None = None,
+    lattice: Lattice | None = None,
     limit: int | None = None,
 ) -> Generator["Polytope", None, None]:
     """
@@ -1498,14 +1528,14 @@ def polytope_generator(
 
 def read_polytopes(
     input: str,
-    input_type: str = "file",
-    format: str = "ks",
+    input_type: PolytopeInputType = "file",
+    format: PolytopeFormat = "ks",
     backend: str | None = None,
     deterministic_glsm_basis: bool = False,
     as_list: bool = False,
     dualize: bool = False,
     favorable: bool | None = None,
-    lattice: str | None = None,
+    lattice: Lattice | None = None,
     limit: int | None = None,
 ) -> 'Generator["Polytope", None, None] | list["Polytope"]':
     """
@@ -1634,6 +1664,9 @@ def _fetch_from_database(
     **Arguments:**
     - `h11`, `h12`, `chi`: Already converted to the M-lattice convention the
         database stores, by the same swap the web request applies.
+    - `limit`: Maximum polytopes to yield, or `None` for no cap. `None` is a
+        supported value of `fetch_polytopes(limit=...)`, so it must not be
+        compared against a counter.
     - `scan_limit`: Rows to draw from the database. Exceeds `limit` when
         favorability filtering will discard some of them.
     - `seed`: Seed for the database's reproducible stratified sampling.
@@ -1658,7 +1691,7 @@ def _fetch_from_database(
         db_dir=db_dir,
     ):
         for verts in batch.iter_vertices():
-            if n_yielded >= limit:
+            if (limit is not None) and (n_yielded >= limit):
                 return
 
             p = Polytope(
@@ -1684,13 +1717,13 @@ def fetch_polytopes(
     h22: int | None = None,
     h31: int | None = None,
     chi: int | None = None,
-    lattice: str = "N",
+    lattice: Lattice = "N",
     dim: int = 4,
     n_points: int | None = None,
     n_vertices: int | None = None,
     n_dual_points: int | None = None,
     n_facets: int | None = None,
-    limit: int = 1000,
+    limit: int | None = 1000,
     samples: int | None = None,
     sample_seed: int | None = None,
     timeout: int = 60,
@@ -1700,7 +1733,7 @@ def fetch_polytopes(
     dualize: bool = False,
     favorable: bool | None = None,
     verbosity: int = 0,
-    source: str = "auto",
+    source: PolytopeSource = "auto",
     db_dir: "str | None" = None,
 ) -> 'Generator["Polytope", None, None] | list["Polytope"]':
     """
@@ -1739,7 +1772,7 @@ def fetch_polytopes(
     - `n_dual_points`: The number of points of the dual polytopes of the
         desired polytopes.
     - `n_facets`: The number of facets of the desired polytopes.
-    - `limit`: The maximum number of fetched polytopes.
+    - `limit`: The maximum number of fetched polytopes. `None` removes the cap.
     - `samples`: Allow sampling of polytopes. Requires as_list=True and
         samples<limit.
     - `sample_seed`: A random number seed for sampling polytopes.
@@ -1819,7 +1852,7 @@ def fetch_polytopes(
         if lattice is None:
             raise ValueError("Must specify lattice when checking favorability.")
 
-        fetch_limit = (5 if favorable else 10) * limit + 100
+        fetch_limit = None if limit is None else (5 if favorable else 10) * limit + 100
     else:
         fetch_limit = limit
 

@@ -11,9 +11,11 @@ on whether it arrived as a string or as a file.
 """
 
 import gc
+from typing import cast
 
 import pytest
 
+from cytools._typing import PolytopeFormat
 from cytools.utils import read_polytopes
 
 #: The quintic, and a second weight system, one per line.
@@ -86,4 +88,9 @@ def test_file_handle_is_closed(ws_file):
 
 def test_unknown_format_is_rejected(ws_file):
     with pytest.raises(ValueError, match="Unsupported format"):
-        read_polytopes(ws_file, input_type="file", format="nonsense", as_list=True)
+        read_polytopes(
+            ws_file,
+            input_type="file",
+            format=cast(PolytopeFormat, "nonsense"),
+            as_list=True,
+        )

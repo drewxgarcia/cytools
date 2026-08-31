@@ -364,11 +364,20 @@ def test_quantities_reports_parallel_safety_consistently():
         assert _resolve_workers(4, [row["name"]]) == expected, row["name"]
 
 
-def test_auto_worker_count_is_capped():
-    """Scaling efficiency was 71% at 8 workers, so auto-selection stops there."""
-    from cytools.landscape import _MAX_AUTO_WORKERS, _resolve_workers
+def test_auto_worker_count_matches_the_payload(monkeypatch):
+    """Measured payload classes get distinct caps; explicit choices still win."""
+    import cytools.landscape as landscape_module
+    from cytools.landscape import _resolve_workers
 
-    assert _resolve_workers(None, ["is_favorable"]) <= _MAX_AUTO_WORKERS
+    monkeypatch.setattr(landscape_module.os, "cpu_count", lambda: 12)
+
+    assert _resolve_workers(None, ["n_intnums"]) == 4
+    assert _resolve_workers(None, ["divisor_volumes"]) == 1
+    assert _resolve_workers(None, ["cy_volume"]) == 1
+    assert _resolve_workers(None, ["n_intnums", "divisor_volumes"]) == 1
+
+    # `workers=` is an expert override, including for BLAS-heavy payloads.
+    assert _resolve_workers(6, ["divisor_volumes"]) == 6
 
 
 def test_store_defaults_to_a_cache_dir_when_unconfigured(monkeypatch):

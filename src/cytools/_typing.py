@@ -24,6 +24,7 @@
 # -----------------------------------------------------------------------------
 
 from collections.abc import Sequence
+from typing import Literal, TypeAlias
 
 import numpy as np
 
@@ -39,4 +40,33 @@ Matrix = np.ndarray | Sequence[Vector]
 #: Either of the above -- for arguments accepting a vector or a matrix.
 VectorOrMatrix = Vector | Matrix
 
-__all__ = ["Matrix", "Scalar", "Vector", "VectorOrMatrix"]
+#: Lattice convention used throughout the public geometry API.
+Lattice: TypeAlias = Literal["N", "M"]
+
+#: Sparse linear solver selected by :func:`cytools.utils.solve_linear_system`.
+LinearSolverBackend: TypeAlias = Literal["all", "sksparse", "scipy"]
+
+#: Serialized representation of an intersection-number tensor.
+IntnumFormat: TypeAlias = Literal["dok", "coo", "dense"]
+
+#: Where :func:`cytools.fetch_polytopes` obtains 4D records.
+PolytopeSource: TypeAlias = Literal["auto", "database", "web"]
+
+#: Input encoding accepted by :func:`cytools.read_polytopes`.
+PolytopeFormat: TypeAlias = Literal["ks", "ws"]
+
+#: Container accepted by :func:`cytools.read_polytopes`.
+PolytopeInputType: TypeAlias = Literal["file", "str"]
+
+__all__ = [
+    "IntnumFormat",
+    "Lattice",
+    "LinearSolverBackend",
+    "Matrix",
+    "PolytopeFormat",
+    "PolytopeInputType",
+    "PolytopeSource",
+    "Scalar",
+    "Vector",
+    "VectorOrMatrix",
+]

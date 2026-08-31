@@ -106,6 +106,8 @@ def test_integer_arrays_of_any_shape():
 def test_all_zero_and_empty():
     assert gcd_list(np.array([0, 0])) == 0
     assert gcd_list([0, 0]) == 0
+    assert gcd_list([]) == 0
+    assert gcd_list(np.array([], dtype=float)) == 0
 
 
 def test_float_input_keeps_returning_a_float():

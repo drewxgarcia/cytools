@@ -104,7 +104,8 @@ __all__ = [
 # 4 workers. Deliberately not parameters.
 _BATCH_SIZE = 2048
 _CHUNKSIZE = 8
-_MAX_AUTO_WORKERS = 8
+_MAX_AUTO_WORKERS = 4  # combinatorial work peaks near here (1.66x at 4)
+_MAX_BLAS_WORKERS = 1  # dense-tensor work is already threaded; 0.86x at 4
 
 # Below this h11 the dense (h11)^3 tensor is small enough that allocating it
 # beats converting the sparse dict; above it, the dense form dominates memory.
@@ -134,13 +135,20 @@ class _Quantity:
     fn: Callable
     source: str  # "database" (also derivable) or "computed"
     doc: str
+    blas_bound: bool = False  # dominated by threaded dense linear algebra
 
 
 _QUANTITIES: dict[str, _Quantity] = {}
 _ModuliMode = Literal["tip", "sampled"]
 
 
-def quantity(fn=None, *, name: str | None = None, source: str = "computed"):
+def quantity(
+    fn=None,
+    *,
+    name: str | None = None,
+    source: str = "computed",
+    blas_bound: bool = False,
+):
     """
     **Description:**
     Register a storable column on :class:`Geometry`.
@@ -202,6 +210,7 @@ def quantity(fn=None, *, name: str | None = None, source: str = "computed"):
             fn=f,
             source=source,
             doc=(f.__doc__ or "").strip().split("\n")[0],
+            blas_bound=blas_bound,
         )
         return f
 
@@ -614,7 +623,7 @@ def kahler_point(g):
     return g.moduli_point
 
 
-@quantity
+@quantity(blas_bound=True)
 def divisor_volumes(g):
     """Prime-toric-divisor volumes at the selected Kähler-moduli point.
 
@@ -627,7 +636,7 @@ def divisor_volumes(g):
     return np.asarray(np.asarray(glsm).T @ g._tau_basis, dtype=float)
 
 
-@quantity
+@quantity(blas_bound=True)
 def cy_volume(g):
     """Volume of the Calabi-Yau at the selected Kähler-moduli point."""
     if g.moduli_point is None:
@@ -1031,10 +1040,21 @@ def _resolve_workers(workers, columns, n=None) -> int:
             )
         return 1
 
+    # Measured scaling at h11=50, n=400 on 11 cores, by payload class:
+    #   combinatorial (n_simplices, n_intnums): 1.00 / 1.48 / 1.66 / 1.53 at 1/2/4/6
+    #   dense-tensor  (divisor_volumes):        1.00 / 1.00 / 0.86 / 0.82 at 1/2/4/6
+    # Dense-tensor work is already threaded inside numpy, so extra processes
+    # only contend with it -- past one worker it is a net loss. Combinatorial
+    # work is Python-bound and does pay, up to about four.
+    cap = (
+        _MAX_BLAS_WORKERS
+        if any(_QUANTITIES[c].blas_bound for c in columns)
+        else _MAX_AUTO_WORKERS
+    )
     requested = (
         max(1, int(workers))
         if workers is not None
-        else min(_MAX_AUTO_WORKERS, max(1, (os.cpu_count() or 2) - 2))
+        else max(1, min(cap, (os.cpu_count() or 2) - 2))
     )
 
     if n is None:

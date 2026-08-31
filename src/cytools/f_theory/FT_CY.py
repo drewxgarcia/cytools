@@ -30,6 +30,7 @@ import pandas as pd
 import pyarrow as pa
 import pyarrow.parquet as pq
 
+from cytools._typing import Lattice
 from cytools.f_theory import Uplift_functions as UF
 
 # CYTools imports
@@ -1884,7 +1885,7 @@ def fetch_orientifolds(
     h22: int | None = None,
     h31: int | None = None,
     chi: int | None = None,
-    lattice: str = "N",
+    lattice: Lattice = "N",
     dim: int = 4,
     n_points: int | None = None,
     n_vertices: int | None = None,
@@ -2010,7 +2011,7 @@ def fetch_F_Theory_uplifts(
     h22: int | None = None,
     h31: int | None = None,
     chi: int | None = None,
-    lattice: str = "N",
+    lattice: Lattice = "N",
     dim: int = 4,
     n_points: int | None = None,
     n_vertices: int | None = None,

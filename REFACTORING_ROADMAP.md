@@ -102,9 +102,13 @@ flags themselves (Phase 6) depends on it.
 fallback, never a type error. The codebase already uses `Literal` — but only
 inside `@overload` stubs, never where it would catch a typo.
 
-- [x] **4.1** Define shared aliases in `cytools/_typing.py` (`Backend`,
-      `IntnumFormat`, `Lattice`, …) from the values each function accepts.
-- [ ] **4.2** Apply them to the public API surface.
+- [x] **4.1** Define precise shared aliases in `cytools/_typing.py`
+      (`LinearSolverBackend`, `IntnumFormat`, `Lattice`, `PolytopeSource`, …)
+      from the values each function accepts. Avoid one overly broad `Backend`
+      alias: a value valid for one engine boundary may be invalid at another.
+- [ ] **4.2** Apply them to the public API surface. The notebook-facing
+      `read_polytopes`, `fetch_polytopes`, and sparse-solver boundary are typed;
+      domain classes remain to be migrated in reviewed batches.
       *Done when:* `ty` flags a bad literal at a call site.
 
 ## Phase 5 — Duplication
@@ -180,7 +184,7 @@ Considered and rejected, with measurements:
 - **`performance`** (`scikit-sparse`) is **sdist-only**: the installed wheel is
   `Generator: setuptools` with a local platform tag, and the built extension
   hard-links `/opt/homebrew/opt/suite-sparse/lib/libcholmod.5.dylib` — an
-  absolute, machine-specific path. Requiring it would make `pip install cytools`
+  absolute, machine-specific path. Requiring it would make `pip install cytools-workbench`
   fail on any machine without the SuiteSparse headers. CHANGELOG 1.4.x records
   the deliberate move *to* an optional extra with a SciPy fallback; reversing it
   would be a regression.
@@ -267,6 +271,13 @@ Measured 2026-08-31 on the paper-realistic payload (`triangulate` ->
       `_construct_intnum_equations_4d` is **5%** of `intersection_numbers`;
       the assembly work already landed. With CHOLMOD in place no single stage
       exceeds ~31%, so kernel-level wins are capped near 1.3x.
+
+- [x] **9.4** Match automatic process counts to measured payload scaling.
+      Combinatorial work peaked at **1.66x with four workers** and regressed at
+      six; dense volume contractions were already threaded by NumPy and fell
+      to **0.86x at four workers**. Auto-selection therefore caps those classes
+      at four and one respectively, while explicit `workers=` remains an
+      override. The distinction and override are pinned mechanically.
 
 ---
 
