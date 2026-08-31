@@ -8,6 +8,15 @@ import time
 from cytools.helpers import misc
 
 
+def test_save_creates_cache_directory_lazily(tmp_path):
+    cache = tmp_path / "not-created-at-import"
+    assert not cache.exists()
+
+    misc.save_zipped_pickle({"ok": True}, "value.pkl.gz", path=str(cache))
+
+    assert misc.load_zipped_pickle("value.pkl.gz", path=str(cache)) == {"ok": True}
+
+
 # save_zipped_pickle must write atomically (temp file + os.replace) so a SIGKILL
 # mid-write never leaves a corrupt destination. The child parks at the swap point
 # with the temp written but the rename pending, so the parent can kill it there.

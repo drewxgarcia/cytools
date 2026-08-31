@@ -16,5 +16,5 @@
 
 from cytools.ntfe.ntfe import *
 
-# imported for its side effect: attaches methods to Polytope
+# Re-export the focused face-triangulation namespace for compatibility.
 from cytools.ntfe import face_triangulations as face_triangulations

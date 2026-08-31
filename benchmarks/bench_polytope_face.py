@@ -30,8 +30,6 @@ Run full suite:
 
 import pytest
 
-from cytools.dataset import load_tier, load_polytopes
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -61,62 +59,35 @@ def _collect_faces(polys, dims=None):
 # ---------------------------------------------------------------------------
 
 @pytest.fixture(scope="module")
-def tiny_polys_objs(tiny_polys):
-    return [r.polytope for r in tiny_polys]
-
-
-@pytest.fixture(scope="module")
-def bulk_polys_objs(bulk_polys):
-    return [r.polytope for r in bulk_polys]
-
-
-@pytest.fixture(scope="module")
-def tiny_faces(tiny_polys_objs):
+def tiny_faces(tiny_poly_objects):
     """All faces of 20 tiny (5v) polytopes — fast calibration."""
-    return _collect_faces(tiny_polys_objs)
+    return _collect_faces(tiny_poly_objects)
 
 
 @pytest.fixture(scope="module")
-def bulk_faces(bulk_polys_objs):
+def bulk_faces(bulk_poly_objects):
     """All faces of 20 bulk (13-17v) polytopes — primary fixture.
 
     These polytopes have many more faces and lattice points than tiny ones.
     """
-    return _collect_faces(bulk_polys_objs)
+    return _collect_faces(bulk_poly_objects)
 
 
 @pytest.fixture(scope="module")
-def reflexive_polys():
-    """20 reflexive polytopes with h11 <= 4.
-
-    dual_face() requires a reflexive ambient polytope — NotImplementedError
-    otherwise.  h11-filtering via load_polytopes guarantees reflexivity for
-    4D KS polytopes.
-    """
-    import math, os
-    n = int(os.environ.get("CYTOOLS_BENCH_N_CY", "20"))
-    n_per = max(1, math.ceil(n / 4))
-    records = []
-    for h11 in range(1, 5):
-        records.extend(load_polytopes(h11=h11, n=n_per))
-    return [r.polytope for r in records[:n]]
-
-
-@pytest.fixture(scope="module")
-def reflexive_faces(reflexive_polys):
+def reflexive_faces(reflexive_poly_objects):
     """All faces of 20 reflexive polytopes — needed for dual_face()."""
-    return _collect_faces(reflexive_polys)
+    return _collect_faces(reflexive_poly_objects)
 
 
 @pytest.fixture(scope="module")
-def bulk_codim1_faces(bulk_polys_objs):
+def bulk_codim1_faces(bulk_poly_objects):
     """Codim-1 (facet) faces of bulk polytopes.
 
     Facets are the most expensive face type to work with (most points,
     largest sub-face lattice).  Collect only the facets for focused tests.
     """
     results = []
-    for p in bulk_polys_objs:
+    for p in bulk_poly_objects:
         try:
             d = p.dimension()
             results.extend(p.faces(d - 1))
@@ -312,10 +283,10 @@ class TestSubFaces:
     with total face lattice size.
     """
 
-    def test_faces_of_faces_tiny(self, benchmark, tiny_polys_objs):
+    def test_faces_of_faces_tiny(self, benchmark, tiny_poly_objects):
         """Sub-faces of codim-1 faces (facets) of tiny polytopes."""
         facets = []
-        for p in tiny_polys_objs:
+        for p in tiny_poly_objects:
             try:
                 facets.extend(p.faces(p.dimension() - 1))
             except Exception:
@@ -343,10 +314,10 @@ class TestTriangulate:
     Use 2D faces to keep the test tractable at bulk tier.
     """
 
-    def test_triangulate_2d_faces_tiny(self, benchmark, tiny_polys_objs):
+    def test_triangulate_2d_faces_tiny(self, benchmark, tiny_poly_objects):
         """Triangulate all 2D faces of tiny polytopes."""
         faces_2d = []
-        for p in tiny_polys_objs:
+        for p in tiny_poly_objects:
             try:
                 faces_2d.extend(p.faces(2))
             except Exception:
@@ -356,10 +327,10 @@ class TestTriangulate:
             return [f.triangulate() for f in faces_2d]
         benchmark.pedantic(go, rounds=3, iterations=1)
 
-    def test_triangulate_2d_faces_bulk(self, benchmark, bulk_polys_objs):
+    def test_triangulate_2d_faces_bulk(self, benchmark, bulk_poly_objects):
         """Triangulate all 2D faces of bulk polytopes."""
         faces_2d = []
-        for p in bulk_polys_objs:
+        for p in bulk_poly_objects:
             try:
                 faces_2d.extend(p.faces(2))
             except Exception:
@@ -370,10 +341,10 @@ class TestTriangulate:
         benchmark.pedantic(go, rounds=1, iterations=1)
 
     @pytest.mark.slow
-    def test_triangulate_3d_faces_bulk(self, benchmark, bulk_polys_objs):
+    def test_triangulate_3d_faces_bulk(self, benchmark, bulk_poly_objects):
         """Triangulate all 3D faces of bulk polytopes — much more expensive."""
         faces_3d = []
-        for p in bulk_polys_objs:
+        for p in bulk_poly_objects:
             try:
                 faces_3d.extend(p.faces(3))
             except Exception:

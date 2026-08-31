@@ -21,17 +21,19 @@
 
 # 'standard' imports
 from collections import defaultdict
+from collections.abc import Iterable
 import copy
 import warnings
 
 # 3rd party imports
 import cygv
 import numpy as np
+from cytools._typing import Matrix, Vector, VectorOrMatrix
 from scipy.linalg import null_space
 from scipy.sparse import coo_matrix, dok_matrix
 
 # CYTools imports
-from cytools import config
+import cytools.config as config
 from cytools.cone import Cone
 from cytools.utils import (
     gcd_list,
@@ -138,7 +140,7 @@ class CalabiYau:
                     "The experimental features must be enabled to " "construct CICYs."
                 )
             # Verify that the input defines a nef-partition
-            from cytools import Polytope
+            from cytools.polytope import Polytope
 
             pts = toric_var.polytope().points()
             convpoly = Polytope(
@@ -493,7 +495,7 @@ class CalabiYau:
         complicated basis transformation that relates them.
         ```python {5,7}
         p = Polytope([[-1,0,0,0],[-1,1,0,0],[-1,0,1,0],[2,-1,0,-1],[2,0,-1,-1],[2,-1,-1,-1],[-1,0,0,1],[-1,1,0,1],[-1,0,1,1]])
-        triangs = p.all_triangulations(as_list=True)
+        triangs = list(p.all_triangulations())
         cy0 = triangs[0].get_cy()
         cy1 = triangs[1].get_cy()
         print(cy0.is_trivially_equivalent(cy1))
@@ -647,7 +649,7 @@ class CalabiYau:
 
         tv = self.ambient_variety()
 
-        if self._is_hypersurface:
+        if self._is_hypersurface or self._nef_part is None:
             self._dim = tv.dim() - 1
         else:
             self._dim = tv.triangulation().dim() - len(self._nef_part)
@@ -697,9 +699,12 @@ class CalabiYau:
         ```
         """
         if not self._is_hypersurface:
-            if self._hodge_nums is None:
-                self._compute_cicy_hodge_numbers()
-            return self._hodge_nums.get((p, q), 0)
+            hodge_nums = self._hodge_nums
+            if hodge_nums is None:
+                hodge_nums = self._compute_cicy_hodge_numbers()
+            if hodge_nums is None:
+                raise NotImplementedError("Could not compute the Hodge numbers.")
+            return hodge_nums.get((p, q), 0)
         if self.dim() not in (2, 3, 4):
             raise NotImplementedError(
                 "Only Calabi-Yaus of dimension 2-4 are currently supported."
@@ -882,22 +887,25 @@ class CalabiYau:
         ```
         """
         if not self._is_hypersurface:
-            if self._hodge_nums is None:
-                self._compute_cicy_hodge_numbers()
-            if "chi" in self._hodge_nums:
-                return self._hodge_nums["chi"]
+            hodge_nums = self._hodge_nums
+            if hodge_nums is None:
+                hodge_nums = self._compute_cicy_hodge_numbers()
+            if hodge_nums is None:
+                raise NotImplementedError("Could not compute the Hodge numbers.")
+            if "chi" in hodge_nums:
+                return hodge_nums["chi"]
             chi = 0
             for i in range(2 * self.dim() + 1):
                 ii = min(i, self.dim())
                 jj = i - ii
                 while True:
-                    chi += (-1 if i % 2 else 1) * self._hodge_nums[(ii, jj)]
+                    chi += (-1 if i % 2 else 1) * hodge_nums[(ii, jj)]
                     ii -= 1
                     jj += 1
                     if ii < 0 or jj > self.dim():
                         break
-            self._hodge_nums["chi"] = chi
-            return self._hodge_nums["chi"]
+            hodge_nums["chi"] = chi
+            return chi
         if self.dim() not in (2, 3, 4):
             raise NotImplementedError(
                 "Only Calabi-Yaus of dimension 2-4 are " "currently supported."
@@ -1017,25 +1025,26 @@ class CalabiYau:
         #        [0, 0, 0, 0, 0, 0, 1]])
         ```
         """
-        if self._divisor_basis is None:
+        if (self._divisor_basis is None) or (self._divisor_basis_mat is None):
             pts = [0] + list(self.prime_toric_divisors())
-            self.set_divisor_basis(
+            basis, basis_mat = self.set_divisor_basis(
                 self.polytope().glsm_basis(
                     integral=True, include_origin=True, points=pts
                 )
             )
-        if len(self._divisor_basis.shape) == 1:
-            if 0 in self._divisor_basis and not include_origin:
+        else:
+            basis, basis_mat = self._divisor_basis, self._divisor_basis_mat
+
+        if len(basis.shape) == 1:
+            if 0 in basis and not include_origin:
                 raise ValueError(
                     "The basis was requested not including the "
                     "origin, but it is included in the current basis."
                 )
             if as_matrix:
-                return np.array(
-                    self._divisor_basis_mat[:, (0 if include_origin else 1) :]
-                )
-            return np.array(self._divisor_basis) - (0 if include_origin else 1)
-        return np.array(self._divisor_basis[:, (0 if include_origin else 1) :])
+                return np.array(basis_mat[:, (0 if include_origin else 1) :])
+            return np.array(basis) - (0 if include_origin else 1)
+        return np.array(basis[:, (0 if include_origin else 1) :])
 
     def set_divisor_basis(self, basis, include_origin=True):
         """
@@ -1083,7 +1092,7 @@ class CalabiYau:
         """
         # This is handled by a function in utils since the functionality is
         # shared with the ToricVariety class.
-        set_divisor_basis(self, basis, include_origin=include_origin)
+        return set_divisor_basis(self, basis, include_origin=include_origin)
 
     def curve_basis(self, include_origin=True, as_matrix=False):
         """
@@ -1134,18 +1143,21 @@ class CalabiYau:
                     ),
                 )
             )
-        if len(self._curve_basis.shape) == 1:
-            if 0 in self._curve_basis and not include_origin:
+        basis = self._curve_basis
+        basis_mat = self._curve_basis_mat
+        if (basis is None) or (basis_mat is None):
+            raise RuntimeError("Failed to set a curve basis.")
+
+        if len(basis.shape) == 1:
+            if 0 in basis and not include_origin:
                 raise ValueError(
                     "The basis was requested not including the "
                     "origin, but it is included in the current basis."
                 )
             if as_matrix:
-                return np.array(
-                    self._curve_basis_mat[:, (0 if include_origin else 1) :]
-                )
-            return np.array(self._curve_basis) - (0 if include_origin else 1)
-        return np.array(self._curve_basis[:, (0 if include_origin else 1) :])
+                return np.array(basis_mat[:, (0 if include_origin else 1) :])
+            return np.array(basis) - (0 if include_origin else 1)
+        return np.array(basis[:, (0 if include_origin else 1) :])
 
     def set_curve_basis(self, basis, include_origin=True):
         """
@@ -1360,6 +1372,8 @@ class CalabiYau:
                     tuple(pt) for pt in self.ambient_variety().triangulation().points()
                 ]
                 parts = self._nef_part
+                if parts is None:
+                    raise RuntimeError("A CICY must have a nef partition.")
                 ambient_dim = self.ambient_dim()
                 intnums_dict = ambient_intnums
                 for dd in range(len(parts)):
@@ -1648,17 +1662,23 @@ class CalabiYau:
         # A 2-dimensional rational polyhedral cone in RR^2 generated by 3 rays
         ```
         """
-        if self._mori_cone[0] is None:
+        mori_cone = self._mori_cone[0]
+        if mori_cone is None:
             if (
                 self._optimal_ambient_var is None
             ):  # Make sure self._optimal_ambient_var is set
                 self.prime_toric_divisors()
-            self._mori_cone[0] = self._optimal_ambient_var.mori_cone()
+            ambient_var = self._optimal_ambient_var
+            if ambient_var is None:
+                raise RuntimeError("Failed to set the optimal ambient variety.")
+            mori_cone = ambient_var.mori_cone()
+            self._mori_cone[0] = mori_cone
+
         # 0: All divs, 1: No origin, 2: In basis
         args_id = ((not include_origin) * 1 if not in_basis else 0) + in_basis * 2
         if self._mori_cone[args_id] is not None:
             return self._mori_cone[args_id]
-        rays = self._mori_cone[0].rays()
+        rays = mori_cone.rays()
         basis = self.divisor_basis()
         if include_origin and not in_basis:
             new_rays = rays
@@ -1893,7 +1913,7 @@ class CalabiYau:
         intnums = self._fan.intersection_numbers(
             pushed_down=True, in_basis=True, as_np_array=True, copy=False,
         )
-        return np.tensordot(intnums, tloc, axes=[[-1], [0]])
+        return np.tensordot(intnums, tloc, axes=([-1], [0]))
 
     # aliases
     compute_AA = compute_kappa_matrix
@@ -1999,7 +2019,7 @@ class CalabiYau:
         """
         return np.linalg.inv(self.compute_inverse_kahler_metric(tloc))
 
-    def _compute_cicy_hodge_numbers(self, only_from_cache=False):
+    def _compute_cicy_hodge_numbers(self, only_from_cache: bool = False) -> dict | None:
         """
         **Description:**
         Computes the Hodge numbers of a CICY using PALP. The results are stored
@@ -2040,12 +2060,13 @@ class CalabiYau:
                 "This function should only be used for codim > 2 CICYs."
             )
         if self._hodge_nums is not None:
-            return
+            return self._hodge_nums
         codim = self.ambient_variety().dim() - self.dim()
         poly = self.ambient_variety().polytope()
         vert_ind = poly.points_to_indices(poly.vertices())
         nef_part_fs = frozenset(
-            frozenset(i for i in part if i in vert_ind) for part in self._nef_part
+            frozenset(i for i in part if i in vert_ind)
+            for part in (self._nef_part or ())
         )
         matched_hodge_nums = ()
 
@@ -2074,32 +2095,37 @@ class CalabiYau:
             raise NotImplementedError(
                 "This type of complete intersection is not supported."
             )
-        if len(matched_hodge_nums):
-            self._hodge_nums = dict()
-            n = 0
-            for i in range(2 * self.dim() + 1):
-                ii = min(i, self.dim())
-                jj = i - ii
-                while True:
-                    self._hodge_nums[(ii, jj)] = matched_hodge_nums[n]
-                    n += 1
-                    ii -= 1
-                    jj += 1
-                    if ii < 0 or jj > self.dim():
-                        break
+        if not len(matched_hodge_nums):
+            return None
+
+        hodge_nums = {}
+        n = 0
+        for i in range(2 * self.dim() + 1):
+            ii = min(i, self.dim())
+            jj = i - ii
+            while True:
+                hodge_nums[(ii, jj)] = matched_hodge_nums[n]
+                n += 1
+                ii -= 1
+                jj += 1
+                if ii < 0 or jj > self.dim():
+                    break
+
+        self._hodge_nums = hodge_nums
+        return hodge_nums
 
     # GVs
     # ---
     def _compute_gvs_gws(
         self,
         gv_or_gw: str,
-        mcap_generators: "ArrayLike" = None,
-        grading_vec: "ArrayLike" = None,
-        max_deg: int = None,
-        min_points: int = None,
-        target_points: "ArrayLike" = None,
-        basis: "ArrayLike" = None,
-        format: str = None,
+        mcap_generators: Matrix | None = None,
+        grading_vec: Vector | None = None,
+        max_deg: int | None = None,
+        min_points: int | None = None,
+        target_points: Matrix | None = None,
+        basis: VectorOrMatrix | None = None,
+        format: str | None = None,
     ):
         """
         **Description:**
@@ -2199,13 +2225,13 @@ class CalabiYau:
 
     def compute_gvs(
         self,
-        mcap_generators: "ArrayLike" = None,
-        grading_vec: "ArrayLike" = None,
-        max_deg: int = None,
-        min_points: int = None,
-        target_points: "ArrayLike" = None,
-        basis: "ArrayLike" = None,
-        format: str = None,
+        mcap_generators: Matrix | None = None,
+        grading_vec: Vector | None = None,
+        max_deg: int | None = None,
+        min_points: int | None = None,
+        target_points: Matrix | None = None,
+        basis: VectorOrMatrix | None = None,
+        format: str | None = None,
     ):
         """
         **Description:**
@@ -2242,13 +2268,13 @@ class CalabiYau:
 
     def compute_gws(
         self,
-        mcap_generators: "ArrayLike" = None,
-        grading_vec: "ArrayLike" = None,
-        max_deg: int = None,
-        min_points: int = None,
-        target_points: "ArrayLike" = None,
-        basis: "ArrayLike" = None,
-        format: str = None,
+        mcap_generators: Matrix | None = None,
+        grading_vec: Vector | None = None,
+        max_deg: int | None = None,
+        min_points: int | None = None,
+        target_points: Matrix | None = None,
+        basis: VectorOrMatrix | None = None,
+        format: str | None = None,
     ):
         """
         **Description:**
@@ -2358,6 +2384,10 @@ class CalabiYau:
                     else:
                         f2 = ff
                         break
+            if (f1 is None) or (f2 is None):
+                raise ValueError(
+                    f"Expected the 2-face {set(s2d)} to lie in two facets."
+                )
             pts_f1 = f1.difference(f2)
             pts_f2 = f2.difference(f1)
             comm_pts = list(s2d)+[0]
@@ -2545,10 +2575,10 @@ class Invariants:
         self,
         invariant_type: str,
         charge2invariant,
-        grading_vec: "ArrayLike" = None,
-        cutoff: int = None,
-        calabiyau: "CalabiYau" = None,
-        basis: "ArrayLike" = None,
+        grading_vec: Vector | None = None,
+        cutoff: int | None = None,
+        calabiyau: "CalabiYau | None" = None,
+        basis: VectorOrMatrix | None = None,
     ):
         """
         **Description:**
@@ -2557,10 +2587,10 @@ class Invariants:
         **Arguments:**
         - `invariant_type` *(str)*: Either `'gv'` or `'gw'`.
         - `charge2invariant`: The invariants, in dok (dict) or coo format.
-        - `grading_vec` *(ArrayLike, optional)*: The grading vector used.
+        - `grading_vec` *(Vector, optional)*: The grading vector used.
         - `cutoff` *(int, optional)*: The degree cutoff used.
         - `calabiyau` *(CalabiYau, optional)*: The associated CY.
-        - `basis` *(ArrayLike, optional)*: Basis to represent charges in.
+        - `basis` *(VectorOrMatrix, optional)*: Basis to represent charges in.
 
         **Returns:**
         Nothing.
@@ -2575,15 +2605,15 @@ class Invariants:
             # assume charge2invariant is of coo format
             self._charge2invariant = {tuple(r[:-1]): r[-1] for r in charge2invariant}
 
-        self._grading_vec = grading_vec
+        self._grading_vec = None if grading_vec is None else np.asarray(grading_vec)
         self._cutoff = cutoff
         self._cy = calabiyau
-        self._basis = basis
+        self._basis = None if basis is None else np.asarray(basis)
 
-        if basis is not None:
+        if self._basis is not None:
             charges = self._charge2invariant.keys()
             invariants = self._charge2invariant.values()
-            charges = np.array(list(charges)) @ basis.T
+            charges = np.array(list(charges)) @ self._basis.T
             self._charge2invariant = {
                 tuple(r): _gv for r, _gv in zip(charges, invariants)
             }
@@ -2714,7 +2744,7 @@ class Invariants:
         if self._type == "gv":
             return list(self._charge2invariant.values())
         else:
-            return None
+            return []
 
     @property
     def gws(self) -> list:
@@ -2731,7 +2761,7 @@ class Invariants:
         if self._type == "gw":
             return list(self._charge2invariant.values())
         else:
-            return None
+            return []
 
     def invariant(self, charge, check_deg=True):
         """
@@ -2795,7 +2825,7 @@ class Invariants:
 
 
 def _group_by_deg(
-    charges: "Iterable", grading_vec: "ArrayLike", as_np_arr: bool = False
+    charges: "Iterable", grading_vec: Vector, as_np_arr: bool = False
 ):
     """
     **Description:**
@@ -2810,7 +2840,7 @@ def _group_by_deg(
     *(dictionary)* Dictionary mapping degree to charges.
     """
     charges = np.asarray(sorted(charges))
-    degs = charges @ grading_vec
+    degs = charges @ np.asarray(grading_vec)
 
     # sort degrees
     sort_inds = np.argsort(degs)

@@ -21,11 +21,11 @@ def test_all_triangulations():
         ]
     )
 
-    triang_list = p.all_triangulations(as_list=True)
+    triang_list = list(p.all_triangulations())
     assert len(triang_list) == 2
 
-    triang_list = p.all_triangulations(
-        only_regular=False, only_star=False, only_fine=False, as_list=True
+    triang_list = list(
+        p.all_triangulations(only_regular=False, only_star=False, only_fine=False)
     )
     assert len(triang_list) == 6
 
@@ -468,13 +468,13 @@ def test_all_triangulations_simplex():
     # points(as_indices=True) with a tuple, raising a TypeError
     p = Polytope([[0, 0], [1, 0], [0, 1]])
 
-    raw = p.all_triangulations(raw_output=True, as_list=True)
+    raw = list(p.all_triangulations(raw_output=True))
     assert len(raw) == 1
     assert np.array(raw[0]).shape == (1, 3)
     assert sorted(np.array(raw[0])[0].tolist()) == [0, 1, 2]
 
     # the non-raw output keeps working too
-    triangs = p.all_triangulations(as_list=True)
+    triangs = list(p.all_triangulations())
     assert len(triangs) == 1
 
     # and the generator form

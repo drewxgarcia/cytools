@@ -38,8 +38,8 @@ from typing import Iterable, Union
 
 _DUALGNN_HINT = (
     "The optional dualgnn package is required for GNN-based sampling "
-    "(triang_method='dualgnn'). Install it with `pip install cytools[gnn]`, "
-    "or with `conda env update -f environment-gnn.yml` in conda environments."
+    "(triang_method='dualgnn'). Install it with "
+    "`python -m pip install \"cytools[gnn]\"`."
 )
 
 
@@ -71,8 +71,8 @@ def _import_dualgnn():
         size_note = ""
     except ImportError:
         size_note = (
-            "\n(This will also install PyTorch, a multi-GB download. Conda "
-            "users may prefer `conda env update -f environment-gnn.yml`.)"
+            "\n(This will also install PyTorch, which may be a multi-GB "
+            "download.)"
         )
     try:
         answer = input(
@@ -96,7 +96,7 @@ def _dualgnn_face_triangs(
     face_poly: "Polytope",
     N: int,
     model=None,
-    seed: int = None,
+    seed: int | None = None,
     verbosity: int = 0,
 ) -> list:
     """
@@ -152,13 +152,13 @@ def _dualgnn_face_triangs(
 def face_triangs(
     self,
     dim: int = 2,
-    which: list = None,
+    which: list | None = None,
     only_regular: bool = True,
-    max_npts: int = None,
+    max_npts: int | None = None,
     N_face_triangs: int = 1000,
     triang_method: str = "grow2d",
     dualgnn_model=None,
-    seed: int = None,
+    seed: int | None = None,
     verbosity: int = 0,
 ):
     """
@@ -227,24 +227,26 @@ def face_triangs(
             
             if triang_method == "fast":
                 triangs.append(
-                    p.random_triangulations_fast(
-                        N=N_face_triangs,
-                        as_list=True,
-                        make_star=False,
-                        include_points_interior_to_facets=True,
-                        seed=seed,
+                    list(
+                        p.random_triangulations_fast(
+                            N=N_face_triangs,
+                            make_star=False,
+                            include_points_interior_to_facets=True,
+                            seed=seed,
+                        )
                     )
                 )
             elif triang_method == "fair":
                 if verbosity >= 1:
                     print("face_triangs: warning... fair never worked well...")
                 triangs.append(
-                    p.random_triangulations_fair(
-                        N=N_face_triangs,
-                        as_list=True,
-                        make_star=False,
-                        include_points_interior_to_facets=True,
-                        seed=seed,
+                    list(
+                        p.random_triangulations_fair(
+                            N=N_face_triangs,
+                            make_star=False,
+                            include_points_interior_to_facets=True,
+                            seed=seed,
+                        )
                     )
                 )
             elif triang_method == "grow2d":
@@ -277,12 +279,13 @@ def face_triangs(
             if verbosity >= 1:
                 print("face_triangs: computing all face triangulations...")
             triangs.append(
-                p.all_triangulations(
-                    only_fine=True,
-                    only_star=False,
-                    only_regular=only_regular,
-                    include_points_interior_to_facets=True,
-                    as_list=True,
+                list(
+                    p.all_triangulations(
+                        only_fine=True,
+                        only_star=False,
+                        only_regular=only_regular,
+                        include_points_interior_to_facets=True,
+                    )
                 )
             )
 
@@ -292,7 +295,6 @@ def face_triangs(
     return triangs
 
 
-Polytope.face_triangs = face_triangs
 
 
 def n_2face_triangs(self, only_regular: bool = True) -> int:
@@ -310,8 +312,6 @@ def n_2face_triangs(self, only_regular: bool = True) -> int:
     return math.prod([len(f) for f in triangs])
 
 
-Polytope.n_2face_triangs = n_2face_triangs
-Polytope.num_2face_triangs = n_2face_triangs
 
 
 def _as_2d_poly(poly: "Polytope", verbosity: int = 0) -> "Polytope":
@@ -344,10 +344,10 @@ def _as_2d_poly(poly: "Polytope", verbosity: int = 0) -> "Polytope":
 
 def grow_ft(
     self,
-    bdry: Iterable[Iterable[int]] = None,
-    seed: int = None,
+    bdry: Iterable[Iterable[int]] | None = None,
+    seed: int | None = None,
     verbosity: int = 0,
-) -> "Triangulation":
+) -> "Triangulation | None":
     """
     **Description:**
     Grow a fine triangulation (FT) of a polygon
@@ -488,18 +488,19 @@ def grow_ft(
             edges_new = [frozenset((e, i)) for e in edge_lis]
 
             # get the bounding boxes of the proposed edges
-            edges_new_bounds = [edges_bounds.get(e, None) for e in edges_new]
-
-            for j in range(2):
-                if edges_new_bounds[j] is None:
+            edges_new_bounds = []
+            for e in edges_new:
+                bounds = edges_bounds.get(e)
+                if bounds is None:
                     # said bounding box wasn't yet calculated... do so now
-                    edges_pts = np.take(pts, [*edges_new[j]], axis=0)
-                    edges_bounds[edges_new[j]] = [
+                    edges_pts = np.take(pts, [*e], axis=0)
+                    bounds = [
                         np.min(edges_pts, axis=0).tolist(),
                         np.max(edges_pts, axis=0).tolist(),
                     ]
+                    edges_bounds[e] = bounds
 
-                    edges_new_bounds[j] = edges_bounds[edges_new[j]]
+                edges_new_bounds.append(bounds)
 
             p0i_min, p0i_max = edges_new_bounds[0]
             p1i_min, p1i_max = edges_new_bounds[1]
@@ -579,16 +580,15 @@ def grow_ft(
     )
 
 
-Polytope.grow_ft = grow_ft
 
 
 def grow_frt(
     self,
     N: int = 1,
-    max_N_tries: int = None,
-    bdry: Iterable[Iterable[int]] = None,
-    seed: int = None,
-    backend: str = None,
+    max_N_tries: int | None = None,
+    bdry: Iterable[Iterable[int]] | None = None,
+    seed: int | None = None,
+    backend: str | None = None,
     verbosity: int = 0,
 ) -> Union["Triangulation", set]:
     """
@@ -651,6 +651,3 @@ def grow_frt(
         return next(iter(frts))
     else:
         return frts
-
-
-Polytope.grow_frt = grow_frt

@@ -28,15 +28,24 @@ import scipy.sparse as sp
 from cytools.helpers import misc
 
 # typing
-from numpy.typing import ArrayLike
-from typing import Union
+from cytools._typing import Matrix
+from collections.abc import Iterable
+from typing import Literal, overload, Union
 
 numeric = Union[int, float, np.number]
 # helpers
 # -------
+@overload
+def flatten_top(arr: Iterable, as_list: Literal[True] = True, N: int = 1) -> list: ...
+
+
+@overload
+def flatten_top(arr: Iterable, as_list: Literal[False], N: int = 1) -> np.ndarray: ...
+
+
 def flatten_top(
-    arr: ArrayLike, as_list: bool = True, N: int = 1
-) -> "list or np.array":
+    arr: Iterable, as_list: bool = True, N: int = 1
+) -> list | np.ndarray:
     """
     **Description:**
     Flatten the top level (axis=0) of an array.
@@ -202,9 +211,9 @@ class CSR_stack:
 
     def __init__(
         self,
-        options: "[[sp.csr_matrix]]",
-        choices: "[int]",
-        choice_bounds: "[int]",
+        options: "list[list[sp.csr_matrix]]",
+        choices: "list[int] | int",
+        choice_bounds: "list[int]",
         iter_densely: bool = False,
     ) -> None:
         self._options = options
@@ -274,7 +283,7 @@ class CSR_stack:
             return iter(self.dense())
         return (self[i] for i in range(len(self)))
 
-    def __array__(self, dtype: np.dtype = None, copy: bool = None) -> np.array:
+    def __array__(self, dtype: np.dtype | None = None, copy: bool | None = None) -> np.ndarray:
         # the order and defaults are fixed by the numpy protocol, which calls
         # this as __array__(dtype, copy)
         return np.array(self.dense(), dtype=dtype, copy=copy)
@@ -295,7 +304,7 @@ class CSR_stack:
             return sp.csr_matrix((0, self.width), dtype=self.dtype)
         return sp.vstack(blocks, format="csr")
 
-    def dense(self, tocopy: bool = False) -> ArrayLike:
+    def dense(self, tocopy: bool = False) -> np.ndarray:
         """
         **Description:**
         Return a dense version of the stack, with duplicate rows removed.

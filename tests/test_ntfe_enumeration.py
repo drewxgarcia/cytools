@@ -103,8 +103,7 @@ def test_make_star():
     assert all(t.is_star() for t in frsts)
 
 
-# face_triangulations attaches these to Polytope on import
-def test_ntfe_import_attaches_polytope_methods():
+def test_face_triangulation_methods_are_declared_on_polytope():
     for name in (
         "face_triangs",
         "n_2face_triangs",
@@ -112,7 +111,7 @@ def test_ntfe_import_attaches_polytope_methods():
         "grow_ft",
         "grow_frt",
     ):
-        assert hasattr(Polytope, name), f"cytools.ntfe did not attach Polytope.{name}"
+        assert name in Polytope.__dict__, f"Polytope does not declare {name}"
 
 
 # 2-face index 19 of p_h11_8 is a 5-point polygon with 3 FRTs; it is the
@@ -122,12 +121,13 @@ _MULTI_FRT_FACE = 19
 
 
 def _all_face_frts(face_poly):
-    return face_poly.all_triangulations(
-        only_fine=True,
-        only_star=False,
-        only_regular=True,
-        include_points_interior_to_facets=True,
-        as_list=True,
+    return list(
+        face_poly.all_triangulations(
+            only_fine=True,
+            only_star=False,
+            only_regular=True,
+            include_points_interior_to_facets=True,
+        )
     )
 
 

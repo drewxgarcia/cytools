@@ -1,107 +1,71 @@
 # Installing CYTools
 
-Full documentation is available on the [CYTools website](https://liammcallistergroup.github.io/cytools/).
+Full documentation is available on the [CYTools website](https://cy.tools).
 
-CYTools runs on Linux and Apple Silicon (M-series) macOS. Intel-based Macs are not supported.
+CYTools supports Python 3.10 or newer on Linux and Apple Silicon (M-series)
+macOS. Intel-based Macs are not supported.
 
-## Choosing an installation method
+## Install from PyPI
 
-```
-Want a standalone CYTools application (a clickable app that opens JupyterLab)?
-  yes -> Option A: run the install script
-  no  -> Do you need Normaliz (e.g. for Hilbert bases)?
-           no  -> Option B: pip
-           yes -> Option C: conda
-                    Do you want to actively modify CYTools' source code?
-                      no  -> standard environment (environment.yml)
-                      yes -> development environment (environment-dev.yml)
-```
-
-## Option A — standalone application (Linux and macOS)
-
-Run the installer for your platform from a clone of this repository.
-
-On Linux:
+Create an isolated environment and install the package:
 
 ```bash
-bash scripts/linux/install.sh
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+python -m pip install cytools
 ```
 
-On macOS:
+For the notebook-first interface, install the notebook extra and launch
+JupyterLab:
 
 ```bash
-bash scripts/macos/install.sh
+python -m pip install "cytools[notebook]"
+jupyter lab
 ```
 
-It sets up everything (including a conda environment) and installs a clickable CYTools launcher/icon. If conda is not already installed, it offers to install Miniforge.
+Optional features are grouped by purpose:
 
-To uninstall, run the matching uninstaller.
+| Extra | Adds |
+| --- | --- |
+| `notebook` | JupyterLab, widgets, and on-demand dataset access |
+| `streaming` | On-demand dataset access without notebook dependencies |
+| `gnn` | GNN-based triangulation sampling through `dualgnn` |
+| `mosek` | The optional MOSEK solver |
+| `normaliz` | In-process Hilbert-basis calculations through PyNormaliz |
+| `performance` | CHOLMOD sparse solves through `scikit-sparse` |
 
-On Linux:
+Install one or more extras together, for example:
 
 ```bash
-bash scripts/linux/uninstall.sh
+python -m pip install "cytools[gnn,notebook]"
 ```
 
-On macOS:
+The `performance` extra requires the SuiteSparse development libraries to be
+available on the host system before `scikit-sparse` is installed.
 
-```bash
-bash scripts/macos/uninstall.sh
-```
+## Develop from source
 
-It removes the launcher and icon, and asks whether to also remove the conda environment.
-
-## Option B — pip
-
-Install CYTools and its dependencies from PyPI (no clone required):
-
-```bash
-pip install cytools
-```
-
-Note: the pip install does not include Normaliz; use conda (Option C) if you need it.
-
-To uninstall:
-
-```bash
-pip uninstall cytools
-```
-
-## Option C — conda
-
-Clone the repository:
+The repository uses [uv](https://docs.astral.sh/uv/) and commits its lockfile.
+From a source checkout:
 
 ```bash
 git clone https://github.com/LiamMcAllisterGroup/cytools.git
 cd cytools
+uv sync --extra notebook
+uv run pytest
+uv run jupyter lab
 ```
 
-If you do **not** plan to modify CYTools' source code, create the standard environment:
+`uv sync` installs CYTools editably and includes the default development tools.
+Add an optional feature with `uv sync --extra <name>`. See
+[CONTRIBUTING.md](CONTRIBUTING.md) for the test and benchmark workflow.
+
+## Upgrade or uninstall
+
+With the virtual environment activated:
 
 ```bash
-conda env create -f environment.yml
-conda activate cytools
-```
-
-If you **do** want to develop CYTools (an editable install), create the development environment instead:
-
-```bash
-conda env create -f environment-dev.yml
-conda activate cytools-dev
-```
-
-Then start JupyterLab with `jupyter lab`, or run `python` and `import cytools`.
-
-To uninstall, remove the environment you created.
-
-The standard environment:
-
-```bash
-conda env remove -n cytools
-```
-
-The development environment:
-
-```bash
-conda env remove -n cytools-dev
+python -m pip install --upgrade cytools
+python -m pip uninstall cytools
 ```

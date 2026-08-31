@@ -22,15 +22,17 @@
 # 'standard' imports
 from collections import defaultdict
 import copy
+from collections.abc import Iterable, Iterator, Sequence
 import itertools
 import math
 import time
+from typing import Literal, overload, TYPE_CHECKING
 import warnings
 
 # 3rd party imports
 from flint import fmpz_mat, fmpq_mat
 import numpy as np
-from numpy.typing import ArrayLike
+from cytools._typing import Matrix, Vector, VectorOrMatrix
 import ppl
 import ctypes; ctypes.CDLL(None).fesetround(0)  # ppl changes FPU rounding mode; reset to FE_TONEAREST
 from scipy.spatial import ConvexHull
@@ -39,7 +41,8 @@ import pypalp
 import latticepts
 
 # CYTools imports
-from cytools import config
+from cytools._extensions import lazy_method
+import cytools.config as config
 from cytools.polytopeface import PolytopeFace
 from cytools.triangulation import (
     Triangulation,
@@ -47,6 +50,9 @@ from cytools.triangulation import (
     random_triangulations_fast_generator,
     random_triangulations_fair_generator,
 )
+if TYPE_CHECKING:
+    from cytools.polytopeface import PolytopeFace
+
 from cytools.utils import gcd_list, lll_reduce, instanced_lru_cache, integral_nullspace
 
 
@@ -96,8 +102,49 @@ class Polytope:
     ```
     """
 
+    if TYPE_CHECKING:
+        # Signatures for methods whose implementations live in focused feature
+        # modules. Runtime bindings below import those modules only on access.
+        from cytools.helpers.basic_geometry import get_bdry
+        from cytools.ntfe.face_triangulations import (
+            face_triangs,
+            grow_frt,
+            grow_ft,
+            n_2face_triangs,
+            n_2face_triangs as num_2face_triangs,
+        )
+        from cytools.ntfe.ntfe import (
+            expanded_secondary_fan,
+            ntfe_cones,
+            ntfe_frsts,
+            ntfe_frts,
+            ntfe_hypers,
+            triangface_ineqs,
+            triangfaces_to_frst,
+            triangfaces_to_frt,
+        )
+        from cytools.vector_config.vectorconfiguration import vc
+    else:
+        get_bdry = lazy_method("cytools.helpers.basic_geometry")
+        face_triangs = lazy_method("cytools.ntfe.face_triangulations")
+        n_2face_triangs = lazy_method("cytools.ntfe.face_triangulations")
+        num_2face_triangs = lazy_method(
+            "cytools.ntfe.face_triangulations", "n_2face_triangs"
+        )
+        grow_ft = lazy_method("cytools.ntfe.face_triangulations")
+        grow_frt = lazy_method("cytools.ntfe.face_triangulations")
+        expanded_secondary_fan = lazy_method("cytools.ntfe.ntfe")
+        triangfaces_to_frt = lazy_method("cytools.ntfe.ntfe")
+        triangfaces_to_frst = lazy_method("cytools.ntfe.ntfe")
+        triangface_ineqs = lazy_method("cytools.ntfe.ntfe")
+        ntfe_hypers = lazy_method("cytools.ntfe.ntfe")
+        ntfe_cones = lazy_method("cytools.ntfe.ntfe")
+        ntfe_frts = lazy_method("cytools.ntfe.ntfe")
+        ntfe_frsts = lazy_method("cytools.ntfe.ntfe")
+        vc = lazy_method("cytools.vector_config.vectorconfiguration")
+
     def __init__(
-        self, points: ArrayLike, labels: ArrayLike = None, backend: str = None,
+        self, points: Matrix, labels: Sequence | None = None, backend: str | None = None,
         deterministic_glsm_basis: bool = False
     ) -> None:
         """
@@ -316,7 +363,7 @@ class Polytope:
         # (needed since we check if self has _cache, which it is now None)
         self._cache = {}
 
-    def __eq__(self, other: "Polytope") -> bool:
+    def __eq__(self, other: object) -> bool:
         """
         **Description:**
         Implements comparison of polytopes with ==.
@@ -343,7 +390,7 @@ class Polytope:
         other_verts = other.vertices().tolist()
         return sorted(our_verts) == sorted(other_verts)
 
-    def __ne__(self, other: "Polytope") -> bool:
+    def __ne__(self, other: object) -> bool:
         """
         **Description:**
         Implements comparison of polytopes with !=.
@@ -563,6 +610,8 @@ class Polytope:
         # 4
         ```
         """
+        if self._dim_ambient is None:
+            raise ValueError("A polytope with no points has no ambient dimension.")
         return self._dim_ambient
 
     # aliases
@@ -692,7 +741,7 @@ class Polytope:
     # ======
     # internal/prep
     # -------------
-    def _process_points(self, pts_input: ArrayLike, labels: ArrayLike = None) -> None:
+    def _process_points(self, pts_input: Matrix, labels: Sequence | None = None) -> None:
         """
         **Description:**
         Internal function for processing input points. Should only be called
@@ -939,7 +988,7 @@ class Polytope:
         self._labels_codim2 = tuple(self._labels_codim2)
         self._labels_not_facet = tuple(self._labels_not_facet)
 
-    def _optimal_to_input(self, pts_opt: ArrayLike) -> np.array:
+    def _optimal_to_input(self, pts_opt: Matrix) -> np.ndarray:
         """
         **Description:**
         We internally store the points in an 'optimal' representation
@@ -967,6 +1016,8 @@ class Polytope:
         points_orig[:, : self._dim_diff] = 0
 
         # undo the LLL-reduction
+        if self._transf_mat_inv is None:
+            raise RuntimeError("The optimal representation was never computed.")
         points_orig = self._transf_mat_inv.dot(points_orig.T).T
 
         # undo the translation, if applicable
@@ -978,9 +1029,19 @@ class Polytope:
 
     # main
     # ----
+    @overload
+    def points(
+        self, which=None, optimal: bool = False, as_indices: Literal[False] = False
+    ) -> np.ndarray: ...
+
+    @overload
+    def points(
+        self, which=None, optimal: bool = False, *, as_indices: Literal[True]
+    ) -> list: ...
+
     def points(
         self, which=None, optimal: bool = False, as_indices: bool = False
-    ) -> np.ndarray:
+    ) -> np.ndarray | list:
         """
         **Description:**
         Returns the lattice points of the polytope.
@@ -1080,9 +1141,17 @@ class Polytope:
     points_not_interior_to_facets = pts_not_facets
     pts_not_interior_to_facets = pts_not_facets
 
+    @overload
+    def points_to_labels(self, points: Matrix, is_optimal: bool = False) -> list: ...
+
+    @overload
     def points_to_labels(
-        self, points: ArrayLike, is_optimal: bool = False
-    ) -> "list | None":
+        self, points: Vector, is_optimal: bool = False
+    ) -> "int | str": ...
+
+    def points_to_labels(
+        self, points: VectorOrMatrix, is_optimal: bool = False
+    ) -> "list | int | str":
         """
         **Description:**
         Returns the list of labels corresponding to the given points. It also
@@ -1104,8 +1173,7 @@ class Polytope:
 
         # map single-point input into list case
         single_pt = len(np.array(points).shape) == 1
-        if single_pt:
-            points = [points]
+        pts = [points] if single_pt else points
 
         # get relevant dictionary
         if is_optimal:
@@ -1114,14 +1182,22 @@ class Polytope:
             relevant_map = self._inputpts2labels
 
         # get/return the indices
-        labels = [relevant_map[tuple(pt)] for pt in points]
+        labels = [relevant_map[tuple(np.asarray(pt))] for pt in pts]
         if single_pt and len(labels):
             return labels[0]  # just return the single label
         else:
             return labels  # return a list of labels
 
+    @overload
     def points_to_indices(
-        self, points: ArrayLike, is_optimal: bool = False
+        self, points: Matrix, is_optimal: bool = False
+    ) -> np.ndarray: ...
+
+    @overload
+    def points_to_indices(self, points: Vector, is_optimal: bool = False) -> int: ...
+
+    def points_to_indices(
+        self, points: VectorOrMatrix, is_optimal: bool = False
     ) -> "np.ndarray | int":
         """
         **Description:**
@@ -1154,12 +1230,11 @@ class Polytope:
 
         # map single-point input into list case
         single_pt = len(np.array(points).shape) == 1
-        if single_pt:
-            points = [points]
+        pts = [points] if single_pt else points
 
         # grab labels, and then map to indices
-        labels = self.points_to_labels(points, is_optimal=is_optimal)
-        inds = self.points(which=labels, as_indices=True)
+        labels = self.points_to_labels(np.asarray(pts), is_optimal=is_optimal)
+        inds = np.asarray(self.points(which=labels, as_indices=True))
 
         # get/return the indices
         if single_pt and len(inds):
@@ -1167,7 +1242,17 @@ class Polytope:
         else:
             return inds  # return a list of indices
 
-    def vertices(self, optimal: bool = False, as_indices: bool = False) -> np.ndarray:
+    @overload
+    def vertices(
+        self, optimal: bool = False, as_indices: Literal[False] = False
+    ) -> np.ndarray: ...
+
+    @overload
+    def vertices(self, optimal: bool = False, *, as_indices: Literal[True]) -> list: ...
+
+    def vertices(
+        self, optimal: bool = False, as_indices: bool = False
+    ) -> np.ndarray | list:
         """
         **Description:**
         Returns the vertices of the polytope.
@@ -1210,10 +1295,14 @@ class Polytope:
             if self.dim() == 1:  # QHull cannot handle 1D polytopes
                 self._labels_vertices = self._labels_facet
             else:
+                if self._poly_optimal is None:
+                    raise RuntimeError("The QHull hull was never computed.")
                 verts = self._poly_optimal.points[self._poly_optimal.vertices]
         else:
             # get the vertices
             if self._backend == "ppl":
+                if self._poly_optimal is None:
+                    raise RuntimeError("The PPL polyhedron was never computed.")
                 verts = []
                 for pt in self._poly_optimal.minimized_generators():
                     verts.append(pt.coefficients())
@@ -1235,7 +1324,13 @@ class Polytope:
 
     # faces
     # =====
-    def faces(self, d: int = None) -> tuple:
+    @overload
+    def faces(self, d: int) -> tuple: ...
+
+    @overload
+    def faces(self, d: None = None) -> tuple[tuple, ...]: ...
+
+    def faces(self, d: int | None = None) -> tuple:
         """
         **Description:**
         Computes the faces of a polytope.
@@ -1279,8 +1374,9 @@ class Polytope:
             raise ValueError(f"Polytope does not have faces of dimension {d}")
 
         # return answer if known
-        if self._faces is not None:
-            return self._faces[d] if (d is not None) else self._faces
+        faces = self._faces
+        if faces is not None:
+            return tuple(faces[d]) if (d is not None) else tuple(faces)
 
         # calculate the answer
         # ====================
@@ -1506,7 +1602,7 @@ class Polytope:
         )
         return organized_faces
 
-    def facets(self) -> tuple[PolytopeFace]:
+    def facets(self) -> tuple["PolytopeFace", ...]:
         """
         **Description:**
         Returns the facets (codimension-1 faces) of the polytope.
@@ -1655,12 +1751,29 @@ class Polytope:
 
     # symmetries
     # ==========
+    @overload
+    def automorphisms(
+        self,
+        square_to_one: bool = False,
+        action: str = "right",
+        as_dictionary: Literal[False] = False,
+    ) -> np.ndarray: ...
+
+    @overload
+    def automorphisms(
+        self,
+        square_to_one: bool = False,
+        action: str = "right",
+        *,
+        as_dictionary: Literal[True],
+    ) -> list[dict]: ...
+
     def automorphisms(
         self,
         square_to_one: bool = False,
         action: str = "right",
         as_dictionary: bool = False,
-    ) -> "np.ndarray | dict":
+    ) -> "np.ndarray | list[dict]":
         r"""
         **Description:**
         Returns the $SL^{\pm}(d,\mathbb{Z})$ matrices that leave the polytope
@@ -1745,16 +1858,18 @@ class Polytope:
 
         # check if we know the answer
         args_id = 1 * square_to_one + 2 * as_dictionary
-        if self._autos[args_id] is not None:
+        cached = self._autos[args_id]
+        if cached is not None:
             if as_dictionary:
-                return copy.deepcopy(self._autos[args_id])
+                return copy.deepcopy(cached)
             elif action == "left":
-                return np.array([a.T for a in self._autos[args_id]])
+                return np.array([a.T for a in cached])
             else:
-                return np.array(self._autos[args_id])
+                return np.array(cached)
 
         # calculate the answer
-        if self._autos[0] is None:
+        autos_all, autos_sq = self._autos[0], self._autos[1]
+        if (autos_all is None) or (autos_sq is None):
             vert_set = {tuple(pt) for pt in self.vertices()}
 
             # get the facet with minimum number of vertices
@@ -1801,35 +1916,38 @@ class Polytope:
                 autos.append(m)
                 if all((np.dot(m, m) == np.eye(self.dim(), dtype=int)).flatten()):
                     autos2.append(m)
-            self._autos[0] = np.array(autos)
-            self._autos[1] = np.array(autos2)
-        if as_dictionary and self._autos[2] is None:
-            autos_dict = []
-            autos2_dict = []
-            pts_tup = [tuple(pt) for pt in self.points()]
+            autos_all = np.array(autos)
+            autos_sq = np.array(autos2)
+            self._autos[0] = autos_all
+            self._autos[1] = autos_sq
 
-            def _auto_dict(a):
-                # index the image points by coordinate, so that the lookup
-                # below is O(n) rather than O(n^2)
-                new_inds = {}
-                for j, pt in enumerate(self.points().dot(a)):
-                    new_inds.setdefault(tuple(pt), j)
-                return {i: new_inds[ii] for i, ii in enumerate(pts_tup)}
-
-            for a in self._autos[0]:
-                autos_dict.append(_auto_dict(a))
-            for a in self._autos[1]:
-                autos2_dict.append(_auto_dict(a))
-            self._autos[2] = autos_dict
-            self._autos[3] = autos2_dict
-
-        # return
+        # return. args_id is 1*square_to_one + 2*as_dictionary, so spell the
+        # four cases out rather than re-index the heterogeneous cache.
         if as_dictionary:
-            return copy.deepcopy(self._autos[args_id])
-        elif action == "left":
-            return np.array([a.T for a in self._autos[args_id]])
-        else:
-            return np.array(self._autos[args_id])
+            if (self._autos[2] is None) or (self._autos[3] is None):
+                pts_tup = [tuple(pt) for pt in self.points()]
+
+                def _auto_dict(a):
+                    # index the image points by coordinate, so that the lookup
+                    # below is O(n) rather than O(n^2)
+                    new_inds = {}
+                    for j, pt in enumerate(self.points().dot(a)):
+                        new_inds.setdefault(tuple(pt), j)
+                    return {i: new_inds[ii] for i, ii in enumerate(pts_tup)}
+
+                autos_dict = [_auto_dict(a) for a in autos_all]
+                autos2_dict = [_auto_dict(a) for a in autos_sq]
+                self._autos[2] = autos_dict
+                self._autos[3] = autos2_dict
+            else:
+                autos_dict, autos2_dict = self._autos[2], self._autos[3]
+
+            return copy.deepcopy(autos2_dict if square_to_one else autos_dict)
+
+        out = autos_sq if square_to_one else autos_all
+        if action == "left":
+            return np.array([a.T for a in out])
+        return np.array(out)
 
     def inequivalent_Z2_actions(self) -> "np.ndarray":
         """
@@ -2263,8 +2381,8 @@ class Polytope:
     # triangulating
     # =============
     def _triang_labels(
-        self, include_points_interior_to_facets: bool = None
-    ) -> tuple[int]:
+        self, include_points_interior_to_facets: bool | None = None
+    ) -> tuple[int, ...]:
         """
         **Description:**
         Constructs the list of point labels of the points that will be used in
@@ -2314,12 +2432,12 @@ class Polytope:
 
     def triangulate(
         self, *, # enforce all arguments are keyword
-        include_points_interior_to_facets: bool = None,
-        points: "ArrayLike" = None,
-        make_star: bool = None,
-        simplices: "ArrayLike" = None,
+        include_points_interior_to_facets: bool | None = None,
+        points: Sequence | None = None,
+        make_star: bool | None = None,
+        simplices: Iterable | None = None,
         check_input_simplices: bool = True,
-        heights: "ArrayLike" = None,
+        heights: Vector | None = None,
         check_heights: bool = True,
         backend: str = "cgal",
         verbosity: int = 1,
@@ -2461,18 +2579,16 @@ class Polytope:
 
     def random_triangulations_fast(
         self,
-        N: int = None,
+        N: int | None = None,
         c: float = 0.2,
         max_retries: int = 500,
         make_star: bool = True,
         only_fine: bool = True,
-        include_points_interior_to_facets: bool = None,
-        points: ArrayLike = None,
+        include_points_interior_to_facets: bool | None = None,
+        points: Sequence | None = None,
         backend: str = "cgal",
-        as_list: bool = False,
-        progress_bar: bool = True,
-        seed: int = None,
-    ) -> "generator | list":
+        seed: int | None = None,
+    ) -> "Iterator[Triangulation]":
         """
         **Description:**
         Constructs pseudorandom regular (optionally fine and star)
@@ -2490,7 +2606,6 @@ class Polytope:
         - `N`: Number of desired unique triangulations. If not specified, it
             will generate as many triangulations as it can find until it has to
             retry more than `max_retries` times to obtain a new triangulation.
-            This parameter is required when setting `as_list` to True.
         - `c`: A constant used as the standard deviation of the Gaussian
             distribution used to pick the heights. A larger `c` results in a
             wider range of possible triangulations, but with a larger fraction
@@ -2510,18 +2625,12 @@ class Polytope:
             `include_points_interior_to_facets` is ignored.
         - `backend`: Specifies the backend used to compute the triangulation.
             The available options are "cgal" and "qhull".
-        - `as_list`: By default this function returns a generator object, which
-            is usually desired for efficiency. However, this flag can be set to
-            True so that it returns the full list of triangulations at once.
-        - `progress_bar`: Shows the number of triangulations obtained and
-            progress bar. Note that this option is only available when
-            returning a list instead of a generator.
         - `seed`: A seed for the random number generator. This can be used to
             obtain reproducible results.
 
         **Returns:**
-        A generator of [`Triangulation`](./triangulation) objects, or a list of
-        [`Triangulation`](./triangulation) objects if `as_list` is set to True.
+        An iterator over [`Triangulation`](./triangulation) objects. Wrap the
+        result in `list(...)` to materialize it.
 
         **Example:**
         We construct a polytope and find some random triangulations. The
@@ -2536,18 +2645,13 @@ class Polytope:
         # A fine, regular, star triangulation of a 4-dimensional point configuration with 106 points in ZZ^4
         next(g) # Keeps producing triangulations until it has trouble finding more
         # A fine, regular, star triangulation of a 4-dimensional point configuration with 106 points in ZZ^4
-        rand_triangs = p.random_triangulations_fast(N=10, as_list=True) # Produces the list of 10 triangulations very quickly
+        rand_triangs = list(p.random_triangulations_fast(N=10)) # Produces the list of 10 triangulations very quickly
         ```
         """
         # if self.ambient_dim() > self.dim():
         #    raise NotImplementedError("Only triangulations of "
         #                              "full-dimensional polytopes are "
         #                              "supported.")
-        if (N is None) and as_list:
-            raise ValueError(
-                "Number of triangulations must be specified when " "returning a list."
-            )
-
         if points is not None:
             points = tuple(sorted(set(points)))
         else:
@@ -2557,7 +2661,7 @@ class Polytope:
             make_star = self.is_reflexive()
         if self._label_origin not in points:
             make_star = False
-        g = random_triangulations_fast_generator(
+        return random_triangulations_fast_generator(
             self,
             points,
             N=N,
@@ -2568,40 +2672,23 @@ class Polytope:
             backend=backend,
             seed=seed,
         )
-        if not as_list:
-            return g
-        if progress_bar:
-            pbar = tqdm(total=N)
-        triangs_list = []
-        while len(triangs_list) < N:
-            try:
-                triangs_list.append(next(g))
-                if progress_bar:
-                    pbar.update(len(triangs_list) - pbar.n)
-            except StopIteration:
-                if progress_bar:
-                    pbar.update(N - pbar.n)
-                break
-        return triangs_list
 
     def random_triangulations_fair(
         self,
-        N: int = None,
-        n_walk: int = None,
-        n_flip: int = None,
-        initial_walk_steps: int = None,
+        N: int | None = None,
+        n_walk: int | None = None,
+        n_flip: int | None = None,
+        initial_walk_steps: int | None = None,
         walk_step_size: float = 1e-2,
         max_steps_to_wall: int = 25,
         fine_tune_steps: int = 8,
         max_retries: int = 50,
-        make_star: bool = None,
-        include_points_interior_to_facets: bool = None,
-        points: ArrayLike = None,
+        make_star: bool | None = None,
+        include_points_interior_to_facets: bool | None = None,
+        points: Sequence | None = None,
         backend: str = "cgal",
-        as_list: bool = False,
-        progress_bar: bool = True,
-        seed: int = None,
-    ) -> "generator | list":
+        seed: int | None = None,
+    ) -> "Iterator[Triangulation]":
         r"""
         **Description:**
         Constructs pseudorandom regular (optionally star) triangulations of a
@@ -2629,7 +2716,6 @@ class Polytope:
         - `N`: Number of desired unique triangulations. If not specified, it
             will generate as many triangulations as it can find until it has to
             retry more than `max_retries` times to obtain a new triangulation.
-            This parameter is required when setting `as_list` to True.
         - `n_walk`: Number of hit-and-run steps per triangulation. Default is
             n_points//10+10.
         - `n_flip`: Number of random flips performed per triangulation.
@@ -2661,18 +2747,12 @@ class Polytope:
             `include_points_interior_to_facets` is ignored.
         - `backend`: Specifies the backend used to compute the triangulation.
             The available options are "cgal" and "qhull".
-        - `as_list`: By default this function returns a generator object, which
-            is usually desired for efficiency. However, this flag can be set
-            to True so that it returns the full list of triangulations at once.
-        - `progress_bar`: Shows number of triangulations obtained and progress
-            bar. Note that this option is only available when returning a list
-            instead of a generator.
         - `seed`: A seed for the random number generator. This can be used to
             obtain reproducible results.
 
         **Returns:**
-        A generator of [`Triangulation`](./triangulation) objects, or a list of
-        [`Triangulation`](./triangulation) objects if `as_list` is set to True.
+        An iterator over [`Triangulation`](./triangulation) objects. Wrap the
+        result in `list(...)` to materialize it.
 
         **Example:**
         We construct a polytope and find some random triangulations. The
@@ -2691,7 +2771,7 @@ class Polytope:
         next(g) # Takes slightly shorter (still around a minute)
         # A fine, regular, star triangulation of a 4-dimensional point
         # configuration with 106 points in ZZ^4
-        rand_triangs = p.random_triangulations_fair(N=10, as_list=True) # Produces the list of 10 triangulations, but takes a long time (around 10 minutes)
+        rand_triangs = list(p.random_triangulations_fair(N=10)) # Produces the list of 10 triangulations, but takes a long time (around 10 minutes)
         ```
         It is worth noting that the time it takes to obtain each triangulation
         varies very significantly on the parameters used. The function tries to
@@ -2701,10 +2781,6 @@ class Polytope:
         if self.ambient_dim() > self.dim():
             raise NotImplementedError(
                 "Only triangulations of full-dimensional polytopes" "are supported."
-            )
-        if N is None and as_list:
-            raise ValueError(
-                "Number of triangulations must be specified when " "returning a list."
             )
         if points is not None:
             points = tuple(sorted(set(points)))
@@ -2720,7 +2796,7 @@ class Polytope:
             n_flip = len(self.points()) // 10 + 10
         if initial_walk_steps is None:
             initial_walk_steps = 2 * len(self.points()) // 10 + 10
-        g = random_triangulations_fair_generator(
+        return random_triangulations_fair_generator(
             self,
             points,
             N=N,
@@ -2735,21 +2811,6 @@ class Polytope:
             backend=backend,
             seed=seed,
         )
-        if not as_list:
-            return g
-        if progress_bar:
-            pbar = tqdm(total=N)
-        triangs_list = []
-        while len(triangs_list) < N:
-            try:
-                triangs_list.append(next(g))
-                if progress_bar:
-                    pbar.update(len(triangs_list) - pbar.n)
-            except StopIteration:
-                if progress_bar:
-                    pbar.update(N - pbar.n)
-                break
-        return triangs_list
 
     def random_triangulations_gnn(
         self,
@@ -2758,10 +2819,9 @@ class Polytope:
         max_npts: int = 0,
         N_face_triangs: int = 1000,
         as_heights: bool = False,
-        as_generator: bool = False,
-        seed: int = None,
+        seed: int | None = None,
         verbosity: int = 0,
-    ) -> "list | generator":
+    ) -> "Iterator":
         """
         **Description:**
         Constructs random NTFE FR(S)Ts of a reflexive 4D polytope, sampling
@@ -2815,16 +2875,15 @@ class Polytope:
             to True so that it instead returns the height vectors realizing
             each NTFE, which is cheaper when the `Triangulation` objects are
             not needed.
-        - `as_generator`: Whether to return a generator instead of a list.
-            Use generators if memory is a concern.
         - `seed`: A seed for the random number generator. This can be used to
             obtain reproducible results.
         - `verbosity`: Verbosity level. Higher means more verbose.
 
         **Returns:**
-        A list of [`Triangulation`](./triangulation) objects (or of height
-        vectors if `as_heights` is set to True), or a generator of them if
-        `as_generator` is set to True.
+        An iterator over [`Triangulation`](./triangulation) objects (or of height
+        vectors if `as_heights` is set to True). Wrap the result in `list(...)`
+        to materialize it; note that `N` large and `as_heights` False can take
+        several GB of RAM.
 
         **Example:**
         We construct a polytope and sample some random triangulations.
@@ -2832,7 +2891,7 @@ class Polytope:
         back no matter `N`.)
         ```python {2}
         p = Polytope([[1,0,0,0],[0,1,0,0],[0,0,1,0],[0,0,0,1],[0,0,0,-1],[-1,-1,-6,-9]])
-        frsts = p.random_triangulations_gnn(N=4, seed=0)
+        frsts = list(p.random_triangulations_gnn(N=4, seed=0))
         # [A fine, regular, star triangulation of a 4-dimensional point configuration with 7 points in ZZ^4]
         ```
         For large polytopes, build the GNN-sampled 2-face FRT pools once via
@@ -2938,29 +2997,19 @@ class Polytope:
                 if pbar is not None:
                     pbar.close()
 
-        if as_generator:
-            return gen()
-        if (not as_heights) and N >= 1000:
-            print(
-                f"Warning: a list of {N} Triangulation objects can take "
-                "several GB of RAM. Consider as_generator=True (process "
-                "them one at a time) or as_heights=True (height vectors "
-                "are far smaller)."
-            )
-        return list(gen())
+        return gen()
 
     def all_triangulations(
         self,
-        points: ArrayLike = None,
+        points: Sequence | None = None,
         only_fine: bool = True,
         only_regular: bool = True,
-        only_star: bool = None,
-        star_origin: int = None,
-        include_points_interior_to_facets: bool = None,
-        backend: str = None,
-        as_list: bool = False,
+        only_star: bool | None = None,
+        star_origin: int | None = None,
+        include_points_interior_to_facets: bool | None = None,
+        backend: str | None = None,
         raw_output: bool = False,
-    ) -> "generator | list":
+    ) -> "Iterator[Triangulation]":
         """
         **Description:**
         Computes all triangulations of the polytope using TOPCOM. There is the
@@ -2991,15 +3040,12 @@ class Polytope:
             [`is_solid`](./cone#is_solid) function of the [`Cone`](./cone)
             class. If not specified, it will be picked automatically. Note that
             TOPCOM is not used to check regularity since it is much slower.
-        - `as_list`: By default this function returns a generator object, which
-            is usually desired for efficiency. However, this flag can be set to
-            True so that it returns the full list of triangulations at once.
         - `raw_output`: Return the triangulations as lists of simplices instead
             of as Triangulation objects.
 
         **Returns:**
-        A generator of [`Triangulation`](./triangulation) objects, or a list of
-        [`Triangulation`](./triangulation) objects if `as_list` is set to True.
+        An iterator over [`Triangulation`](./triangulation) objects. Wrap the
+        result in `list(...)` to materialize it.
 
         **Example:**
         We construct a polytope and find all of its triangulations. We try
@@ -3014,15 +3060,14 @@ class Polytope:
         next(g) # Produces the next triangulation immediately
         # A fine, regular, star triangulation of a 4-dimensional point
         # configuration with 7 points in ZZ^4
-        len(p.all_triangulations(as_list=True)) # Number of fine, regular, star triangulations
+        len(list(p.all_triangulations())) # Number of fine, regular, star triangulations
         # 2
-        len(p.all_triangulations(only_regular=False, only_star=False, only_fine=False, as_list=True) )# Number of triangularions, no matter if fine, regular, or star
+        len(list(p.all_triangulations(only_regular=False, only_star=False, only_fine=False))) # Number of triangularions, no matter if fine, regular, or star
         # 6
         ```
         """
         if len(self.points()) == self.dim() + 1:
             # simplex... trivial
-            triangs = None
             if raw_output:
                 # N.B.: points(as_indices=True) returns a list, so it must be
                 # cast before it can be indexed with a tuple.
@@ -3030,13 +3075,7 @@ class Polytope:
             else:
                 triangs = [Triangulation(self, self.labels)]
 
-            if as_list:
-                return triangs
-
-            def gen():
-                yield from triangs
-
-            return gen()
+            return iter(triangs)
 
         if only_star is None:
             only_star = self.is_reflexive()
@@ -3061,7 +3100,7 @@ class Polytope:
                 "take too long or run out of memory."
             )
 
-        triangs = all_triangulations(
+        return all_triangulations(
             self,
             points,
             only_fine=only_fine,
@@ -3071,9 +3110,6 @@ class Polytope:
             backend=backend,
             raw_output=raw_output,
         )
-        if as_list:
-            return list(triangs)
-        return triangs
 
     # hodge
     # =====
@@ -3234,9 +3270,14 @@ class Polytope:
                 - self.h12(lattice=lattice)
                 + self.h13(lattice=lattice)
             )
+        else:
+            raise NotImplementedError(
+                "Only polytopes of dimension 2-5 are currently supported, "
+                f"but this one is {self.dim()}-dimensional."
+            )
 
         # return
-        return self._chi
+        return int(self._chi)
 
     def is_favorable(self, lattice: str) -> bool:
         """
@@ -3286,7 +3327,7 @@ class Polytope:
         self,
         include_origin: bool = True,
         include_points_interior_to_facets: bool = False,
-        points: ArrayLike = None,
+        points: Sequence | None = None,
         integral: bool = True,
     ) -> np.ndarray:
         """
@@ -3520,10 +3561,10 @@ class Polytope:
             M_inv = np.array(M.inv().tolist())
             extra_pts = -1 * np.dot(M_inv, pts[glsm_basis].T)
             row_scalings = np.array(
-                [np.lcm.reduce([int(ii.q) for ii in i]) for i in extra_pts]
+                [np.lcm.reduce([int(ii.q) for ii in i]) for i in extra_pts]  # ty: ignore[no-matching-overload]
             )
             column_scalings = np.array(
-                [np.lcm.reduce([int(ii.q) for ii in i]) for i in extra_pts.T]
+                [np.lcm.reduce([int(ii.q) for ii in i]) for i in extra_pts.T]  # ty: ignore[no-matching-overload]
             )
             extra_rows = np.multiply(extra_pts, row_scalings[:, None])
             extra_rows = np.array([[int(ii.p) for ii in i] for i in extra_rows])
@@ -3579,7 +3620,7 @@ class Polytope:
         self,
         include_origin: bool = True,
         include_points_interior_to_facets: bool = False,
-        points: ArrayLike = None,
+        points: Sequence | None = None,
         integral: bool = True,
     ) -> np.ndarray:
         """
@@ -3663,7 +3704,7 @@ class Polytope:
         self,
         include_origin: bool = True,
         include_points_interior_to_facets: bool = False,
-        points: ArrayLike = None,
+        points: Sequence | None = None,
         integral: bool = True,
     ) -> np.ndarray:
         """
@@ -3797,7 +3838,7 @@ class Polytope:
                 self._volume = int(round(self._volume))
 
         # return
-        return self._volume
+        return int(self._volume)
 
     def _huang_taylor_sets(self) -> list[list[tuple]]:
         """
@@ -3943,11 +3984,12 @@ class Polytope:
             codim,
             compute_hodge_numbers,
         )
-        if self._nef_parts.get(args_id, None) is not None:
+        cached = self._nef_parts.get(args_id)
+        if cached is not None:
             return (
-                self._nef_parts.get(args_id)
+                cached
                 if return_hodge_numbers or not compute_hodge_numbers
-                else self._nef_parts.get(args_id)[0]
+                else cached[0]
             )
         if not self.is_reflexive():
             raise ValueError("The polytope must be reflexive")
@@ -3967,14 +4009,17 @@ class Polytope:
         ) for partition in results]
         
         if compute_hodge_numbers:
-            hodge_nums = [tuple(tuple(part) for part in partition[1]) for partition in results]
+            hodge_nums = [
+                tuple(tuple(part) for part in (partition[1] or ()))
+                for partition in results
+            ]
             nef_parts = (nef_parts, hodge_nums)
             
         self._nef_parts[args_id] = nef_parts
-        return (
-            self._nef_parts.get(args_id)
+        return tuple(
+            nef_parts
             if return_hodge_numbers or not compute_hodge_numbers
-            else self._nef_parts.get(args_id)[0]
+            else nef_parts[0]
         )
 
     def is_trilayer(self, return_anticanon=False):
@@ -3999,7 +4044,7 @@ class Polytope:
 
 # utils
 # -----
-def poly_v_to_h(pts: ArrayLike, backend: str) -> (ArrayLike, None):
+def poly_v_to_h(pts: Matrix, backend: str) -> tuple[np.ndarray, "ppl.C_Polyhedron | None"]:
     """
     **Description:**
     Generate the H-representation of a polytope, given the V-representation.
@@ -4060,7 +4105,7 @@ def poly_v_to_h(pts: ArrayLike, backend: str) -> (ArrayLike, None):
             ineqs = np.array([[0]])
         else:
             # prepare the command
-            p = pypalp.Polytope(pts)
+            p = pypalp.Polytope(np.asarray(pts))
             ineqs = p.equations()
     else:
         raise ValueError(f"Unrecognized backend '{backend}'...")
@@ -4069,11 +4114,11 @@ def poly_v_to_h(pts: ArrayLike, backend: str) -> (ArrayLike, None):
 
 
 def saturating_lattice_pts(
-    pts_in: [tuple],
-    ineqs: ArrayLike = None,
-    dim: int = None,
-    backend: str = None,
-) -> (ArrayLike, [frozenset]):
+    pts_in: list[tuple],
+    ineqs: Matrix | None = None,
+    dim: int | None = None,
+    backend: str | None = None,
+) -> tuple[np.ndarray, list[frozenset]]:
     """
     **Description:**
     Computes the lattice points contained in conv(pts), along with the indices
@@ -4150,7 +4195,7 @@ def saturating_lattice_pts(
     return pts, satd
 
 
-def is_reflexive_barebones(points: "ArrayLike",
+def is_reflexive_barebones(points: Matrix,
                            backend: str = 'qhull') -> bool:
     """
     **Description:**

@@ -76,6 +76,7 @@ from __future__ import annotations
 
 import os
 import hashlib
+from collections.abc import Iterable
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
@@ -86,6 +87,15 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 
 from cytools.polytope import Polytope
+
+__all__ = [
+    "PolytopeBatch",
+    "PolytopeRecord",
+    "PolytopeRecord5D",
+    "load_5d_polytopes",
+    "load_polytopes",
+    "scan_batches",
+]
 
 # ---------------------------------------------------------------------------
 # Environment-variable-based database locations
@@ -103,25 +113,6 @@ DB_5D_DIR: Path | None = Path(_db_5d_dir_env) if _db_5d_dir_env else None
 
 _HF_4D_REPO = "calabi-yau-data/polytopes-4d"
 _HF_5D_REPO = "calabi-yau-data/ws-5d"
-
-# ---------------------------------------------------------------------------
-# Complexity tiers (used by benchmarks and convenience helpers)
-# ---------------------------------------------------------------------------
-
-TIERS: dict[str, dict] = {
-    "tiny":   {"vertex_files": [5],                    "n": int(os.environ.get("CYTOOLS_BENCH_N_TINY",   "20"))},
-    "small":  {"vertex_files": [6, 7],                 "n": int(os.environ.get("CYTOOLS_BENCH_N_SMALL",  "20"))},
-    "medium": {"vertex_files": [9, 10],                "n": int(os.environ.get("CYTOOLS_BENCH_N_MEDIUM", "20"))},
-    "large":  {"vertex_files": [12, 13],               "n": int(os.environ.get("CYTOOLS_BENCH_N_LARGE",  "10"))},
-    # "bulk" covers vertex-count files 13-17, which together hold 65.9% of all
-    # KS polytopes and represent the actual typical-complexity regime
-    # (median h11 ≈ 30-45).  This is the most representative single-tier sample.
-    "bulk":   {"vertex_files": [13, 14, 15, 16, 17],   "n": int(os.environ.get("CYTOOLS_BENCH_N_BULK",   "20"))},
-    # "full" samples N polytopes from every available vertex-count file so that
-    # benchmarks cover the full shape/complexity distribution of the KS database.
-    # Default N=100 per file (~2900 total across the 29 available files).
-    "full":   {"vertex_files": None,                   "n": int(os.environ.get("CYTOOLS_BENCH_N_FULL",   "100"))},
-}
 
 # ---------------------------------------------------------------------------
 # Record types
@@ -165,17 +156,19 @@ class PolytopeRecord5D(NamedTuple):
 
 
 # ---------------------------------------------------------------------------
-# Well-known single polytopes for micro-benchmarks / quick tests
-# ---------------------------------------------------------------------------
-
-POLY_5V = Polytope([[1,0,0,0],[0,1,0,0],[0,0,1,0],[0,0,0,1],[-1,-1,-6,-9]])
-POLY_6V = Polytope([[1,0,0,0],[0,1,0,0],[0,0,1,0],[0,0,0,1],[-1,-1,-3,-6],[-1,-1,-1,-1]])
-
-# ---------------------------------------------------------------------------
 # Internal column definitions
 # ---------------------------------------------------------------------------
 
-_LOAD_COLUMNS = ["vertices", "vertex_count", "h11", "h12", "euler_characteristic"]
+_LOAD_COLUMNS = [
+    "vertices",
+    "vertex_count",
+    "facet_count",
+    "point_count",
+    "dual_point_count",
+    "h11",
+    "h12",
+    "euler_characteristic",
+]
 
 _5D_WEIGHT_COLUMNS = [f"weight{i}" for i in range(6)]
 _5D_REFLEXIVE_LOAD_COLUMNS = _5D_WEIGHT_COLUMNS + [
@@ -234,8 +227,8 @@ def _hf_download(repo_id: str, filename: str, token: str | None) -> Path:
     except ImportError as e:
         raise ImportError(
             "Downloading datasets requires huggingface_hub. Install it with "
-            "`pip install huggingface_hub`, or point CYTOOLS_DB_DIR at a local "
-            "directory of Parquet files."
+            "`pip install 'cytools[streaming]'` (or `cytools[notebook]`), or "
+            "point CYTOOLS_DB_DIR at a local directory of Parquet files."
         ) from e
 
     return Path(hf_hub_download(
@@ -298,31 +291,39 @@ def _all_vertex_counts(db_dir: Path) -> list[int]:
 
 
 def _build_arrow_filter(
-    h11: int | None,
-    h12: int | None,
-    chi: int | None,
-    n_facets: int | None,
-    n_points: int | None,
-    n_dual_points: int | None,
+    h11: int | Iterable[int] | None,
+    h12: int | Iterable[int] | None,
+    chi: int | Iterable[int] | None,
+    n_facets: int | Iterable[int] | None,
+    n_points: int | Iterable[int] | None,
+    n_dual_points: int | Iterable[int] | None,
 ) -> list[list[tuple]] | None:
     """
     Build a DNF filter list for ``pq.read_table(filters=...)``.
 
-    Each tuple is ``(column, "=", value)``; all constraints are ANDed together
-    as a single conjunction (one inner list in DNF form).
+    Each constraint is ``(column, "=", value)`` for a scalar, or
+    ``(column, "in", [...])`` for an iterable -- so ``h12=range(50, 100)``
+    selects a band rather than a single value. All constraints are ANDed
+    together as a single conjunction (one inner list in DNF form).
     """
-    parts = [
-        (col, "=", val)
-        for val, col in [
-            (h11,          "h11"),
-            (h12,          "h12"),
-            (chi,          "euler_characteristic"),
-            (n_facets,     "facet_count"),
-            (n_points,     "point_count"),
-            (n_dual_points,"dual_point_count"),
-        ]
-        if val is not None
-    ]
+    parts = []
+    for val, col in [
+        (h11,          "h11"),
+        (h12,          "h12"),
+        (chi,          "euler_characteristic"),
+        (n_facets,     "facet_count"),
+        (n_points,     "point_count"),
+        (n_dual_points,"dual_point_count"),
+    ]:
+        if val is None:
+            continue
+        if isinstance(val, (int, np.integer)):
+            parts.append((col, "=", int(val)))
+        else:
+            vals = [int(v) for v in val]
+            if not vals:
+                raise ValueError(f"empty set of values for filter {col!r}")
+            parts.append((col, "in", vals))
     return [parts] if parts else None
 
 
@@ -473,6 +474,9 @@ class PolytopeBatch:
     vertex_values: np.ndarray  # (total_vertices, dim) int32, contiguous
     vertex_offsets: np.ndarray  # (n+1,) int64
     vertex_count: np.ndarray  # (n,) int
+    facet_count: np.ndarray  # (n,) int
+    point_count: np.ndarray  # (n,) int
+    dual_point_count: np.ndarray  # (n,) int
     h11: np.ndarray  # (n,) int
     h12: np.ndarray  # (n,) int
     euler_characteristic: np.ndarray  # (n,) int
@@ -530,38 +534,41 @@ class PolytopeBatch:
             vertex_values=values,
             vertex_offsets=offsets,
             vertex_count=self.vertex_count[indices],
+            facet_count=self.facet_count[indices],
+            point_count=self.point_count[indices],
+            dual_point_count=self.dual_point_count[indices],
             h11=self.h11[indices],
             h12=self.h12[indices],
             euler_characteristic=self.euler_characteristic[indices],
         )
 
 
-def _resolve_4d_paths(counts, resolved_dir, stream, hf_token) -> list[Path]:
-    """Resolve one Parquet path per vertex count, checking existence up front."""
-    paths: list[Path] = []
-    for vc in counts:
-        if stream:
-            paths.append(_hf_download(_HF_4D_REPO, _hf_4d_filename(vc), hf_token))
-        else:
-            assert resolved_dir is not None
-            p = _db_path(vc, resolved_dir)
-            if not p.exists():
-                raise FileNotFoundError(
-                    f"Polytope database file not found: {p}\n"
-                    f"Set CYTOOLS_DB_DIR to the directory containing the "
-                    f".parquet files, or pass stream=True to download from "
-                    f"HuggingFace."
-                )
-            paths.append(p)
-    return paths
+def _resolve_4d_path(vc, resolved_dir, stream, hf_token) -> Path:
+    """Resolve one Parquet path when its generator is first consumed.
+
+    Keeping this lazy matters for notebooks using ``stream=True``: a small
+    capped query can finish without downloading every vertex-count file.
+    """
+    if stream:
+        return _hf_download(_HF_4D_REPO, _hf_4d_filename(vc), hf_token)
+
+    assert resolved_dir is not None
+    path = _db_path(vc, resolved_dir)
+    if not path.exists():
+        raise FileNotFoundError(
+            f"Polytope database file not found: {path}\n"
+            "Set CYTOOLS_DB_DIR to the directory containing the .parquet "
+            "files, or pass stream=True to download from HuggingFace."
+        )
+    return path
 
 
 def _dnf_constraints(dnf) -> list[tuple]:
-    """Flatten the single-conjunction DNF filter into (column, value) pairs."""
+    """Flatten the single-conjunction DNF filter into (column, op, value)."""
     if not dnf:
         return []
-    # _build_arrow_filter emits exactly one conjunction of equality tuples
-    return [(col, val) for col, op, val in dnf[0] if op == "="]
+    # _build_arrow_filter emits exactly one conjunction, of "=" and "in" tuples
+    return [(col, op, val) for col, op, val in dnf[0] if op in ("=", "in")]
 
 
 def _row_group_can_match(metadata, rg_index: int, constraints, col_index) -> bool:
@@ -575,14 +582,19 @@ def _row_group_can_match(metadata, rg_index: int, constraints, col_index) -> boo
         return True
 
     rg = metadata.row_group(rg_index)
-    for col, val in constraints:
+    for col, op, val in constraints:
         j = col_index.get(col)
         if j is None:
             continue
         stats = rg.column(j).statistics
         if stats is None or not stats.has_min_max:
             continue
-        if val < stats.min or val > stats.max:
+        # For a set of wanted values the row group is only excluded when the
+        # whole set falls outside [min, max]; a gap inside the range cannot be
+        # ruled out from statistics alone.
+        lo = val if op == "=" else min(val)
+        hi = val if op == "=" else max(val)
+        if hi < stats.min or lo > stats.max:
             return False
     return True
 
@@ -619,16 +631,29 @@ def _iter_record_batches(
     query results including live Polytope objects, which is unbounded retention
     at landscape scale, for a saving the filesystem page cache already provides.
     """
-    dnf = _build_arrow_filter(h11, h12, chi, n_facets, n_points, n_dual_points)
-    expr = pq.filters_to_expression(dnf) if dnf else None
-    paths = _resolve_4d_paths(counts, resolved_dir, stream, hf_token)
-    if not paths:
+    if batch_size <= 0:
+        raise ValueError(f"batch_size must be positive, got {batch_size}")
+    if n is not None and n < 0:
+        raise ValueError(f"n must be non-negative, got {n}")
+    if n == 0:
         return
 
-    gens = []
-    for idx, path in enumerate(paths):
+    counts = list(counts)
+    if not counts:
+        return
+
+    dnf = _build_arrow_filter(h11, h12, chi, n_facets, n_points, n_dual_points)
+    expr = pq.filters_to_expression(dnf) if dnf else None
+
+    def one_file(idx, vc):
+        path = _resolve_4d_path(vc, resolved_dir, stream, hf_token)
         file_rng = np.random.default_rng(None if seed is None else seed + idx)
-        gens.append(_stream_one_file(path, dnf, expr, file_rng, batch_size))
+        yield from _stream_one_file(path, dnf, expr, file_rng, batch_size)
+
+    # Generators resolve their files on first use. In particular, streaming a
+    # five-row sample from 32 requested vertex counts downloads at most five
+    # files unless one of those files has no matching rows.
+    gens = [one_file(idx, vc) for idx, vc in enumerate(counts)]
 
     if n is None:
         # Nothing to apportion; drain every file, interleaved so a consumer that
@@ -816,13 +841,13 @@ def _scan_table(
 
 
 def scan_batches(
-    n_vertices: int | list[int] | None = None,
-    h11: int | None = None,
-    h12: int | None = None,
-    chi: int | None = None,
-    n_facets: int | None = None,
-    n_points: int | None = None,
-    n_dual_points: int | None = None,
+    n_vertices: int | Iterable[int] | None = None,
+    h11: int | Iterable[int] | None = None,
+    h12: int | Iterable[int] | None = None,
+    chi: int | Iterable[int] | None = None,
+    n_facets: int | Iterable[int] | None = None,
+    n_points: int | Iterable[int] | None = None,
+    n_dual_points: int | Iterable[int] | None = None,
     n: int | None = None,
     batch_size: int = 4096,
     seed: int = 42,
@@ -870,6 +895,15 @@ def scan_batches(
             total += len(verts)
     ```
     """
+    # Validate before touching local configuration or the network. In
+    # particular, an empty notebook query should be a harmless empty iterator.
+    if batch_size <= 0:
+        raise ValueError(f"batch_size must be positive, got {batch_size}")
+    if n is not None and n < 0:
+        raise ValueError(f"n must be non-negative, got {n}")
+    if n == 0:
+        return
+
     resolved_dir = (
         _resolve_dir(db_dir, DB_DIR, "CYTOOLS_DB_DIR", "4D polytope")
         if not stream
@@ -877,11 +911,13 @@ def scan_batches(
     )
 
     if n_vertices is None:
-        counts = (
-            _all_vertex_counts(resolved_dir) if not stream else list(range(5, 37))
-        )
-    elif isinstance(n_vertices, int):
-        counts = [n_vertices]
+        if stream:
+            counts = list(range(5, 37))
+        else:
+            assert resolved_dir is not None
+            counts = _all_vertex_counts(resolved_dir)
+    elif isinstance(n_vertices, (int, np.integer)):
+        counts = [int(n_vertices)]
     else:
         counts = list(n_vertices)
 
@@ -954,6 +990,9 @@ def _table_to_batch(table: pa.Table) -> PolytopeBatch:
             vertex_values=np.empty((0, 4), dtype=np.int32),
             vertex_offsets=np.zeros(1, dtype=np.int64),
             vertex_count=empty_i,
+            facet_count=empty_i,
+            point_count=empty_i,
+            dual_point_count=empty_i,
             h11=empty_i,
             h12=empty_i,
             euler_characteristic=empty_i,
@@ -968,6 +1007,9 @@ def _table_to_batch(table: pa.Table) -> PolytopeBatch:
         vertex_values=values,
         vertex_offsets=offsets,
         vertex_count=col("vertex_count"),
+        facet_count=col("facet_count"),
+        point_count=col("point_count"),
+        dual_point_count=col("dual_point_count"),
         h11=col("h11"),
         h12=col("h12"),
         euler_characteristic=col("euler_characteristic"),
@@ -1127,13 +1169,13 @@ def _table_to_5d_records(table: pa.Table, reflexive: bool) -> list[PolytopeRecor
 # ---------------------------------------------------------------------------
 
 def load_polytopes(
-    n_vertices: int | list[int] | None = None,
-    h11: int | None = None,
-    h12: int | None = None,
-    chi: int | None = None,
-    n_facets: int | None = None,
-    n_points: int | None = None,
-    n_dual_points: int | None = None,
+    n_vertices: int | Iterable[int] | None = None,
+    h11: int | Iterable[int] | None = None,
+    h12: int | Iterable[int] | None = None,
+    chi: int | Iterable[int] | None = None,
+    n_facets: int | Iterable[int] | None = None,
+    n_points: int | Iterable[int] | None = None,
+    n_dual_points: int | Iterable[int] | None = None,
     n: int | None = None,
     seed: int = 42,
     db_dir: Path | str | None = None,
@@ -1152,11 +1194,12 @@ def load_polytopes(
     - `n_facets`: Filter by number of facets.
     - `n_points`: Filter by number of lattice points.
     - `n_dual_points`: Filter by number of dual lattice points.
-    - `n`: Maximum number of results.  When the filtered set is larger, a
-        reproducible random sample of size *n* is returned (controlled by
-        *seed*).  ``None`` returns all matching polytopes.
-    - `seed`: RNG seed for reproducible sampling (only used when ``n`` is set
-        and the result set is larger than ``n``).
+    - `n`: Maximum number of results. When the filtered set is larger, rows
+        are drawn reproducibly across files and shuffled row groups, controlled
+        by *seed*. This is a bounded-memory stratified sample, not a uniform
+        sample over every matching row. ``None`` returns all matches.
+    - `seed`: RNG seed for reproducible row-group ordering and file
+        interleaving (only used when ``n`` is set).
     - `db_dir`: Path to the local directory containing the Parquet files.
         Ignored when ``stream=True``.  If omitted, falls back to
         ``$CYTOOLS_DB_DIR``.  A :exc:`ValueError` is raised if neither is set
@@ -1184,6 +1227,11 @@ def load_polytopes(
     polys = [r.polytope for r in recs]
     ```
     """
+    if n is not None and n < 0:
+        raise ValueError(f"n must be non-negative, got {n}")
+    if n == 0:
+        return []
+
     # Resolve local directory once (ignored when streaming)
     resolved_dir = (
         _resolve_dir(db_dir, DB_DIR, "CYTOOLS_DB_DIR", "4D polytope")
@@ -1197,8 +1245,8 @@ def load_polytopes(
             counts = _all_vertex_counts(resolved_dir)
         else:
             counts = list(range(5, 37))
-    elif isinstance(n_vertices, int):
-        counts = [n_vertices]
+    elif isinstance(n_vertices, (int, np.integer)):
+        counts = [int(n_vertices)]
     else:
         counts = list(n_vertices)
 
@@ -1217,65 +1265,6 @@ def load_polytopes(
         hf_token=hf_token,
     )
     return _table_to_records(table)
-
-
-def load_sample(
-    vertex_counts: list[int],
-    n: int,
-    seed: int = 42,
-    db_dir: Path | str | None = None,
-    stream: bool = False,
-    hf_token: str | None = None,
-) -> list[PolytopeRecord]:
-    """
-    Load *n* polytopes from the given vertex-count files.
-
-    Convenience wrapper around :func:`load_polytopes` that mirrors the
-    benchmark fixture's original signature.
-    """
-    return load_polytopes(
-        n_vertices=vertex_counts, n=n, seed=seed,
-        db_dir=db_dir, stream=stream, hf_token=hf_token,
-    )
-
-
-def load_tier(
-    name: str,
-    db_dir: Path | str | None = None,
-    stream: bool = False,
-    hf_token: str | None = None,
-) -> list[PolytopeRecord]:
-    """
-    Load polytopes for a named complexity tier
-    (``"tiny"``, ``"small"``, ``"medium"``, ``"large"``, ``"full"``).
-
-    The ``"full"`` tier samples ``CYTOOLS_BENCH_N_FULL`` (default 100) polytopes
-    from every vertex-count file present in the database, covering the complete
-    complexity range of the KS 4D reflexive polytope database.
-    """
-    cfg = TIERS[name]
-    vertex_files = cfg["vertex_files"]
-    n_per_file = cfg["n"]
-
-    if vertex_files is None:
-        # "full" tier: discover all available files and sample n from each
-        if stream:
-            all_counts = list(range(5, 37))
-        else:
-            resolved_dir = _resolve_dir(db_dir, DB_DIR, "CYTOOLS_DB_DIR", "4D polytope")
-            all_counts = _all_vertex_counts(resolved_dir)
-        records = []
-        for vc in all_counts:
-            records.extend(load_polytopes(
-                n_vertices=vc, n=n_per_file,
-                db_dir=db_dir, stream=stream, hf_token=hf_token,
-            ))
-        return records
-
-    return load_sample(
-        vertex_files, n_per_file,
-        db_dir=db_dir, stream=stream, hf_token=hf_token,
-    )
 
 
 # ---------------------------------------------------------------------------
@@ -1314,9 +1303,12 @@ def load_5d_polytopes(
     - `n_points`: Filter by number of lattice points.
     - `n_dual_points`: Filter by number of dual lattice points.  Only valid
         when ``reflexive=True``.
-    - `n`: Maximum number of results.  A reproducible random sample is returned
-        when the filtered set is larger (controlled by *seed*).
-    - `seed`: RNG seed for reproducible sampling.
+    - `n`: Maximum number of results. When the filtered set is larger, rows
+        are drawn reproducibly across files and shuffled row groups, controlled
+        by *seed*. This is a bounded-memory stratified sample, not a uniform
+        sample over every matching row.
+    - `seed`: RNG seed for reproducible row-group ordering and file
+        interleaving.
     - `db_dir`: Path to the local database directory.  Expected layout::
 
             {db_dir}/reflexive/0000.parquet … 0399.parquet
@@ -1416,63 +1408,3 @@ def load_5d_polytopes(
     records = _table_to_5d_records(full_table, reflexive)
     _CACHE_5D[cache_key] = records
     return records
-
-
-# ---------------------------------------------------------------------------
-# Parallel pipeline scan
-# ---------------------------------------------------------------------------
-
-def parallel_scan(
-    records: list[PolytopeRecord],
-    fn,
-    *,
-    n_workers: int | None = None,
-    chunksize: int = 1,
-    force_backend: str | None = None,
-):
-    """
-    Apply *fn* to each :class:`PolytopeRecord` in *records* in parallel,
-    returning results in the same order.
-
-    Uses :mod:`cytools.parallel` for backend selection: Ray when available
-    (distributed, shared object store, fault-tolerant), otherwise falls back
-    to ``ProcessPoolExecutor``.
-
-    *fn* must be a **module-level callable** (picklable) that accepts a single
-    :class:`PolytopeRecord` and returns any picklable value.  Exceptions raised
-    inside workers are re-raised in the main process.
-
-    A typical scan::
-
-        from cytools.dataset import load_polytopes, parallel_scan
-
-        def pipeline(record):
-            t = record.polytope.triangulate()
-            cy = t.get_toric_variety().get_cy()
-            return {
-                "h11": cy.hodge_numbers()[0],
-                "h21": cy.hodge_numbers()[1],
-                "chi": cy.euler_characteristic(),
-            }
-
-        records = load_polytopes(n_vertices=list(range(5, 15)), n=500)
-        results = parallel_scan(records, pipeline, n_workers=8)
-
-    **Arguments:**
-    - `records`: List of :class:`PolytopeRecord` instances to process.
-    - `fn`: Callable ``(PolytopeRecord) -> Any``.  Must be a module-level
-        function (not a lambda or nested function) when using the
-        ``ProcessPoolExecutor`` backend.
-    - `n_workers`: Number of parallel workers.  Defaults to ``os.cpu_count()``.
-      Ignored by Ray when connecting to a pre-existing cluster.
-    - `chunksize`: Items per worker task.  Larger values reduce IPC overhead
-      for fast *fn*; only used by the ``ProcessPoolExecutor`` backend.
-    - `force_backend`: ``"ray"`` or ``"ppe"`` to override auto-detection.
-
-    **Returns:**
-    A list of results in the same order as *records*.
-    """
-    from cytools.parallel import pool as _pool
-
-    with _pool(n_workers=n_workers, force_backend=force_backend) as p:
-        return p.map(fn, records)

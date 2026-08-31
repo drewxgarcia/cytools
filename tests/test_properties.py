@@ -12,6 +12,7 @@ import numpy as np
 import pytest
 
 import cytools
+import cytools.config
 from cytools import Polytope
 
 # a few small reflexive 4d polytopes, kept module-level so each is built once

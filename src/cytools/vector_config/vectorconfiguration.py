@@ -23,13 +23,18 @@
 from collections.abc import Iterable
 import numpy as np
 import regfans
-from typing import Union
+
+from numpy.typing import ArrayLike
+
+from cytools._typing import Matrix, Vector
+from typing import overload, Union
 
 # vector configuration imports
 from .fan import Fan
 
 # core CYTools imports
-from cytools import Cone, Polytope
+from cytools.cone import Cone
+from cytools.polytope import Polytope
 
 
 class VectorConfiguration(regfans.VectorConfiguration):
@@ -76,7 +81,7 @@ class VectorConfiguration(regfans.VectorConfiguration):
         super().__init__(*args, **kwargs)
 
         # some Polytope info
-        p = Polytope(self.vectors(), labels=self.labels)
+        p = Polytope(np.asarray(self.vectors()), labels=self.labels)
         self._is_reflexive = p.is_reflexive(allow_translations=False)
         self._poly = {self.labels: p}
 
@@ -86,7 +91,7 @@ class VectorConfiguration(regfans.VectorConfiguration):
     
     # hulls
     # -----
-    def conical_hull(self, which: Union[int, Iterable[int]] = None) -> Cone:
+    def conical_hull(self, which: Union[int, Iterable[int]] | None = None) -> Cone:
         """
         **Description:**
         Compute the positive/conical hull of (some) vectors of the VC.
@@ -102,7 +107,7 @@ class VectorConfiguration(regfans.VectorConfiguration):
         **Returns:**
         The associated conical hull.
         """
-        return Cone(rays=self.vectors(which=which))
+        return Cone(rays=np.asarray(self.vectors(which=which)))
 
     # aliases
     positive_hull = conical_hull
@@ -110,7 +115,7 @@ class VectorConfiguration(regfans.VectorConfiguration):
     coni = conical_hull
     cone = conical_hull
 
-    def convex_hull(self, which: Union[int, Iterable[int]] = None) -> Polytope:
+    def convex_hull(self, which: Union[int, Iterable[int]] | None = None) -> Polytope:
         """
         **Description:**
         Compute the convex hull of (some) vectors of the VC.
@@ -129,11 +134,13 @@ class VectorConfiguration(regfans.VectorConfiguration):
         """
         if which is None:
             which = self.labels
+        elif isinstance(which, int):
+            which = (which,)
 
         # cache computed polytopes
         which = tuple(which)
         if which not in self._poly:
-            self._poly[which] = Polytope(self.vectors(which), labels=which)
+            self._poly[which] = Polytope(np.asarray(self.vectors(which)), labels=which)
 
         return self._poly[which]
 
@@ -158,7 +165,7 @@ class VectorConfiguration(regfans.VectorConfiguration):
         return self._is_reflexive
 
     @property
-    def divisor_basis(self) -> Iterable[int]:
+    def divisor_basis(self) -> np.ndarray:
         """
         **Description:**
         Return the divisor basis corresponding to the Polytope class.
@@ -171,11 +178,14 @@ class VectorConfiguration(regfans.VectorConfiguration):
         **Returns:**
         The divisor basis, as labels.
         """
-        if self._is_reflexive:
-            return self._gale_basis
+        if not self._is_reflexive:
+            raise ValueError(
+                "A divisor basis is only defined for a reflexive configuration."
+            )
+        return np.asarray(self._gale_basis)
 
     @property
-    def divisor_basis_inds(self) -> Iterable[int]:
+    def divisor_basis_inds(self) -> np.ndarray:
         """
         **Description:**
         Return the divisor basis corresponding to the Polytope class.
@@ -188,9 +198,8 @@ class VectorConfiguration(regfans.VectorConfiguration):
         **Returns:**
         The divisor basis, as indices.
         """
-        if self._is_reflexive:
-            # map labels to inds
-            return self.divisor_basis-1
+        # map labels to inds
+        return self.divisor_basis - 1
 
     # misc regularity methods
     # -----------------------
@@ -208,7 +217,47 @@ class VectorConfiguration(regfans.VectorConfiguration):
         """
         return self.subdivide(heights=[1 for _ in self.labels])
 
-    def gale(self, **kwargs) -> "ArrayLike":
+    def vectors(self, which: Union[int, Iterable[int]] | None = None) -> np.ndarray:
+        """
+        **Description:**
+        Return the vectors of the configuration, as an array.
+
+        regfans types this as `ArrayLike`; it is always an array in practice,
+        and callers here index into it and transpose it.
+
+        **Arguments:**
+        - `which`: Either a single label, for which the single corresponding
+            vector will be returned, or a list of labels.
+
+        **Returns:**
+        The vectors.
+        """
+        return np.asarray(super().vectors(which))
+
+    @overload
+    def vectors_to_labels(self, vectors: Vector) -> int: ...
+
+    @overload
+    def vectors_to_labels(self, vectors: Matrix) -> list[int]: ...
+
+    @overload
+    def vectors_to_labels(self, vectors: ArrayLike) -> int | list[int]: ...
+
+    def vectors_to_labels(self, vectors: ArrayLike) -> int | list[int]:
+        """
+        **Description:**
+        Map vectors to their corresponding labels.
+
+        **Arguments:**
+        - `vectors`: Either a single vector, for which the single
+            corresponding label is returned, or a list of vectors.
+
+        **Returns:**
+        The corresponding label(s).
+        """
+        return super().vectors_to_labels(vectors)
+
+    def gale(self, set_basis: bool = False, **kwargs) -> np.ndarray:
         """
         **Description:**
         Compute the gale transform of the config.
@@ -224,10 +273,8 @@ class VectorConfiguration(regfans.VectorConfiguration):
         **Returns:**
         The gale transform.
         """
-        if self.is_reflexive:
-            return super().gale(set_basis=True)
-        else:
-            return super().gale(set_basis=False)
+        # reflexivity decides the basis, regardless of what was passed in
+        return np.asarray(super().gale(set_basis=self.is_reflexive))
         
     def moving_cone(self, 
                     pushed_down: bool = False,
@@ -288,9 +335,8 @@ class VectorConfiguration(regfans.VectorConfiguration):
 
     subdivide = triangulate
 
-# misc
-# ----
-# give Polytope a method to directly generate its VC
+# Domain feature methods
+# ----------------------
 def vc(self,
     include_points_interior_to_facets: bool = False) -> "VectorConfiguration":
     """
@@ -338,10 +384,9 @@ def vc(self,
         self._vc_nofacet = vc
 
     return vc
-Polytope.vc = vc
 
-# give Cone a method to directly generate its VC
-def vc(self):
+
+def cone_vc(self):
     """
     **Description:**
     Construct the VectorConfiguration associated to the cone.
@@ -353,4 +398,3 @@ def vc(self):
     The associated VectorConfiguration.
     """
     return VectorConfiguration(self.rays())
-Cone.vc = vc

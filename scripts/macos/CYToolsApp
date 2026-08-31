@@ -1,6 +1,0 @@
-#!/bin/bash
-#
-# App-bundle entry point (CFBundleExecutable): opens Terminal on the bundled
-# launcher so JupyterLab has a terminal to run in and show its output.
-
-open -a Terminal "$(cd "$(dirname "$0")" && pwd)/launcher.sh"

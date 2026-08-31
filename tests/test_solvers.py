@@ -18,14 +18,15 @@ def _least_squares_system(seed=0, m=60, n=15):
     return M, list(C), x_true
 
 
-def test_scikit_sparse_is_installed():
-    """scikit-sparse is a hard requirement, and must expose the 0.5+ API.
+def test_scikit_sparse_api_when_installed():
+    """The optional performance extra must expose the 0.5+ API.
 
     Pinned because the API this depends on has moved: scikit-sparse 0.5 removed
     ``cholesky_AAt`` in favour of ``cho_factor``. A missing module or a missing
     name should fail loudly here rather than degrade the solver silently.
     """
-    from sksparse.cholmod import CholmodError, cho_factor  # noqa: F401
+    pytest.importorskip("sksparse.cholmod")
+    from sksparse.cholmod import CholmodError, cho_factor  # noqa: F401  # ty: ignore[unresolved-import]  # compiled extension, no stubs
 
 
 @pytest.mark.parametrize("backend", ["sksparse", "scipy", "all"])
@@ -38,6 +39,8 @@ def test_backend_solves(backend):
     degraded to the scipy SuperLU fallback -- a large, invisible slowdown rather
     than a failure. Assert success, not merely correctness.
     """
+    if backend == "sksparse":
+        pytest.importorskip("sksparse.cholmod")
     M, C, x_true = _least_squares_system()
     sol = solve_linear_system(M, C, backend=backend)
     assert sol is not None, f"backend {backend!r} returned no solution"
@@ -46,6 +49,7 @@ def test_backend_solves(backend):
 
 @pytest.mark.parametrize("seed", [0, 1, 2])
 def test_backends_agree(seed):
+    pytest.importorskip("sksparse.cholmod")
     M, C, _ = _least_squares_system(seed=seed)
     a = solve_linear_system(M, C, backend="sksparse")
     b = solve_linear_system(M, C, backend="scipy")
@@ -60,12 +64,8 @@ def test_inconsistent_system_is_rejected_by_the_residual_check():
     assert solve_linear_system(M, C, backend="all", check=True) is None
 
 
-def test_broken_install_propagates_rather_than_degrading():
-    """A missing scikit-sparse is a broken install, not a runtime condition.
-
-    With the dependency required, the sksparse backend must not quietly return
-    None on ImportError -- that is what hid the dead CHOLMOD path for so long.
-    """
+def test_explicit_optional_backend_fails_with_install_guidance():
+    """Explicit sksparse stays fail-loud and tells the user how to enable it."""
     import builtins
 
     real_import = builtins.__import__
@@ -76,9 +76,31 @@ def test_broken_install_propagates_rather_than_degrading():
         return real_import(name, *args, **kwargs)
 
     M, C, _ = _least_squares_system()
-    builtins.__import__ = blocked
+    builtins.__import__ = blocked  # ty: ignore[invalid-assignment]
     try:
-        with pytest.raises(ImportError):
+        with pytest.raises(ImportError, match=r"cytools\[performance\]"):
             solve_linear_system(M, C, backend="sksparse")
     finally:
         builtins.__import__ = real_import
+
+
+def test_automatic_backend_falls_back_when_scikit_sparse_is_absent():
+    """A base install remains functional on platforms without SuiteSparse."""
+    import builtins
+
+    real_import = builtins.__import__
+
+    def blocked(name, *args, **kwargs):
+        if name.startswith("sksparse"):
+            raise ImportError("simulated: scikit-sparse not installed")
+        return real_import(name, *args, **kwargs)
+
+    M, C, x_true = _least_squares_system()
+    builtins.__import__ = blocked  # ty: ignore[invalid-assignment]
+    try:
+        sol = solve_linear_system(M, C, backend="all")
+    finally:
+        builtins.__import__ = real_import
+
+    assert sol is not None
+    assert np.allclose(np.asarray(sol).ravel(), x_true, atol=1e-6)

@@ -31,7 +31,8 @@ import pyarrow.parquet as pq
 import pyarrow as pa
 
 # CYTools imports
-from cytools import Polytope, fetch_polytopes
+from cytools.polytope import Polytope
+from cytools.utils import fetch_polytopes
 from cytools.vector_config import VectorConfiguration
 from cytools.vector_config.fan import Fan
 from cytools.f_theory import Uplift_functions as UF
@@ -82,8 +83,6 @@ class CY_orientifold():
         self.__orbifold_line_bundle = None
         self.__yields_nef_decomposition = None
         self.__regular = None
-        self.__orbifold_pts = None
-        self.__CY_ambient_pts=None
         self.__intersection_numbers_orbifold = None
         self.__normal_fan = None
         self.__Newton_Polytope = None
@@ -193,7 +192,7 @@ class CY_orientifold():
         if len(singular_two_cones)>0:
             for c in singular_two_cones:
                 vec=np.sum(self.vectors_orbifold(c),axis=0)
-                vec_add=np.rint(vec/np.gcd.reduce(vec)).astype(int)
+                vec_add=np.rint(vec/np.gcd.reduce(vec)).astype(int)  # ty: ignore[no-matching-overload]
                 orbifold_blowups.append(vec_add.tolist())
             orbifold_blowups=np.array(orbifold_blowups)
             fan=UF.refine_fan(self.orbifold_toric_fan(),orbifold_blowups)
@@ -552,8 +551,6 @@ class F_Theory_Uplift():
         self.__is_nef_partition = None
         self.__is_partition = None
         self.__is_nef_decomposition = None
-        self.__CY_orientifold = None
-
         match orientifold_or_points:
             case CY_orientifold():
                 self.__CY_orientifold = orientifold_or_points
@@ -960,10 +957,15 @@ class F_Theory_Uplift():
         """
         if self.__blowups is None:
             bus = []
+            pts = self.vectors_singular_uplift_ambient()
+            # set alongside the singular-uplift points fetched just above
+            x, y = self.x, self.y
+            if (x is None) or (y is None):
+                raise RuntimeError("The singular-uplift frame was never set.")
             for xxx in self.NHC_singular_uplift(as_labels=True):
                 bus.append(np.array([
-                    self.vectors_singular_uplift_ambient()[xxx-1] + self.x + 2*self.y,
-                    2*self.vectors_singular_uplift_ambient()[xxx-1] + 2*self.x + 3*self.y
+                    pts[xxx-1] + x + 2*y,
+                    2*pts[xxx-1] + 2*x + 3*y
                 ]))
             self.__blowups = bus
         if as_labels:
@@ -1604,15 +1606,15 @@ class F_Theory_Uplift():
         """
         return self.orientifold().intersection_numbers_orbifold()
 
-def fetch_orientifolds(only_regular: bool=True, only_nef_decomposition: bool=False,h11: int = None,h12: int = None,h13: int = None,
-    h21: int = None,h22: int = None,h31: int = None,chi: int = None,
-    lattice: str = 'N',dim: int = 4,n_points: int = None,n_vertices: int = None,
-    n_dual_points: int = None,n_facets: int = None,limit: int = 1000,
-    samples: int = None,sample_seed: int = None,timeout: int = 60,
-    as_list: bool = True,backend: str = None,
+def fetch_orientifolds(only_regular: bool=True, only_nef_decomposition: bool=False,h11: int | None = None,h12: int | None = None,h13: int | None = None,
+    h21: int | None = None,h22: int | None = None,h31: int | None = None,chi: int | None = None,
+    lattice: str = 'N',dim: int = 4,n_points: int | None = None,n_vertices: int | None = None,
+    n_dual_points: int | None = None,n_facets: int | None = None,limit: int = 1000,
+    samples: int | None = None,sample_seed: int | None = None,timeout: int = 60,
+    as_list: bool = True,backend: str | None = None,
     deterministic_glsm_basis: bool = False,
     dualize: bool = False,
-    favorable: bool = None,
+    favorable: bool | None = None,
     verbosity: int = 0):
 
     
@@ -1665,15 +1667,15 @@ def fetch_orientifolds(only_regular: bool=True, only_nef_decomposition: bool=Fal
                 else:
                     yield O
 
-def fetch_F_Theory_uplifts(only_regular: bool = True, only_nef_partition:bool=False,only_nef_decomposition: bool=False,h11: int = None,h12: int = None,h13: int = None,
-    h21: int = None,h22: int = None,h31: int = None,chi: int = None,
-    lattice: str = 'N',dim: int = 4,n_points: int = None,n_vertices: int = None,
-    n_dual_points: int = None,n_facets: int = None,limit: int = 1000,
-    samples: int = None,sample_seed: int = None,timeout: int = 60,
-    as_list: bool = True,backend: str = None,
+def fetch_F_Theory_uplifts(only_regular: bool = True, only_nef_partition:bool=False,only_nef_decomposition: bool=False,h11: int | None = None,h12: int | None = None,h13: int | None = None,
+    h21: int | None = None,h22: int | None = None,h31: int | None = None,chi: int | None = None,
+    lattice: str = 'N',dim: int = 4,n_points: int | None = None,n_vertices: int | None = None,
+    n_dual_points: int | None = None,n_facets: int | None = None,limit: int = 1000,
+    samples: int | None = None,sample_seed: int | None = None,timeout: int = 60,
+    as_list: bool = True,backend: str | None = None,
     deterministic_glsm_basis: bool = False,
     dualize: bool = False,
-    favorable: bool = None,
+    favorable: bool | None = None,
     verbosity: int = 0):
 
     

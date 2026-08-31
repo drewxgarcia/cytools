@@ -21,17 +21,24 @@ jobs:
       matrix:
         os: [ubuntu-24.04, ubuntu-24.04-arm, macos-14]
         python-version: ['3.10', '3.14']
-    defaults:
-      run:
-        shell: bash -l {0}
     steps:
       - name: Check out repo
         uses: actions/checkout@v7
-      - name: Get micromamba
-        uses: mamba-org/setup-micromamba@v3
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
         with:
-          init-shell: bash
-          environment-file: environment-dev.yml
+          enable-cache: true
+      - name: Install Python
+        run: uv python install "${{ matrix.python-version }}"
+      - name: Install project
+        run: uv sync --frozen --extra normaliz --python "${{ matrix.python-version }}"
       - name: Run pytest
-        run: |
-          pytest -vv tests
+        run: uv run --frozen python -m pytest -vv
+      - name: Build wheel
+        run: uv build --wheel --out-dir dist-ci
+      - name: Verify public modules are packaged
+        run: >-
+          uv run --frozen python -c 'import glob, zipfile;
+          names=zipfile.ZipFile(glob.glob("dist-ci/*.whl")[0]).namelist();
+          required={"cytools/__init__.py", "cytools/_version.py", "cytools/dataset.py", "cytools/landscape.py", "cytools/store.py"};
+          assert required <= set(names), sorted(required - set(names))'

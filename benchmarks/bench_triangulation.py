@@ -47,7 +47,7 @@ Run full suite:
 import pytest
 
 from cytools import Polytope
-from cytools.dataset import POLY_5V, POLY_6V
+from benchmarks._data import POLY_5V, POLY_6V
 
 
 # ---------------------------------------------------------------------------

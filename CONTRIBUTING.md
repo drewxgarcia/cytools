@@ -3,6 +3,9 @@
 Thanks for your interest in CYTools. This document describes how to set up a
 development environment, run the tests, and report problems.
 
+The package boundaries and dependency rules are documented in
+[ARCHITECTURE.md](ARCHITECTURE.md).
+
 ## Supported platforms
 
 CYTools runs on **Linux** and on **Apple Silicon (M-series) macOS**. Intel-based
@@ -11,45 +14,51 @@ instructions and for the non-development installation options.
 
 ## Setting up a development environment
 
-Development uses the conda environment defined in `environment-dev.yml`, which
-installs the dependencies (including `normaliz`, which the pip install does not
-provide) and performs an editable install of CYTools:
+Development uses [uv](https://docs.astral.sh/uv/) and the committed `uv.lock`
+file. `uv sync` creates a project-local virtual environment, installs CYTools
+editably, and includes the default test and benchmark tools:
 
 ```bash
 git clone https://github.com/LiamMcAllisterGroup/cytools.git
 cd cytools
-conda env create -f environment-dev.yml
-conda activate cytools-dev
+uv sync --extra notebook
 ```
 
-The optional GNN triangulation sampler lives in a separate `dualgnn` package,
-because it pulls in PyTorch. To add it on top of the development environment:
+The optional GNN triangulation sampler lives in a separate `dualgnn` package
+because it pulls in PyTorch. Install it only when working on that feature:
 
 ```bash
-conda env update -n cytools-dev -f environment-gnn.yml
+uv sync --extra notebook --extra gnn
 ```
 
 ## Running the tests
 
-From the repository root, with the environment activated:
+From the repository root:
 
 ```bash
-pytest tests/
+uv run pytest
 ```
 
 Some tests are skipped when an optional dependency is missing:
 
 - `tests/test_gnn_sampler.py` skips unless the `dualgnn` package is importable.
-- `tests/test_cone.py::test_hibert_basis` skips unless the external `normaliz`
-  executable is on `PATH`.
+- `tests/test_cone.py::test_hilbert_basis` skips unless the `normaliz` extra is
+  installed with `uv sync --extra normaliz`.
+
+Benchmarks are intentionally separate from the correctness suite and are
+invoked explicitly:
+
+```bash
+uv run pytest benchmarks --benchmark-only -m "not slow"
+```
 
 ## Continuous integration
 
-`.github/workflows/build-test.yml` runs `pytest tests` on every pull request and
-on pushes to `main`. The matrix covers Linux (x86-64 and arm64) and macOS on
-Apple Silicon, across the supported Python versions, with the environment built
-from `environment-dev.yml` via micromamba. Please make sure the test suite passes
-locally before opening a pull request.
+`.github/workflows/build-test.yml` runs the correctness suite on every pull
+request and on pushes to `main`. The matrix covers Linux (x86-64 and arm64) and
+macOS on Apple Silicon across the supported Python versions, using the locked
+`uv` environment. Please make sure the test suite passes locally before opening
+a pull request.
 
 The other workflows are `website.yml`, which regenerates the documentation site
 from the source docstrings, and `deploy.yml`, which builds the sdist and wheel
@@ -72,7 +81,7 @@ Every source file carries the GPL header; please keep it when adding new files.
 
 - Add a short entry to the `Unreleased` section of [CHANGELOG.md](CHANGELOG.md)
   for user-visible changes.
-- The version number lives in `src/cytools/__init__.py` and is read from there by
+- The version number lives in `src/cytools/_version.py` and is read from there by
   the build backend; releases are tagged `vX.Y.Z`.
 
 ## AI usage policy

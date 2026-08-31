@@ -114,4 +114,5 @@ def test_hpolytope_requires_ineqs():
         HPolytope()
 
     with pytest.raises(ValueError, match="2D matrix"):
-        HPolytope([1, 0, 0])
+        # deliberately 1-D, which is what the error under test is about
+        HPolytope([1, 0, 0])  # ty: ignore[invalid-argument-type]

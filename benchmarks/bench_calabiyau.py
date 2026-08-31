@@ -43,7 +43,7 @@ import numpy as np
 import pytest
 
 from cytools import Polytope
-from cytools.dataset import POLY_5V
+from benchmarks._data import POLY_5V
 
 
 # ---------------------------------------------------------------------------
@@ -319,4 +319,3 @@ class TestGVGW:
 
     def test_compute_gws_5v(self, benchmark, cy_5v):
         benchmark(lambda: cy_5v.compute_gws(max_deg=3))
-

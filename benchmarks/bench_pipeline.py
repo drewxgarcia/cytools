@@ -47,52 +47,30 @@ import pytest
 
 
 # ---------------------------------------------------------------------------
-# Fixtures — thin wrappers so conftest fixtures get meaningful local names
-# ---------------------------------------------------------------------------
-
-@pytest.fixture(scope="module")
-def tiny_records(tiny_polys):
-    """5v polytopes — fast calibration, h11 median ~34."""
-    return tiny_polys
-
-
-@pytest.fixture(scope="module")
-def bulk_records(bulk_polys):
-    """13-17v polytopes — 65.9% of the KS database, h11 median ~30-40."""
-    return bulk_polys
-
-
-@pytest.fixture(scope="module")
-def full_records(full_polys):
-    """All vertex-count files, ~2900 polytopes — full complexity distribution."""
-    return full_polys
-
-
-# ---------------------------------------------------------------------------
 # Stage 1: Polytope → Triangulation
 # ---------------------------------------------------------------------------
 
 class TestStage1Triangulate:
     """How fast can we triangulate polytopes across the complexity range?"""
 
-    def test_triangulate_tiny(self, benchmark, tiny_records):
+    def test_triangulate_tiny(self, benchmark, tiny_polys):
         """Calibration: 20 × 5v polytopes."""
-        polys = [r.polytope for r in tiny_records]
+        polys = [r.polytope for r in tiny_polys]
         def go():
             return [p.triangulate() for p in polys]
         benchmark.pedantic(go, rounds=5, iterations=1)
 
-    def test_triangulate_bulk(self, benchmark, bulk_records):
+    def test_triangulate_bulk(self, benchmark, bulk_polys):
         """Primary: 20 polytopes drawn from the DB bulk (13-17v)."""
-        polys = [r.polytope for r in bulk_records]
+        polys = [r.polytope for r in bulk_polys]
         def go():
             return [p.triangulate() for p in polys]
         benchmark.pedantic(go, rounds=3, iterations=1)
 
     @pytest.mark.slow
-    def test_triangulate_full(self, benchmark, full_records):
+    def test_triangulate_full(self, benchmark, full_polys):
         """Full distribution: ~2900 polytopes across all vertex-count files."""
-        polys = [r.polytope for r in full_records]
+        polys = [r.polytope for r in full_polys]
         def go():
             return [p.triangulate() for p in polys]
         benchmark.pedantic(go, rounds=1, iterations=1)
@@ -105,9 +83,9 @@ class TestStage1Triangulate:
 class TestStage2ToricVariety:
     """Full pipeline up to toric variety construction."""
 
-    def test_toric_variety_tiny(self, benchmark, tiny_records):
+    def test_toric_variety_tiny(self, benchmark, tiny_polys):
         """Calibration: 20 × 5v polytopes."""
-        polys = [r.polytope for r in tiny_records]
+        polys = [r.polytope for r in tiny_polys]
         def go():
             results = []
             for p in polys:
@@ -118,9 +96,9 @@ class TestStage2ToricVariety:
             return results
         benchmark.pedantic(go, rounds=5, iterations=1)
 
-    def test_toric_variety_bulk(self, benchmark, bulk_records):
+    def test_toric_variety_bulk(self, benchmark, bulk_polys):
         """Primary: 20 polytopes from the DB bulk (13-17v)."""
-        polys = [r.polytope for r in bulk_records]
+        polys = [r.polytope for r in bulk_polys]
         def go():
             results = []
             for p in polys:
@@ -132,9 +110,9 @@ class TestStage2ToricVariety:
         benchmark.pedantic(go, rounds=3, iterations=1)
 
     @pytest.mark.slow
-    def test_toric_variety_full(self, benchmark, full_records):
+    def test_toric_variety_full(self, benchmark, full_polys):
         """Full distribution: ~2900 polytopes across all vertex-count files."""
-        polys = [r.polytope for r in full_records]
+        polys = [r.polytope for r in full_polys]
         def go():
             results = []
             for p in polys:
@@ -168,11 +146,11 @@ class TestStage3IntersectionNumbers:
             return results
         benchmark.pedantic(go, rounds=3, iterations=1)
 
-    def test_intnum_bulk(self, benchmark, bulk_records):
+    def test_intnum_bulk(self, benchmark, bulk_polys):
         """Primary: 20 polytopes from the DB bulk (13-17v, h11 ~25-40)."""
         def go():
             results = []
-            for r in bulk_records:
+            for r in bulk_polys:
                 try:
                     tv = r.polytope.triangulate().get_toric_variety()
                     results.append(tv.intersection_numbers())
@@ -195,11 +173,11 @@ class TestStage3IntersectionNumbers:
         benchmark.pedantic(go, rounds=1, iterations=1)
 
     @pytest.mark.slow
-    def test_intnum_full(self, benchmark, full_records):
+    def test_intnum_full(self, benchmark, full_polys):
         """Full distribution: ~2900 polytopes across all vertex-count files."""
         def go():
             results = []
-            for r in full_records:
+            for r in full_polys:
                 try:
                     tv = r.polytope.triangulate().get_toric_variety()
                     results.append(tv.intersection_numbers())
@@ -275,7 +253,7 @@ class TestHodgeThroughput:
             return out
         benchmark.pedantic(go, rounds=5, iterations=1)
 
-    def test_hodge_bulk(self, benchmark, bulk_records):
+    def test_hodge_bulk(self, benchmark, bulk_polys):
         """Primary: 20 polytopes from the DB bulk (13-17v).
 
         This number reflects the actual throughput a user sees when scanning
@@ -283,7 +261,7 @@ class TestHodgeThroughput:
         """
         def go():
             out = []
-            for r in bulk_records:
+            for r in bulk_polys:
                 try:
                     cy = r.polytope.triangulate().get_cy()
                     out.append((cy.h11(), cy.h12()))
@@ -304,11 +282,11 @@ class TestHodgeThroughput:
         benchmark.pedantic(go, rounds=1, iterations=1)
 
     @pytest.mark.slow
-    def test_hodge_full(self, benchmark, full_records):
+    def test_hodge_full(self, benchmark, full_polys):
         """Full distribution: ~2900 polytopes across all vertex-count files."""
         def go():
             out = []
-            for r in full_records:
+            for r in full_polys:
                 try:
                     cy = r.polytope.triangulate().get_cy()
                     out.append((cy.h11(), cy.h12()))

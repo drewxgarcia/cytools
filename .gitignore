@@ -5,6 +5,7 @@ __pycache__
 
 # Jupyter notebooks (if you want to add one use the --force option)
 *.ipynb
+!demos/*.ipynb
 .ipynb_checkpoints
 
 # Data files

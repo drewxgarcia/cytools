@@ -55,6 +55,9 @@ from pathlib import Path
 
 _POLYTOPE_COUNT_ENV = "CYTOOLS_COUNT_POLYTOPES"
 
+# set once, when Polytope.__init__ is first wrapped
+_COUNTER_GET = None
+
 
 def install_polytope_counter():
     """Count Polytope.__init__ calls in this process.
@@ -63,10 +66,12 @@ def install_polytope_counter():
     __init__ rather than sampling means the count is exact, including
     Polytopes built internally (duals, faces, subpolytopes).
     """
+    global _COUNTER_GET
+
     from cytools.polytope import Polytope
 
-    if getattr(Polytope, "_throughput_counter_installed", False):
-        return Polytope._throughput_counter_get
+    if _COUNTER_GET is not None:
+        return _COUNTER_GET
 
     original = Polytope.__init__
     state = {"n": 0}
@@ -75,10 +80,9 @@ def install_polytope_counter():
         state["n"] += 1
         return original(self, *args, **kwargs)
 
-    Polytope.__init__ = counting_init
-    Polytope._throughput_counter_installed = True
-    Polytope._throughput_counter_get = lambda: state["n"]
-    return Polytope._throughput_counter_get
+    Polytope.__init__ = counting_init  # ty: ignore[invalid-assignment]
+    _COUNTER_GET = lambda: state["n"]
+    return _COUNTER_GET
 
 
 def peak_rss_bytes() -> int:
@@ -254,12 +258,8 @@ def load_vertices(n: int, vertex_counts, db_dir):
     """
     from cytools.dataset import load_polytopes
 
-    kwargs = {"n_vertices": vertex_counts, "n": n}
-    if db_dir:
-        kwargs["db_dir"] = db_dir
-
     t0 = time.perf_counter()
-    records = load_polytopes(**kwargs)
+    records = load_polytopes(n_vertices=vertex_counts, n=n, db_dir=db_dir or None)
     scan_s = time.perf_counter() - t0
 
     verts = [r.polytope.vertices() for r in records]
@@ -333,7 +333,7 @@ def report(results, scan_s, baseline=None):
 
 
 def main(argv=None):
-    ap = argparse.ArgumentParser(description=__doc__.split("\n")[1])
+    ap = argparse.ArgumentParser(description=(__doc__ or "").split("\n")[1])
     ap.add_argument("--n", type=int, default=200, help="geometries to process")
     ap.add_argument(
         "--vertex-counts",

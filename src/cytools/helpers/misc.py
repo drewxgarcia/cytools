@@ -76,7 +76,6 @@ def from_base10(n: int, B: list[int]) -> list[int]:
 # ----------------------------------
 # default directory to save to
 cache_dir = user_cache_dir("CYTools", "CYTools")
-os.makedirs(cache_dir, exist_ok=True)
 
 
 # saving/loading functions
@@ -131,6 +130,7 @@ def save_zipped_pickle(
     """
     if "." not in fname:
         fname += ".p"
+    os.makedirs(path, exist_ok=True)
     file = os.path.join(path, fname)
 
     # Write to a per-process temp file, then atomically rename into place. This

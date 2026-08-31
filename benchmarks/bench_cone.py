@@ -44,7 +44,7 @@ Run full suite:
 
 import pytest
 
-from cytools.dataset import POLY_5V
+from benchmarks._data import POLY_5V
 
 
 # ---------------------------------------------------------------------------
@@ -323,15 +323,18 @@ class TestLatticePoints:
 
 class TestHilbertBasis:
     def test_hilbert_basis_5v(self, benchmark, cone_5v):
+        pytest.importorskip("PyNormaliz", reason="requires the normaliz extra")
         benchmark(cone_5v.hilbert_basis)
 
     @pytest.mark.slow
     def test_hilbert_basis_batch(self, benchmark, dualize_safe_cones):
+        pytest.importorskip("PyNormaliz", reason="requires the normaliz extra")
         def go(): return [c.hilbert_basis() for c in dualize_safe_cones]
         benchmark.pedantic(go, rounds=1, iterations=1)
 
     @pytest.mark.slow
     def test_hilbert_basis_large(self, benchmark, dualize_safe_cones_large):
+        pytest.importorskip("PyNormaliz", reason="requires the normaliz extra")
         def go(): return [c.hilbert_basis() for c in dualize_safe_cones_large]
         benchmark.pedantic(go, rounds=1, iterations=1)
 

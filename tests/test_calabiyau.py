@@ -161,7 +161,7 @@ def test_is_trivially_equivalent():
             [-1, 0, 1, 1],
         ]
     )
-    triangs = p.all_triangulations(as_list=True)
+    triangs = list(p.all_triangulations())
     cy0 = triangs[0].get_cy()
     cy1 = triangs[1].get_cy()
     assert not cy0.is_trivially_equivalent(cy1)

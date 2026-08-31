@@ -19,11 +19,10 @@
 # -----------------------------------------------------------------------------
 
 # CYTools imports
-from cytools import Polytope
 from cytools.helpers import matrix
 
 # typing
-from numpy.typing import ArrayLike
+from cytools._typing import Matrix
 
 
 def get_bdry(self) -> set:
@@ -68,9 +67,6 @@ def get_bdry(self) -> set:
             bdry.add(frozenset(e))
 
     return bdry
-
-
-Polytope.get_bdry = get_bdry
 
 
 def ccw(A: list, B: list, C: list) -> bool:
@@ -139,7 +135,7 @@ def intersect(A: list, B: list, C: list, D: list) -> bool:
     return (ccw(A, C, D) != ccw(B, C, D)) and (ccw(A, B, C) != ccw(A, B, D))
 
 
-def triangle_area_2x(pts: "ArrayLike") -> float:
+def triangle_area_2x(pts: Matrix) -> float:
     """
     **Description:**
     Calculate **twice** the area of the triangle defined by the convex hull of
@@ -168,4 +164,3 @@ def triangle_area_2x(pts: "ArrayLike") -> float:
     x2, y2 = pts[2]
 
     return abs(x0 * (y1 - y2) + x1 * (y2 - y0) + x2 * (y0 - y1))
-

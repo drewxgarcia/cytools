@@ -33,7 +33,9 @@ from scipy.optimize import nnls
 from scipy.optimize import milp, LinearConstraint
 
 # CYTools imports
-from cytools import Polytope, h_polytope, Cone
+from cytools.cone import Cone
+import cytools.h_polytope as h_polytope
+from cytools.polytope import Polytope
 from cytools.utils import integral_nullspace, lll_reduce
 from cytools.vector_config.fan import Fan
 from cytools.vector_config import VectorConfiguration
@@ -89,7 +91,7 @@ def compute_partition(divisors,rays):
     sol = np.rint(res.x.reshape(len(divisors),len(rays[0]))@(rays.T)+np.array(divisors)).astype(int)
     return (True,sol)
     
-def contains_row(arr: np.array, target: np.array):
+def contains_row(arr: np.ndarray, target: np.ndarray):
     """
     **Description:**
 
@@ -107,7 +109,7 @@ def contains_row(arr: np.array, target: np.array):
     """
     return np.any(np.all(arr == target, axis=1))
 
-def contains_rows(arr: np.array,targets: np.array):
+def contains_rows(arr: np.ndarray,targets: np.ndarray):
     """
     **Description:**
 
@@ -125,7 +127,7 @@ def contains_rows(arr: np.array,targets: np.array):
     """
     return np.any((targets[:, None, :] == arr[None, :, :]).all(axis=2), axis=1).all()
 
-def get_same_rows(A: np.array, B: np.array):
+def get_same_rows(A: np.ndarray, B: np.ndarray):
     """
     **Description:**
 
@@ -163,7 +165,7 @@ def same_rows(A, B):
     rowsB, countsB = np.unique(B, axis=0, return_counts=True)
     return np.array_equal(rowsA, rowsB) and np.array_equal(countsA, countsB)
 
-def dual_face_Cayley_polytope(Cdvert: np.array,f):
+def dual_face_Cayley_polytope(Cdvert: np.ndarray,f):
     """
     **Description:**
 
@@ -286,7 +288,7 @@ def h21_2_part(Cay: Polytope,Cayd: Polytope,det=False):
                 h21_ret=h21_ret-len(g.interior_points())*k
     return h21_ret
 
-def get_indices(arr: np.array,targets: np.array):
+def get_indices(arr: np.ndarray,targets: np.ndarray):
     """
     **Description:**
 
@@ -304,7 +306,7 @@ def get_indices(arr: np.array,targets: np.array):
     """
     return  np.where(np.any((arr[:, None, :] == targets).all(axis=2), axis=1))[0]
 
-def get_index(arr: np.array,target: np.array):
+def get_index(arr: np.ndarray,target: np.ndarray):
     """
     **Description:**
 
@@ -478,7 +480,7 @@ def Newton_Polytope(pts,weights):
     """
     return h_polytope.HPolytope(np.column_stack([pts, weights]).astype(int))
 
-def row_difference(A: np.array, B: np.array):
+def row_difference(A: np.ndarray, B: np.ndarray):
     """
     **Description:**
 
@@ -811,7 +813,7 @@ def Cartier_index(toric_fan,weights):
         while np.all(np.isclose(cone_index*y, np.round(cone_index*y)))==False:
             cone_index+=1
         index_data.append(cone_index)
-    return np.lcm.reduce(np.array(index_data))
+    return np.lcm.reduce(np.array(index_data))  # ty: ignore[no-matching-overload]
     
 
 def is_Cartier(toric_fan,weights,return_Q_Cartier_data=False,decimals=10):
@@ -1194,7 +1196,7 @@ def base_locus(sections,cones=None,dim=4):
     num_coords,num_sections=sections.shape
     B=sections > 0 
     minimal_hitting_sets=[]
-    if type(cones)==type(None):
+    if cones is None:
         for codim in range(1,dim + 1):
             for combo in combinations(range(num_coords), codim):
                 combo_set = set(combo)
@@ -1280,7 +1282,7 @@ def normal_fan(polytopes,inequalities=None,maximal_refinement=False,triangulate_
                 for j,x in enumerate(vertex_split[i])]),[inequalities[-1]]])],np.vstack([(p.vertices()-m).T, [0]*len(p.vertices())]).T ])).points() 
                         for i,m in enumerate(p.vertices())]
 
-    maximal_blow_ups = [np.unique([np.rint(x/np.gcd.reduce(x)).astype(int) 
+    maximal_blow_ups = [np.unique([np.rint(x/np.gcd.reduce(x)).astype(int)  # ty: ignore[no-matching-overload]
                                        for x in np.delete(b,np.where(np.all(b==0,axis=1))[0][0],0)],axis=0) 
                             for b in maximal_blow_ups]
 
@@ -1452,7 +1454,7 @@ def trilayer_5d_Ftheory_uplift(p,verbosity=1):
     cone_hyperplanes = [Cone(n_fan.vectors(c)).dual().rays() for c in cns]
     blown_up = [h_polytope.HPolytope(np.vstack([np.vstack([h.T,[0]*len(h)]).T,[np.concatenate([p2KB.vertices()[i],[2]]),np.concatenate([-p2KB.vertices()[i],[-1]])]])).points()  
                 for i,h in enumerate(cone_hyperplanes)]
-    blown_up = [[np.rint(x/np.gcd.reduce(x)).astype(int) for x in b] for b in blown_up]
+    blown_up = [[np.rint(x/np.gcd.reduce(x)).astype(int) for x in b] for b in blown_up]  # ty: ignore[no-matching-overload]
     blown_up = [np.unique(b,axis=0) for b in blown_up]
     all_vecs = np.unique([i for b in blown_up for i in b],axis=0)
     full_vc = VectorConfiguration(all_vecs)

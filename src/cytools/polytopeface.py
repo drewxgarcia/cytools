@@ -20,14 +20,20 @@
 # -----------------------------------------------------------------------------
 
 # 'standard' imports
+from collections.abc import Iterable
+from typing import Literal, overload, TYPE_CHECKING
 
 # 3rd party imports
 import numpy as np
-from numpy.typing import ArrayLike
+from cytools._typing import Matrix
 
 # CYTools imports
+from cytools._extensions import lazy_method
 from cytools.triangulation import Triangulation
 from cytools.utils import lll_reduce
+
+if TYPE_CHECKING:
+    from cytools.polytope import Polytope
 
 
 class PolytopeFace:
@@ -69,12 +75,18 @@ class PolytopeFace:
     ```
     """
 
+    if TYPE_CHECKING:
+        # Signature for the lazily loaded NTFE method.
+        from cytools.ntfe.ntfe import _2d_frt_subfan_ineqs
+    else:
+        _2d_frt_subfan_ineqs = lazy_method("cytools.ntfe.ntfe")
+
     def __init__(
         self,
         ambient_poly: "Polytope",
         vert_labels: list,
         saturated_ineqs: frozenset,
-        dim: int = None,
+        dim: int | None = None,
     ) -> None:
         """
         **Description:**
@@ -107,7 +119,7 @@ class PolytopeFace:
         # process the inputs
         # ------------------
         self._ambient_poly = ambient_poly
-        self._labels_vertices = vert_labels
+        self._labels_vertices: tuple = tuple(vert_labels)
         self._saturated_ineqs = saturated_ineqs
 
         # grab/compute optional inputs
@@ -170,10 +182,10 @@ class PolytopeFace:
         pts = f.points() # Find the lattice points again
         ```
         """
-        self._labels = None
+        self._labels: tuple | None = None
         self._saturating = None
-        self._labels_int = None
-        self._labels_bdry = None
+        self._labels_int: tuple | None = None
+        self._labels_bdry: tuple | None = None
         self._polytope = None
         self._dual_face = None
         self._faces = None
@@ -209,10 +221,8 @@ class PolytopeFace:
         **Returns:**
         The labels of lattice points in the face.
         """
-        if self._labels is None:
-            self._process_points()
-
-        return self._labels
+        cached = self._labels
+        return cached if cached is not None else self._process_points()[0]
 
     @property
     def labels_bdry(self) -> tuple:
@@ -226,10 +236,8 @@ class PolytopeFace:
         **Returns:**
         The labels of boundary lattice points in the face.
         """
-        if self._labels_bdry is None:
-            self._process_points()
-
-        return self._labels_bdry
+        cached = self._labels_bdry
+        return cached if cached is not None else self._process_points()[2]
 
     @property
     def labels_int(self) -> tuple:
@@ -243,10 +251,8 @@ class PolytopeFace:
         **Returns:**
         The labels of interior lattice points in the face.
         """
-        if self._labels_int is None:
-            self._process_points()
-
-        return self._labels_int
+        cached = self._labels_int
+        return cached if cached is not None else self._process_points()[1]
 
     @property
     def labels_vertices(self) -> tuple:
@@ -302,7 +308,7 @@ class PolytopeFace:
 
     # points
     # ======
-    def _process_points(self) -> None:
+    def _process_points(self) -> tuple[tuple, tuple, tuple]:
         """
         **Description:**
         Grabs the labels of the lattice points of the face along with the
@@ -312,9 +318,9 @@ class PolytopeFace:
         None.
 
         **Returns:**
-        Nothing.
+        The face's (all, interior, boundary) point labels.
         """
-        self._labels = []
+        _labels = []
         _saturating = []
 
         # inherit the calculation from the ambient polytope
@@ -322,28 +328,40 @@ class PolytopeFace:
             saturating = self.ambient_poly._pts_saturating[label]
 
             if self._saturated_ineqs.issubset(saturating):
-                self._labels.append(label)
+                _labels.append(label)
                 _saturating.append(saturating)
 
         # save it!
-        self._labels = tuple(self._labels)
+        self._labels = tuple(_labels)
 
         # get interior, boundary points
-        self._labels_int = []
-        self._labels_bdry = []
+        _labels_int = []
+        _labels_bdry = []
 
-        for label, sat in zip(self.labels, _saturating):
+        for label, sat in zip(self._labels, _saturating):
             if len(sat) == len(self._saturated_ineqs):
-                self._labels_int.append(label)
+                _labels_int.append(label)
             elif len(sat) > len(self._saturated_ineqs):
-                self._labels_bdry.append(label)
+                _labels_bdry.append(label)
 
-        self._labels_int = tuple(self._labels_int)
-        self._labels_bdry = tuple(self._labels_bdry)
+        self._labels_int = tuple(_labels_int)
+        self._labels_bdry = tuple(_labels_bdry)
+
+        return self._labels, self._labels_int, self._labels_bdry
+
+    @overload
+    def points(
+        self, which=None, optimal: bool = False, as_indices: Literal[False] = False
+    ) -> np.ndarray: ...
+
+    @overload
+    def points(
+        self, which=None, optimal: bool = False, *, as_indices: Literal[True]
+    ) -> list: ...
 
     def points(
         self, which=None, optimal: bool = False, as_indices: bool = False
-    ) -> np.ndarray:
+    ) -> np.ndarray | list:
         """
         **Description:**
         Returns the lattice points of the face.
@@ -388,7 +406,7 @@ class PolytopeFace:
             if dim_diff > 0:
                 # asking for optimal points, where the optimal value may
                 # differ from the entire polytope
-                pts = self.points(which=which)
+                pts = np.asarray(self.points(which=which))
                 return lll_reduce(pts - pts[0])[:, dim_diff:]
 
         # normal case
@@ -399,7 +417,13 @@ class PolytopeFace:
     # aliases
     pts = points
 
-    def interior_points(self, as_indices: bool = False) -> ArrayLike:
+    @overload
+    def interior_points(self, as_indices: Literal[False] = False) -> np.ndarray: ...
+
+    @overload
+    def interior_points(self, *, as_indices: Literal[True]) -> list: ...
+
+    def interior_points(self, as_indices: bool = False) -> np.ndarray | list:
         """
         **Description:**
         Returns the interior lattice points of the face.
@@ -429,7 +453,13 @@ class PolytopeFace:
     # aliases
     interior_pts = interior_points
 
-    def boundary_points(self, as_indices: bool = False) -> ArrayLike:
+    @overload
+    def boundary_points(self, as_indices: Literal[False] = False) -> np.ndarray: ...
+
+    @overload
+    def boundary_points(self, *, as_indices: Literal[True]) -> list: ...
+
+    def boundary_points(self, as_indices: bool = False) -> np.ndarray | list:
         """
         **Description:**
         Returns the boundary lattice points of the face.
@@ -461,7 +491,13 @@ class PolytopeFace:
     # aliases
     boundary_pts = boundary_points
 
-    def vertices(self, as_indices: bool = False) -> ArrayLike:
+    @overload
+    def vertices(self, as_indices: Literal[False] = False) -> np.ndarray: ...
+
+    @overload
+    def vertices(self, *, as_indices: Literal[True]) -> list: ...
+
+    def vertices(self, as_indices: bool = False) -> np.ndarray | list:
         """
         **Description:**
         Returns the vertices of the face.
@@ -594,7 +630,7 @@ class PolytopeFace:
 
     # faces
     # =====
-    def faces(self, d: int = None) -> tuple:
+    def faces(self, d: int | None = None) -> tuple:
         """
         **Description:**
         Computes the faces of the face.
@@ -639,8 +675,8 @@ class PolytopeFace:
     # =============
     def triangulate(
         self,
-        heights: list = None,
-        simplices: ArrayLike = None,
+        heights: list | None = None,
+        simplices: Iterable | None = None,
         check_input_simplices: bool = True,
         backend: str = "cgal",
         verbosity=0,

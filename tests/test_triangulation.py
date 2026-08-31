@@ -272,7 +272,6 @@ def test_neighbor_triangulations_nontrivial_labels():
         only_star=False,
         only_regular=True,
         include_points_interior_to_facets=True,
-        as_list=True,
     )
     assert {key(x) for x in [t, *neighbors]} == {key(x) for x in all_frts}
 

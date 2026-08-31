@@ -7,7 +7,7 @@ import numpy as np
 import pyarrow.parquet as pq
 import pytest
 
-from cytools.store import DerivedStore, materialize
+from cytools.store import DerivedStore, Unsupported, materialize
 
 
 # ---------------------------------------------------------------------------
@@ -53,6 +53,13 @@ def failing_payload(vertices):
     return {"value": v}
 
 
+def unsupported_payload(vertices):
+    v = int(vertices[0][0])
+    if v % 2 == 0:
+        raise Unsupported(f"synthetically unsupported for {v}")
+    return {"value": v}
+
+
 @pytest.fixture
 def store(tmp_path):
     return DerivedStore(tmp_path / "derived")
@@ -65,7 +72,13 @@ def _reset_calls():
 
 def test_cold_run_computes_everything(store):
     summary = materialize("q", payload, store=store, scan=make_scan(range(10)))
-    assert summary == {"requested": 10, "computed": 10, "skipped": 0, "failed": 0}
+    assert summary == {
+        "requested": 10,
+        "computed": 10,
+        "skipped": 0,
+        "unsupported": 0,
+        "failed": 0,
+    }
     assert len(CALLS) == 10
     assert len(store.known_ids("q")) == 10
 
@@ -75,7 +88,13 @@ def test_second_run_is_a_noop(store):
     CALLS.clear()
 
     summary = materialize("q", payload, store=store, scan=make_scan(range(10)))
-    assert summary == {"requested": 10, "computed": 0, "skipped": 10, "failed": 0}
+    assert summary == {
+        "requested": 10,
+        "computed": 0,
+        "skipped": 10,
+        "unsupported": 0,
+        "failed": 0,
+    }
     assert not CALLS, "a completed quantity must not recompute anything"
 
 
@@ -85,7 +104,13 @@ def test_partial_run_resumes(store):
     CALLS.clear()
 
     summary = materialize("q", payload, store=store, scan=make_scan(range(10)))
-    assert summary == {"requested": 10, "computed": 4, "skipped": 6, "failed": 0}
+    assert summary == {
+        "requested": 10,
+        "computed": 4,
+        "skipped": 6,
+        "unsupported": 0,
+        "failed": 0,
+    }
     assert len(CALLS) == 4
     assert len(store.known_ids("q")) == 10
 
@@ -102,6 +127,13 @@ def test_recompute_ignores_what_is_stored(store):
     assert len(CALLS) == 5
     # still one row per id after the duplicate write
     assert store.read("q").num_rows == 5
+
+
+def test_latest_duplicate_deterministically_wins(store):
+    """A recomputation must be visible regardless of UUID filename order."""
+    store.write("q", [7], [{"value": "old"}])
+    store.write("q", [7], [{"value": "new"}])
+    assert store.read("q").to_pylist() == [{"ks_id": 7, "value": "new"}]
 
 
 def test_versions_are_independent(store):
@@ -173,6 +205,23 @@ def test_failures_can_be_left_for_retry(store):
 
     missing = store.missing("q", list(range(9)))
     assert missing.tolist() == [0, 3, 6]
+
+
+def test_unsupported_rows_are_recorded_separately_and_not_retried(store):
+    first = materialize(
+        "q", unsupported_payload, store=store, scan=make_scan(range(6))
+    )
+    assert first["computed"] == 3
+    assert first["unsupported"] == 3
+    assert first["failed"] == 0
+
+    second = materialize(
+        "q", unsupported_payload, store=store, scan=make_scan(range(6))
+    )
+    assert second["skipped"] == 6
+    rows = store.read("q").to_pylist()
+    unsupported = [row for row in rows if row.get("unsupported")]
+    assert len(unsupported) == 3
 
 
 def test_compact_merges_parts_without_changing_contents(store):

@@ -1,0 +1,11 @@
+# Optional extras (`gnn`, `mosek`) are not installed in every environment.
+# Configure that here rather than with inline suppressions, which flip to
+# "unused" as soon as the extra *is* installed.
+[[overrides]]
+include = [
+    "src/cytools/config.py",
+    "src/cytools/ntfe/face_triangulations.py",
+]
+
+[overrides.rules]
+unresolved-import = "ignore"

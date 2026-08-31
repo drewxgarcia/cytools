@@ -18,6 +18,8 @@ jobs:
       - uses: actions/checkout@v7
       - name: Build SDist
         run: pipx run build --sdist
+      - name: Verify SDist contains package sources
+        run: python -c 'import glob, tarfile; p=glob.glob("dist/*.tar.gz")[0]; names=tarfile.open(p).getnames(); assert any(n.endswith("/src/cytools/__init__.py") for n in names), names'
       - uses: actions/upload-artifact@v7
         with:
           name: ci-sdist
@@ -30,6 +32,8 @@ jobs:
       - uses: actions/checkout@v7
       - name: Build Wheel
         run: pipx run build --wheel
+      - name: Verify wheel contains CYTools
+        run: python -c 'import glob, zipfile; p=glob.glob("dist/*.whl")[0]; names=zipfile.ZipFile(p).namelist(); assert "cytools/__init__.py" in names, names'
       - uses: actions/upload-artifact@v7
         with:
           name: ci-wheel

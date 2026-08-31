@@ -200,8 +200,8 @@ def test_face_triangs():
 
 @pytest.mark.skipif(not HAS_DUALGNN, reason="dualgnn is not installed")
 def test_sample_frsts():
-    triangs = p11169.random_triangulations_gnn(
-        N=4, max_npts=0, N_face_triangs=5, seed=0
+    triangs = list(
+        p11169.random_triangulations_gnn(N=4, max_npts=0, N_face_triangs=5, seed=0)
     )
     assert 0 < len(triangs) <= 4
     for t in triangs:
@@ -215,8 +215,10 @@ def test_seed_reproducibility():
     # same seed -> bitwise-identical heights (per device; the torch CPU
     # and CUDA generators are independent streams)
     h1, h2 = (
-        p_h11_8.random_triangulations_gnn(
-            N=5, N_face_triangs=5, seed=7, as_heights=True
+        list(
+            p_h11_8.random_triangulations_gnn(
+                N=5, N_face_triangs=5, seed=7, as_heights=True
+            )
         )
         for _ in range(2)
     )
@@ -226,8 +228,8 @@ def test_seed_reproducibility():
 
 @pytest.mark.skipif(not HAS_DUALGNN, reason="dualgnn is not installed")
 def test_fills_N():
-    triangs = p_h11_8.random_triangulations_gnn(
-        N=10, N_face_triangs=5, seed=0
+    triangs = list(
+        p_h11_8.random_triangulations_gnn(N=10, N_face_triangs=5, seed=0)
     )
     assert len(triangs) == 10
     assert len(set(triangs)) == 10
@@ -235,8 +237,10 @@ def test_fills_N():
 
 @pytest.mark.skipif(not HAS_DUALGNN, reason="dualgnn is not installed")
 def test_sample_heights():
-    heights = p11169.random_triangulations_gnn(
-        N=4, max_npts=0, N_face_triangs=5, as_heights=True, seed=0
+    heights = list(
+        p11169.random_triangulations_gnn(
+            N=4, max_npts=0, N_face_triangs=5, as_heights=True, seed=0
+        )
     )
     assert 0 < len(heights) <= 4
     for h in heights:

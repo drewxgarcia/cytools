@@ -27,7 +27,7 @@ import itertools
 import math
 import re
 import requests
-from typing import Generator, TYPE_CHECKING
+from typing import Generator, Literal, overload, TYPE_CHECKING
 
 # 3rd party imports
 import flint
@@ -37,7 +37,7 @@ import pypalp
 import scipy.sparse as sp
 
 # CYTools imports
-from cytools import config
+import cytools.config as config
 
 if TYPE_CHECKING:
     from cytools.calabiyau import CalabiYau
@@ -171,7 +171,7 @@ def gcd_list(arr):
     # costing about a microsecond, which is most of a float caller's budget
     if type(arr) is np.ndarray:
         if arr.dtype.kind in "iu":
-            return int(np.gcd.reduce(np.abs(arr.ravel())))
+            return int(np.gcd.reduce(np.abs(arr.ravel())))  # ty: ignore[no-matching-overload]
     elif type(arr) in (list, tuple) and arr and all(type(x) is int for x in arr):
         return math.gcd(*[abs(x) for x in arr])
 
@@ -346,6 +346,35 @@ def float_to_fmpq(c: float) -> flint.fmpq:
     return flint.fmpq(f.numerator, f.denominator)
 
 
+def integral_inverse(mat: flint.fmpz_mat) -> flint.fmpz_mat:
+    """
+    **Description:**
+    Return the inverse of `mat` over the integers.
+
+    **Arguments:**
+    - `mat`: The matrix to invert. Must be unimodular.
+
+    **Returns:**
+    The integral inverse.
+    """
+    return mat.inv(True)
+
+
+def lll(mat: flint.fmpz_mat, transform: bool = False):
+    """
+    **Description:**
+    LLL-reduce `mat`, optionally returning the transformation matrix too.
+
+    **Arguments:**
+    - `mat`:       The matrix to reduce.
+    - `transform`: Whether to also return the transformation matrix.
+
+    **Returns:**
+    The reduced matrix, or `(reduced, transform)` if `transform` is set.
+    """
+    return mat.lll(True) if transform else mat.lll(False)
+
+
 def fmpq_to_float(c: flint.fmpq) -> float:
     """
     **Description:**
@@ -372,7 +401,7 @@ def fmpq_to_float(c: flint.fmpq) -> float:
     return int(c.p) / int(c.q)
 
 
-def array_to_flint(arr: np.ndarray, t: "int | float | None" = None) -> np.ndarray:
+def array_to_flint(arr: np.ndarray, t: "type | np.dtype | None" = None) -> np.ndarray:
     """
     **Description:**
     Converts a numpy array with either:
@@ -555,7 +584,7 @@ def symmetric_sparse_to_dense(tensor: dict, basis: VectorOrMatrix | None = None)
     # apply basis transformation
     if basis is not None:
         for i in reversed(range(rank)):
-            out = np.tensordot(out, basis, axes=[[i], [1]])
+            out = np.tensordot(out, np.asarray(basis), axes=([i], [1]))
 
     return out
 
@@ -603,7 +632,7 @@ def symmetric_dense_to_sparse(tensor: np.ndarray, basis: VectorOrMatrix | None =
     # apply basis transformation
     if basis is not None:
         for i in reversed(range(rank)):
-            tensor = np.tensordot(tensor, basis, axes=[[i], [1]])
+            tensor = np.tensordot(tensor, np.asarray(basis), axes=([i], [1]))
 
     # iterate over increasing indices, filling sparse tensor
     for ind in itertools.combinations_with_replacement(range(dim), rank):
@@ -673,7 +702,7 @@ def solve_linear_system(
     check: bool = True,
     backend_error_tol: float = 1e-4,
     verbosity: int = 0,
-) -> np.ndarray:
+) -> np.ndarray | None:
     """
     **Description:**
     Solves the sparse linear system M*x + C = 0.
@@ -765,7 +794,9 @@ def solve_linear_system(
 
     elif backend == "scipy":
         try:
-            solution = sp.linalg.spsolve(M.transpose() * M, -M.transpose() * C).tolist()
+            solution = np.asarray(
+                sp.linalg.spsolve(M.transpose() * M, -M.transpose() * C)
+            ).ravel()
         except Exception:
             if verbosity >= 1:
                 print("Linear backend error: scipy failed.")
@@ -993,9 +1024,9 @@ def set_divisor_basis(
             != 1
         ):
             raise ValueError("Input divisors do not form an integral basis.")
-        inv_mat = flint.fmpz_mat(
-            self._divisor_basis_mat[:, standard_basis].tolist()
-        ).inv(integer=True)
+        inv_mat = integral_inverse(
+            flint.fmpz_mat(self._divisor_basis_mat[:, standard_basis].tolist())
+        )
         inv_mat = np.array(inv_mat.tolist(), dtype=int)
         # flint sometimes returns the negative inverse
         if inv_mat.dot(self._divisor_basis_mat[:, standard_basis])[0, 0] == -1:
@@ -1013,6 +1044,8 @@ def set_divisor_basis(
         raise ValueError("Input must be either a vector or a matrix.")
     # Clear the cache of all in-basis computations
     self.clear_cache(recursive=False, only_in_basis=True)
+
+    return self._divisor_basis, self._divisor_basis_mat
 
 
 def set_curve_basis(
@@ -1085,7 +1118,7 @@ def set_curve_basis(
     b = np.array(basis, dtype=int)
 
     if len(b.shape) == 1:
-        # input is a vector
+        # input is a vector: the divisor basis determines the curve basis
         set_divisor_basis(self, b, include_origin=include_origin)
         return
 
@@ -1107,8 +1140,7 @@ def set_curve_basis(
     if b.shape == (glsm_rnk, glsm_cm.shape[1]):
         new_b = b
     elif b.shape == (glsm_rnk, glsm_cm.shape[1] - 1):
-        # HERE PROBLEM with undefined variable t
-        new_b = np.empty(glsm_cm.shape, dtype=t)
+        new_b = np.empty(glsm_cm.shape, dtype=int)
         new_b[:, 1:] = b
         new_b[:, 0] = -np.sum(b, axis=1)
     else:
@@ -1140,7 +1172,7 @@ def set_curve_basis(
     )
     if abs(int(round(np.linalg.det(new_b[:, standard_basis])))) != 1:
         raise ValueError("Input divisors do not form an integral basis.")
-    inv_mat = flint.fmpz_mat(new_b[:, standard_basis].tolist()).inv(integer=True)
+    inv_mat = integral_inverse(flint.fmpz_mat(new_b[:, standard_basis].tolist()))
     inv_mat = np.array(inv_mat.tolist(), dtype=int)
 
     # flint sometimes returns the negative inverse
@@ -1230,8 +1262,12 @@ def polytope_generator(
     from cytools.polytope import Polytope
 
     # input checking
-    if favorable is not None and lattice is None:
+    if favorable is None:
+        favorable_lattice = None
+    elif lattice is None:
         raise ValueError('Lattice must be specified. Options are "M" and "N".')
+    else:
+        favorable_lattice = lattice
 
     if input_type not in ["file", "str"]:
         raise ValueError('"input_type" must be either "file" or "str"')
@@ -1264,7 +1300,9 @@ def polytope_generator(
             # build the Polytope
             p = Polytope(vert, backend=backend, deterministic_glsm_basis=deterministic_glsm_basis)
 
-            if (favorable is None) or (p.is_favorable(lattice=lattice) == favorable):
+            if (favorable_lattice is None) or (
+                p.is_favorable(lattice=favorable_lattice) == favorable
+            ):
                 n_yielded += 1
                 yield (p.dual() if dualize else p)
 
@@ -1311,7 +1349,9 @@ def polytope_generator(
 
             # build the Polytope
             p = Polytope(vert, backend=backend, deterministic_glsm_basis=deterministic_glsm_basis)
-            if (favorable is None) or (p.is_favorable(lattice=lattice) == favorable):
+            if (favorable_lattice is None) or (
+                p.is_favorable(lattice=favorable_lattice) == favorable
+            ):
                 n_yielded += 1
                 yield (p.dual() if dualize else p)
 
@@ -1573,7 +1613,7 @@ def fetch_polytopes(
             (chi is not None)
             and (h11 is not None)
             and (h12 is not None)
-            and (chi != 2 * (h11 - h21))
+            and (chi != 2 * (h11 - h12))
         ):
             raise ValueError("Inconsistent Euler characteristic input.")
 
@@ -1682,7 +1722,19 @@ def fetch_polytopes(
 
 # point manipulations
 # -------------------
-def lll_reduce(pts_in: Matrix, transform: bool = False) -> np.ndarray | tuple[np.ndarray, tuple[np.ndarray, np.ndarray]]:
+@overload
+def lll_reduce(pts_in: Matrix, transform: Literal[False] = False) -> np.ndarray: ...
+
+
+@overload
+def lll_reduce(
+    pts_in: Matrix, transform: Literal[True]
+) -> tuple[np.ndarray, tuple[np.ndarray, np.ndarray]]: ...
+
+
+def lll_reduce(
+    pts_in: Matrix, transform: bool = False
+) -> np.ndarray | tuple[np.ndarray, tuple[np.ndarray, np.ndarray]]:
     """
     Apply lll-reduction to the input points (the rows).
 
@@ -1703,9 +1755,9 @@ def lll_reduce(pts_in: Matrix, transform: bool = False) -> np.ndarray | tuple[np
     pts = pts.T
 
     if transform is True:
-        pts_red, transf = flint.fmpz_mat(pts.tolist()).lll(transform=True)
+        pts_red, transf = lll(flint.fmpz_mat(pts.tolist()), transform=True)
     else:
-        pts_red = flint.fmpz_mat(pts.tolist()).lll(transform=False)
+        pts_red = lll(flint.fmpz_mat(pts.tolist()))
 
     pts_red = pts_red.transpose()  # map points back to rows
 
@@ -1714,7 +1766,7 @@ def lll_reduce(pts_in: Matrix, transform: bool = False) -> np.ndarray | tuple[np
 
     if transform is True:
         A = np.array(transf.tolist(), dtype=int)
-        Ainv = np.array(transf.inv(integer=True).tolist(), dtype=int)
+        Ainv = np.array(integral_inverse(transf).tolist(), dtype=int)
 
         # check that Ainv is indeed an inverse
         # (sometimes it's off by a sign)

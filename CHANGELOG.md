@@ -16,12 +16,37 @@ are occasionally published a day or two later.
 
 ### Added
 
+- Notebook-first landscape workflows: `scan`, `sweep`, `status`, the
+  `@quantity` extension point, resumable Parquet-backed derived results, and an
+  executable `demos/landscape_scans.ipynb` walkthrough.
+- On-demand HuggingFace streaming through the `streaming` and `notebook`
+  extras; `load_polytopes` is now available from the package root.
+- A conventional `__version__` alias and an explicit package-root public API.
 - `compute_gv` can compute Gopakumar-Vafa invariants for a set of target
   points ([#86](https://github.com/LiamMcAllisterGroup/cytools/pull/86)).
 - Contributor process documentation (`CONTRIBUTING.md`) and this changelog.
 
 ### Changed
 
+- Basic landscape columns, including Hodge numbers and point/facet counts, are
+  served directly from columnar database buffers without constructing
+  `Polytope` objects. Large sweeps avoid collecting result frames and cap
+  automatic worker fan-out at eight processes.
+- CHOLMOD (`scikit-sparse`) is now an optional `performance` extra. Automatic
+  sparse solves fall back to SciPy on platforms without SuiteSparse.
+- `Cone.hilbert_basis()` now uses the optional PyNormaliz binding instead of
+  managing temporary files and shelling out to the Normaliz executable.
+- Third-party engine calls now have an internal adapter boundary, and internal
+  modules import concrete implementation modules instead of the public facade.
+- NTFE and vector-configuration methods are now declared by their owning
+  domain classes and resolved lazily, replacing import-time class mutation and
+  eager feature imports without changing the method API.
+- Importing `cytools` no longer starts network activity; update checks run only
+  when `check_for_updates()` is called explicitly, and the NTFE disk cache is
+  loaded and written only after the corresponding computation is used.
+- Benchmark datasets and sampling policy now live with the benchmark suite
+  instead of in the installed library, and benchmarks are collected only when
+  requested explicitly.
 - Much faster secondary-subfan computation in the NTFE code.
 - More neighbor-triangulation information is tracked by `Triangulation`.
 - Direct dependencies are declared explicitly, and `uv` installs the test
@@ -36,8 +61,36 @@ are occasionally published a day or two later.
 
 ### Removed
 
+- Conda environment files and the Conda-backed desktop installers. PyPI is the
+  user installation path, and source development and CI use the committed `uv`
+  lockfile.
+- The unused experimental `cytools.parallel` abstraction and its
+  `dataset.parallel_scan` wrapper; landscape scans use the tested execution
+  path behind `scan` and `sweep`.
 - Dead, commented-out code in the F-theory subpackage (`FT_CY.py`,
   `Uplift_functions.py`), in `vector_config/fan.py`, and disabled `Fan` code.
+- **Breaking:** the `as_list`/`as_generator` arguments of
+  `Polytope.all_triangulations`, `random_triangulations_fast`,
+  `random_triangulations_fair`, and `random_triangulations_gnn`, along with the
+  `progress_bar` argument of the two `random_triangulations_*` samplers. These
+  triangulation enumerators now always return a lazy iterator, so each has a
+  single return type instead of one that varied with a flag. Replace
+  `p.all_triangulations(as_list=True)` with `list(p.all_triangulations())`, and
+  likewise for the others; for a progress bar, wrap the iterator at the call
+  site (`tqdm(p.random_triangulations_fast(N=n), total=n)`). Note that
+  `random_triangulations_gnn` previously defaulted to returning a list, so
+  callers relying on that default must now wrap it in `list(...)` — which also
+  makes its multi-GB materialization cost explicit at the call site. The
+  `as_list` argument of `fetch_polytopes`, `read_polytopes`, and
+  `fetch_orientifolds`, and the `as_generator` argument of the `ntfe_*`
+  enumerators, are unchanged.
+
+### Fixed
+
+- Recomputed derived rows now deterministically supersede older cache parts,
+  and unsupported geometries are recorded separately from failures.
+- N-lattice Hodge filters in representative benchmarks now map to the correct
+  M-lattice database columns.
 
 ## [1.4.12] - 2026-07-15
 

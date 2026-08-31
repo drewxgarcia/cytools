@@ -47,8 +47,9 @@ from cytools.helpers import matrix, misc
 from cytools.utils import adjugate, integral_nullspace
 
 # typing
-from numpy.typing import ArrayLike
-from typing import Generator, Union
+from cytools._typing import Matrix
+from collections.abc import Iterable, Iterator, Sequence
+from typing import Any, Generator, Literal, overload, Union
 
 
 # fast HiGHS feasibility helper for NTFE cones
@@ -243,14 +244,21 @@ def _enumerate_ntfes_dfs(poly, face_ineqs, make_star, heights_only,
 # cache them here...
 
 cache_path = os.path.join(misc.cache_dir, "twoface_ineqs.pkl.gz")
+_ineq_cached: dict | None = None
+_ineq_cache_dirty = False
 
-_ineq_cached = misc.load_zipped_pickle(cache_path)
-if _ineq_cached is None:
-    _ineq_cached = dict()
+
+def _ineq_cache() -> dict:
+    """Load the persistent two-face cache on first use, not package import."""
+    global _ineq_cached
+    if _ineq_cached is None:
+        _ineq_cached = misc.load_zipped_pickle(cache_path) or {}
+    return _ineq_cached
 
 
 def _save_cache():
-    misc.save_zipped_pickle(_ineq_cached, cache_path)
+    if _ineq_cache_dirty and _ineq_cached is not None:
+        misc.save_zipped_pickle(_ineq_cached, cache_path)
 
 atexit.register(_save_cache)
 
@@ -288,6 +296,8 @@ def _2d_frt_cone_ineqs(self, ambient_dim: int,
     **Returns:**
     Each row is an inwards-facing hyperplane normal. I.e., a CPL inequality
     """
+    global _ineq_cache_dirty
+
     rows = []
 
     # relevant inputs
@@ -329,7 +339,8 @@ def _2d_frt_cone_ineqs(self, ambient_dim: int,
         M_tup = tuple(tuple(row[1:] - row[0]) for row in M)
 
         # Grab/calculate the nullspace
-        ineq = _ineq_cached.get(M_tup, None)
+        cache = _ineq_cache()
+        ineq = cache.get(M_tup, None)
         if ineq is None:
             # calculate the nullspace
             null = flint.fmpz_mat(M.tolist() + [[1, 1, 1, 1]]).nullspace()
@@ -342,7 +353,8 @@ def _2d_frt_cone_ineqs(self, ambient_dim: int,
                 ineq = [int(x) for x in null]
 
             # cache this answer
-            _ineq_cached[M_tup] = ineq
+            cache[M_tup] = ineq
+            _ineq_cache_dirty = True
 
         # define the associated hyperplane normal
         rows.append({lab: c for lab, c in
@@ -351,7 +363,6 @@ def _2d_frt_cone_ineqs(self, ambient_dim: int,
     return matrix.csr_dicts(rows, ambient_dim)
 
 
-Triangulation._2d_frt_cone_ineqs = _2d_frt_cone_ineqs
 
 
 def _2d_s_cone_ineqs(self,
@@ -490,7 +501,7 @@ def _2d_s_cone_ineqs(self,
             c = -(combo[:, :, cols] @ adj)
             V = np.concatenate([(A * det)[..., None], (B * det)[..., None], c],
                                axis=2).reshape(-1, 2 + len(comm))
-            V //= np.gcd.reduce(np.abs(V), axis=1)[:, None]
+            V //= np.gcd.reduce(np.abs(V), axis=1)[:, None]  # ty: ignore[no-matching-overload]
             V *= np.sign(V[:, [0]])          # orient coeff(p1) > 0
 
             labs = np.empty(V.shape, dtype=np.int64)
@@ -503,7 +514,6 @@ def _2d_s_cone_ineqs(self,
     return matrix.csr_stack(blocks, ambient_dim)
 
 
-Triangulation._2d_s_cone_ineqs = _2d_s_cone_ineqs
 
 
 @numba.njit(cache=True)
@@ -667,15 +677,14 @@ def _2d_frt_subfan_ineqs(self, ambient_dim: int) -> "sp.csr_matrix":
     return matrix.csr_dicts(rows, ambient_dim)
 
 
-PolytopeFace._2d_frt_subfan_ineqs = _2d_frt_subfan_ineqs
 
 
 # generate secondary cone/fan
 # ---------------------------
 def cone_of_permissible_heights(
-    triangs: [Triangulation],
+    triangs: list[Triangulation],
     npts: int,
-    poly: "Polytope" = None,
+    poly: "Polytope | None" = None,
     require_star: bool = False,
     dense: bool = False,
     big_ints: bool = False,
@@ -796,18 +805,17 @@ def expanded_secondary_fan(
         return ineqs
 
 
-Polytope.expanded_secondary_fan = expanded_secondary_fan
 
 
 # extend face-triangulations to FR(S)T
 # ------------------------------------
 def triangfaces_to_frt(
     self,
-    triangs: [Triangulation],
+    triangs: list[Triangulation],
     make_star: bool = False,
     check_heights: bool = False,
     verbosity: int = 0,
-) -> Triangulation:
+) -> Triangulation | None:
     """
     **Description:**
     See https://arxiv.org/abs/2309.10855
@@ -850,12 +858,11 @@ def triangfaces_to_frt(
     return t
 
 
-Polytope.triangfaces_to_frt = triangfaces_to_frt
 
 
 def triangfaces_to_frst(
     self,
-    triangs: [Triangulation],
+    triangs: list[Triangulation],
     check_heights: bool = False,
     verbosity: int = 0,
 ) -> Triangulation:
@@ -888,21 +895,47 @@ def triangfaces_to_frst(
     )
 
 
-Polytope.triangfaces_to_frst = triangfaces_to_frst
 
 
 # generate ALL 2-face inequivalent hyperplanes/cones/FRSTs
 # --------------------------------------------------------
+@overload
 def triangface_ineqs(
     self,
-    face_triangs: list = None,
+    face_triangs: list | None = None,
+    require_star: bool = False,
+    max_npts: int = 17,
+    N_face_triangs: int = 1000,
+    triang_method: str = "grow2d",
+    return_triangs: Literal[False] = False,
+    verbosity: int = 0,
+) -> list: ...
+
+
+@overload
+def triangface_ineqs(
+    self,
+    face_triangs: list | None = None,
+    require_star: bool = False,
+    max_npts: int = 17,
+    N_face_triangs: int = 1000,
+    triang_method: str = "grow2d",
+    *,
+    return_triangs: Literal[True],
+    verbosity: int = 0,
+) -> tuple[list, list]: ...
+
+
+def triangface_ineqs(
+    self,
+    face_triangs: list | None = None,
     require_star: bool = False,
     max_npts: int = 17,
     N_face_triangs: int = 1000,
     triang_method: str = "grow2d",
     return_triangs: bool = False,
     verbosity: int = 0,
-) -> "[[sp.csr_matrix]]":
+) -> list | tuple[list, list]:
     """
     **Description:**
     Calculate the 2-face FRTs and their associated inequalities for this
@@ -958,7 +991,11 @@ def triangface_ineqs(
         for f_triang in f_triangs:
             tmp_ineqs = _2d_frt_cone_ineqs(f_triang, npts)
             if require_star:
-                tmp_ineqs.append(_2d_s_cone_ineqs(f_triang, self, npts))
+                # both are CSR blocks: intersect the half-spaces by stacking
+                # their rows (csr_matrix has no .append)
+                tmp_ineqs = matrix.csr_stack(
+                    [tmp_ineqs, _2d_s_cone_ineqs(f_triang, self, npts)], npts
+                )
             ineqs[-1].append(tmp_ineqs)
 
     if not return_triangs:
@@ -967,16 +1004,50 @@ def triangface_ineqs(
         return ineqs, face_triangs
 
 
-Polytope.triangface_ineqs = triangface_ineqs
+
+
+@overload
+def ntfe_hypers(
+    self,
+    require_star: bool = False,
+    N: int | None = None,
+    seed: int | None = None,
+    face_ineqs: list | None = None,
+    face_triangs: list | None = None,
+    max_npts: int = 17,
+    N_face_triangs: int = 1000,
+    triang_method: str = "grow2d",
+    as_generator: Literal[False] = False,
+    separate_boring: bool = True,
+    verbosity: int = 0,
+) -> list["matrix.CSR_stack"]: ...
+
+
+@overload
+def ntfe_hypers(
+    self,
+    require_star: bool = False,
+    N: int | None = None,
+    seed: int | None = None,
+    face_ineqs: list | None = None,
+    face_triangs: list | None = None,
+    max_npts: int = 17,
+    N_face_triangs: int = 1000,
+    triang_method: str = "grow2d",
+    *,
+    as_generator: Literal[True],
+    separate_boring: bool = True,
+    verbosity: int = 0,
+) -> Generator["matrix.CSR_stack", None, None]: ...
 
 
 def ntfe_hypers(
     self,
     require_star: bool = False,
-    N: int = None,
-    seed: int = None,
-    face_ineqs: list = None,
-    face_triangs: list = None,
+    N: int | None = None,
+    seed: int | None = None,
+    face_ineqs: list | None = None,
+    face_triangs: list | None = None,
     max_npts: int = 17,
     N_face_triangs: int = 1000,
     triang_method: str = "grow2d",
@@ -1133,17 +1204,53 @@ def ntfe_hypers(
         return hypers
 
 
-Polytope.ntfe_hypers = ntfe_hypers
+
+
+@overload
+def ntfe_cones(
+    self,
+    hypers: Sequence[Any] | Iterator[Any] | None = None,
+    require_star: bool = False,
+    N: int | None = None,
+    seed: int | None = None,
+    face_ineqs: list | None = None,
+    face_triangs: list | None = None,
+    max_npts: int = 17,
+    N_face_triangs: int = 1000,
+    triang_method: str = "grow2d",
+    as_generator: Literal[False] = False,
+    separate_boring: bool = True,
+    verbosity=0,
+) -> list[Cone]: ...
+
+
+@overload
+def ntfe_cones(
+    self,
+    hypers: Sequence[Any] | Iterator[Any] | None = None,
+    require_star: bool = False,
+    N: int | None = None,
+    seed: int | None = None,
+    face_ineqs: list | None = None,
+    face_triangs: list | None = None,
+    max_npts: int = 17,
+    N_face_triangs: int = 1000,
+    triang_method: str = "grow2d",
+    *,
+    as_generator: Literal[True],
+    separate_boring: bool = True,
+    verbosity=0,
+) -> Generator[Cone, None, None]: ...
 
 
 def ntfe_cones(
     self,
-    hypers: ["ArrayLike"] = None,
+    hypers: Sequence[Any] | Iterator[Any] | None = None,
     require_star: bool = False,
-    N: int = None,
-    seed: int = None,
-    face_ineqs: list = None,
-    face_triangs: list = None,
+    N: int | None = None,
+    seed: int | None = None,
+    face_ineqs: list | None = None,
+    face_triangs: list | None = None,
     max_npts: int = 17,
     N_face_triangs: int = 1000,
     triang_method: str = "grow2d",
@@ -1223,27 +1330,27 @@ def ntfe_cones(
         )
         dim = len(self.labels)
     else:
-        # a caller-supplied `hypers` may be a generator or empty, so probing
-        # hypers[0] can raise. Materialize generators unless we're streaming.
-        if not as_generator:
-            try:
-                len(hypers)
-            except TypeError:
-                hypers = list(hypers)
+        # A caller-supplied `hypers` may be a generator. Materialize one (so it
+        # can be probed and re-walked) but never copy a sequence we were
+        # already handed -- these lists can be large.
+        if (not as_generator) and (not isinstance(hypers, Sequence)):
+            hypers = list(hypers)
 
-        # set dim
+        # Set dim from the first entry. An entry is a CSR_stack or a raw
+        # hyperplane matrix, and the raw form is deliberately duck-typed --
+        # entries that do not support len()/[0] (a bare scipy matrix, say)
+        # fall through to the label count below. That is what the except is
+        # for, and it is not something the annotations can express.
         dim = None
         try:
-            first = hypers[0]
-        except (TypeError, IndexError, KeyError):
-            first = None
-
-        if first is not None:
+            first = hypers[0]  # ty: ignore[not-subscriptable]
             if isinstance(first, matrix.CSR_stack):
                 if not first.is_empty:
                     dim = len(first[0])
             elif len(first):
                 dim = len(first[0])
+        except (TypeError, IndexError, KeyError):
+            pass
 
         if dim is None:
             dim = len(self.labels)
@@ -1264,20 +1371,21 @@ def ntfe_cones(
 
         return gen()
 
-    # not returning a generator...
-    if (N is not None) and (N < len(hypers)):
+    # not returning a generator, so `hypers` is a sequence by now
+    hyper_list = hypers if isinstance(hypers, Sequence) else list(hypers)
+    if (N is not None) and (N < len(hyper_list)):
         # randomly sample hypers
-        hyper_inds = list(range(len(hypers)))
+        hyper_inds = list(range(len(hyper_list)))
 
         # shuffle the indices and select the first N
         random.seed(seed2)
         random.shuffle(hyper_inds)
         hyper_inds = hyper_inds[:N]
 
-        iterator = [hypers[i] for i in hyper_inds]
+        iterator = [hyper_list[i] for i in hyper_inds]
     else:
         # iterate over all hypers
-        iterator = hypers
+        iterator = hyper_list
 
     # convert hyperplanes to cones
     if verbosity >= 1:
@@ -1290,23 +1398,22 @@ def ntfe_cones(
             for hyper in iter_wrapper(iterator)]
 
 
-Polytope.ntfe_cones = ntfe_cones
 
 
 def ntfe_frts(
     self: "Polytope",
-    cones: [Cone] = None,
-    hypers: ["ArrayLike"] = None,
+    cones: Sequence[Cone] | Iterator[Cone] | None = None,
+    hypers: Sequence[Any] | Iterator[Any] | None = None,
     make_star: bool = False,
-    N: int = None,
-    seed: int = None,
-    face_ineqs: list = None,
-    face_triangs: list = None,
+    N: int | None = None,
+    seed: int | None = None,
+    face_ineqs: list | None = None,
+    face_triangs: list | None = None,
     max_npts: int = 17,
     N_face_triangs: int = 1000,
     triang_method: str = "grow2d",
     as_generator: bool = False,
-    n_jobs: int = None,
+    n_jobs: int | None = None,
     heights_only: bool = False,
     verbosity: int = 0,
 ):
@@ -1432,6 +1539,7 @@ def ntfe_frts(
         return gen()
 
     # for each expanded secondary cone, calculate the corresponding FRST
+    data = list(data)
     time_per_cone = 0.1  # ~0.1s to try to find a point in each of these cones
     time_estimate = time_per_cone * len(data)
     if verbosity >= 1:
@@ -1466,22 +1574,21 @@ def ntfe_frts(
     return frsts
 
 
-Polytope.ntfe_frts = ntfe_frts
 
 
 def ntfe_frsts(
     self: "Polytope",
-    cones: [Cone] = None,
-    hypers: ["ArrayLike"] = None,
-    N: int = None,
-    seed: int = None,
-    face_ineqs: list = None,
-    face_triangs: list = None,
+    cones: Sequence[Cone] | Iterator[Cone] | None = None,
+    hypers: Sequence[Any] | Iterator[Any] | None = None,
+    N: int | None = None,
+    seed: int | None = None,
+    face_ineqs: list | None = None,
+    face_triangs: list | None = None,
     max_npts: int = 17,
     N_face_triangs: int = 1000,
     triang_method: str = "grow2d",
     as_generator: bool = False,
-    n_jobs: int = None,
+    n_jobs: int | None = None,
     heights_only: bool = False,
     verbosity: int = 0,
 ):
@@ -1548,6 +1655,3 @@ def ntfe_frsts(
         heights_only=heights_only,
         verbosity=verbosity,
     )
-
-
-Polytope.ntfe_frsts = ntfe_frsts

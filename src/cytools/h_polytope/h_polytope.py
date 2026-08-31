@@ -24,11 +24,12 @@ import itertools
 
 # 3rd party imports
 import numpy as np
+from cytools._typing import Matrix
 import ppl
 import ctypes; ctypes.CDLL(None).fesetround(0)  # ppl changes FPU rounding mode; reset to FE_TONEAREST
 
 # CYTools imports
-from cytools import polytope
+import cytools.polytope as polytope
 from cytools.utils import gcd_list
 
 
@@ -67,9 +68,9 @@ class HPolytope(polytope.Polytope):
 
     def __init__(
         self,
-        ineqs: "ArrayLike" = None,
+        ineqs: Matrix | None = None,
         dilate: bool = False,
-        backend: str = None,
+        backend: str | None = None,
         verbosity: int = 0,
     ) -> None:
         """
@@ -167,7 +168,7 @@ class HPolytope(polytope.Polytope):
 
 # utils
 # -----
-def poly_h_to_v(hypers: "ArrayLike", verbosity: int = 0) -> ("ArrayLike", "ppl.C_Polyhedron"):
+def poly_h_to_v(hypers: Matrix, verbosity: int = 0) -> tuple[np.ndarray, "ppl.C_Polyhedron"]:
     """
     **Description:**
     Generate the V-representation of a polytope, given the H-representation.
@@ -233,7 +234,7 @@ def poly_h_to_v(hypers: "ArrayLike", verbosity: int = 0) -> ("ArrayLike", "ppl.C
     return pts, poly
 
 
-def lattice_points(verts: "ArrayLike", ineqs: "ArrayLike") -> "ArrayLike":
+def lattice_points(verts: Matrix, ineqs: Matrix) -> np.ndarray:
     """
     **Description:**
     Enumerate all lattice points in a polytope with given vertices and
@@ -267,8 +268,9 @@ def lattice_points(verts: "ArrayLike", ineqs: "ArrayLike") -> "ArrayLike":
     x = np.empty(dim, dtype=int)
     for dx in itertools.product(*list(map(range, box_max - box_min + 1))):
         x = box_min + dx  # the point to try
-        if all(ineqs[:, :-1] @ x + ineqs[:, -1] >= 0):
+        ineqs_arr = np.asarray(ineqs)
+        if all(ineqs_arr[:, :-1] @ x + ineqs_arr[:, -1] >= 0):
             # it passes all inequality checks!
             _lattice_pts.append(x.tolist())
 
-    return _lattice_pts
+    return np.asarray(_lattice_pts)

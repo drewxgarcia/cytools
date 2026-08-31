@@ -93,7 +93,6 @@ def check_mosek_license(silent=False):
 def mosek_is_activated():
     global _mosek_error
     global _mosek_is_activated
-    global _printed_mosek_error
     if _mosek_is_activated is None:
         check_mosek_license(silent=True)
     return _mosek_is_activated
@@ -124,7 +123,7 @@ def set_mosek_path(path):
 
 
 # Lock experimental features by default.
-_exp_features_enabled = False
+_exp_features_enabled: bool = False
 
 
 def enable_experimental_features():

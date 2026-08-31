@@ -20,7 +20,7 @@ Run with:
 import pytest
 
 from cytools import Polytope
-from cytools.dataset import POLY_5V
+from benchmarks._data import POLY_5V
 
 # ---------------------------------------------------------------------------
 # Module-scope fixtures
@@ -154,12 +154,12 @@ class TestGLSMBasis:
     def test_prime_toric_divisors_5v(self, benchmark, tv_5v):
         benchmark(tv_5v.prime_toric_divisors)
 
-    def test_with_divisor_basis(self, benchmark):
-        """Benchmark creating a new TV with a divisor basis (immutable)."""
-        from cytools.dataset import POLY_5V as _P
+    def test_set_divisor_basis(self, benchmark):
+        """Benchmark installing a divisor basis on a toric variety."""
+        from benchmarks._data import POLY_5V as _P
         tv = _P.triangulate().get_toric_variety()
         basis = tv.divisor_basis()
-        benchmark(lambda: tv.with_divisor_basis(basis))
+        benchmark(lambda: tv.set_divisor_basis(basis))
 
     def test_glsm_tiny(self, benchmark, tiny_tvs):
         def go():

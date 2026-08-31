@@ -23,6 +23,36 @@ def _safe_extract(table):
     return [np.array(col[i].as_py(), dtype=np.int32) for i in range(len(table))]
 
 
+def test_batch_exposes_all_zero_construction_database_counts():
+    """Landscape columns must reach the batch without constructing Polytope."""
+    import pyarrow as pa
+
+    table = pa.table(
+        {
+            "vertices": pa.array(
+                [
+                    [[1, 0, 0, 0], [0, 1, 0, 0]],
+                    [[0, 0, 1, 0], [0, 0, 0, 1], [-1, -1, -1, -1]],
+                ],
+                type=pa.list_(pa.list_(pa.int32())),
+            ),
+            "vertex_count": pa.array([2, 3]),
+            "facet_count": pa.array([5, 8]),
+            "point_count": pa.array([6, 14]),
+            "dual_point_count": pa.array([126, 22]),
+            "h11": pa.array([101, 11]),
+            "h12": pa.array([3, 9]),
+            "euler_characteristic": pa.array([196, 4]),
+        }
+    )
+
+    batch = ds._table_to_batch(table)
+    assert batch.vertex_count.tolist() == [2, 3]
+    assert batch.facet_count.tolist() == [5, 8]
+    assert batch.point_count.tolist() == [6, 14]
+    assert batch.dual_point_count.tolist() == [126, 22]
+
+
 @pytest.mark.parametrize(
     "n_vertices",
     [[13], [13, 14], [13, 14, 15], list(range(10, 18))],
@@ -356,3 +386,48 @@ def test_capped_scans_are_nested_in_n():
     small, medium, large = id_set(60), id_set(120), id_set(400)
     assert len(small) == 60 and len(medium) == 120 and len(large) == 400
     assert small <= medium <= large
+
+
+def test_streaming_capped_scan_resolves_files_lazily(monkeypatch):
+    """A two-row notebook sample must not download every requested file."""
+    import pyarrow as pa
+
+    resolved = []
+
+    def resolve(vc, resolved_dir, stream, hf_token):
+        resolved.append(vc)
+        return vc
+
+    def one_file(path, dnf, expr, rng, batch_size):
+        yield pa.record_batch({"marker": pa.array([path], type=pa.int64())})
+
+    monkeypatch.setattr(ds, "_resolve_4d_path", resolve)
+    monkeypatch.setattr(ds, "_stream_one_file", one_file)
+
+    batches = list(
+        ds._iter_record_batches(
+            counts=[5, 6, 7, 8],
+            h11=None,
+            h12=None,
+            chi=None,
+            n_facets=None,
+            n_points=None,
+            n_dual_points=None,
+            n=2,
+            seed=42,
+            resolved_dir=None,
+            stream=True,
+            hf_token=None,
+            batch_size=8,
+        )
+    )
+
+    assert sum(batch.num_rows for batch in batches) == 2
+    assert resolved == [5, 6]
+
+
+def test_empty_batch_scan_needs_no_database_configuration(monkeypatch):
+    monkeypatch.delenv("CYTOOLS_DB_DIR", raising=False)
+    monkeypatch.setattr(ds, "DB_DIR", None)
+    assert list(ds.scan_batches(n=0)) == []
+    assert ds.load_polytopes(n=0) == []

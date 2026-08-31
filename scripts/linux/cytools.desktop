@@ -1,9 +1,0 @@
-[Desktop Entry]
-Version=1.0
-Type=Application
-Terminal=true
-Exec=cytools
-Name=CYTools
-Comment=A software package for analyzing Calabi-Yau hypersurfaces in toric varieties.
-Icon=cytools
-Categories=Science;

@@ -15,9 +15,9 @@ Methods covered:
 Fixture design
 --------------
 ``POLY_5V``   Single 5-vertex reference polytope.  All single-polytope tests.
-``batch_polys``  20 polytopes at 5v (tiny tier) — fast batch sweep.
-``small_batch_polys``  20 polytopes at 6-7v (small tier) — medium batch sweep.
-``medium_batch_polys``  20 polytopes at 9-10v (medium tier) — slow batch sweep.
+``tiny_poly_objects``  20 polytopes at 5v (tiny tier) — fast batch sweep.
+``small_poly_objects``  20 polytopes at 6-7v (small tier) — medium batch sweep.
+``medium_poly_objects``  20 polytopes at 9-10v (medium tier) — slow batch sweep.
 
 Run fast suite:
     pytest benchmarks/bench_polytope.py --benchmark-only -m "not slow"
@@ -30,7 +30,7 @@ import numpy as np
 import pytest
 
 from cytools import Polytope
-from cytools.dataset import POLY_5V
+from benchmarks._data import POLY_5V
 
 # Two polytopes for equivalence tests
 _P1 = Polytope([[1,0,0,0],[0,1,0,0],[0,0,1,0],[0,0,0,1],[-1,-1,-1,-1]])
@@ -42,28 +42,6 @@ _MS2 = Polytope([[0,0,1],[0,0,-1]])
 
 # 4D reflexive with a known 2D reflexive subpolytope
 _P_4D_REFL = Polytope([[1,0,0,0],[0,1,0,0],[0,0,1,0],[0,0,0,1],[-1,-1,-6,-9]])
-
-
-# ---------------------------------------------------------------------------
-# Module-scope fixtures
-# ---------------------------------------------------------------------------
-
-@pytest.fixture(scope="module")
-def batch_polys(tiny_polys):
-    """20 polytopes from the tiny (5v) tier."""
-    return [r.polytope for r in tiny_polys]
-
-
-@pytest.fixture(scope="module")
-def small_batch_polys(small_polys):
-    """20 polytopes from the small (6-7v) tier."""
-    return [r.polytope for r in small_polys]
-
-
-@pytest.fixture(scope="module")
-def medium_batch_polys(medium_polys):
-    """20 polytopes from the medium (9-10v) tier."""
-    return [r.polytope for r in medium_polys]
 
 
 # ---------------------------------------------------------------------------
@@ -149,14 +127,14 @@ class TestInequalities:
     def test_inequalities_5v(self, benchmark):
         benchmark(POLY_5V.inequalities)
 
-    def test_inequalities_batch(self, benchmark, batch_polys):
+    def test_inequalities_batch(self, benchmark, tiny_poly_objects):
         def go():
-            return [p.inequalities() for p in batch_polys]
+            return [p.inequalities() for p in tiny_poly_objects]
         benchmark.pedantic(go, rounds=3, iterations=1)
 
-    def test_inequalities_small_batch(self, benchmark, small_batch_polys):
+    def test_inequalities_small_batch(self, benchmark, small_poly_objects):
         def go():
-            return [p.inequalities() for p in small_batch_polys]
+            return [p.inequalities() for p in small_poly_objects]
         benchmark.pedantic(go, rounds=3, iterations=1)
 
 
@@ -192,20 +170,20 @@ class TestPointsVertices:
         pts = POLY_5V.points().tolist()
         benchmark(POLY_5V.points_to_labels, pts)
 
-    def test_points_batch(self, benchmark, batch_polys):
+    def test_points_batch(self, benchmark, tiny_poly_objects):
         def go():
-            return [p.points() for p in batch_polys]
+            return [p.points() for p in tiny_poly_objects]
         benchmark.pedantic(go, rounds=3, iterations=1)
 
-    def test_points_small_batch(self, benchmark, small_batch_polys):
+    def test_points_small_batch(self, benchmark, small_poly_objects):
         def go():
-            return [p.points() for p in small_batch_polys]
+            return [p.points() for p in small_poly_objects]
         benchmark.pedantic(go, rounds=3, iterations=1)
 
     @pytest.mark.slow
-    def test_points_medium_batch(self, benchmark, medium_batch_polys):
+    def test_points_medium_batch(self, benchmark, medium_poly_objects):
         def go():
-            return [p.points() for p in medium_batch_polys]
+            return [p.points() for p in medium_poly_objects]
         benchmark.pedantic(go, rounds=1, iterations=1)
 
 
@@ -232,20 +210,20 @@ class TestFaces:
     def test_facets_5v(self, benchmark):
         benchmark(POLY_5V.facets)
 
-    def test_faces_batch(self, benchmark, batch_polys):
+    def test_faces_batch(self, benchmark, tiny_poly_objects):
         def go():
-            return [p.faces() for p in batch_polys]
+            return [p.faces() for p in tiny_poly_objects]
         benchmark.pedantic(go, rounds=3, iterations=1)
 
-    def test_faces_small_batch(self, benchmark, small_batch_polys):
+    def test_faces_small_batch(self, benchmark, small_poly_objects):
         def go():
-            return [p.faces() for p in small_batch_polys]
+            return [p.faces() for p in small_poly_objects]
         benchmark.pedantic(go, rounds=3, iterations=1)
 
     @pytest.mark.slow
-    def test_faces_medium_batch(self, benchmark, medium_batch_polys):
+    def test_faces_medium_batch(self, benchmark, medium_poly_objects):
         def go():
-            return [p.faces() for p in medium_batch_polys]
+            return [p.faces() for p in medium_poly_objects]
         benchmark.pedantic(go, rounds=1, iterations=1)
 
 
@@ -257,10 +235,10 @@ class TestDualPolytope:
     def test_dual_polytope_5v(self, benchmark):
         benchmark(_P1.dual_polytope)
 
-    def test_dual_polytope_batch(self, benchmark, batch_polys):
+    def test_dual_polytope_batch(self, benchmark, tiny_poly_objects):
         """All KS 4D polytopes are reflexive by definition — no filter needed."""
         def go():
-            return [p.dual_polytope() for p in batch_polys]
+            return [p.dual_polytope() for p in tiny_poly_objects]
         benchmark.pedantic(go, rounds=3, iterations=1)
 
     def test_dual_roundtrip_5v(self, benchmark):
@@ -283,14 +261,14 @@ class TestAutomorphisms:
     def test_automorphisms_as_dict_5v(self, benchmark):
         benchmark(lambda: POLY_5V.automorphisms(as_dictionary=True))
 
-    def test_automorphisms_batch(self, benchmark, batch_polys):
+    def test_automorphisms_batch(self, benchmark, tiny_poly_objects):
         def go():
-            return [p.automorphisms() for p in batch_polys]
+            return [p.automorphisms() for p in tiny_poly_objects]
         benchmark.pedantic(go, rounds=3, iterations=1)
 
-    def test_automorphisms_small_batch(self, benchmark, small_batch_polys):
+    def test_automorphisms_small_batch(self, benchmark, small_poly_objects):
         def go():
-            return [p.automorphisms() for p in small_batch_polys]
+            return [p.automorphisms() for p in small_poly_objects]
         benchmark.pedantic(go, rounds=3, iterations=1)
 
 
@@ -305,14 +283,14 @@ class TestNormalForm:
     def test_normal_form_affine_5v(self, benchmark):
         benchmark(lambda: POLY_5V.normal_form(affine_transform=True))
 
-    def test_normal_form_batch(self, benchmark, batch_polys):
+    def test_normal_form_batch(self, benchmark, tiny_poly_objects):
         def go():
-            return [p.normal_form() for p in batch_polys]
+            return [p.normal_form() for p in tiny_poly_objects]
         benchmark.pedantic(go, rounds=3, iterations=1)
 
-    def test_normal_form_small_batch(self, benchmark, small_batch_polys):
+    def test_normal_form_small_batch(self, benchmark, small_poly_objects):
         def go():
-            return [p.normal_form() for p in small_batch_polys]
+            return [p.normal_form() for p in small_poly_objects]
         benchmark.pedantic(go, rounds=3, iterations=1)
 
 
@@ -338,9 +316,9 @@ class TestEquivalence:
     def test_is_favorable_5v(self, benchmark):
         benchmark(lambda: _P_4D_REFL.is_favorable(lattice="N"))
 
-    def test_is_favorable_batch(self, benchmark, batch_polys):
+    def test_is_favorable_batch(self, benchmark, tiny_poly_objects):
         def go():
-            return [p.is_favorable(lattice="N") for p in batch_polys]
+            return [p.is_favorable(lattice="N") for p in tiny_poly_objects]
         benchmark.pedantic(go, rounds=3, iterations=1)
 
 
@@ -356,9 +334,9 @@ class TestGeometry:
     def test_volume_4d_5v(self, benchmark):
         benchmark(POLY_5V.volume)
 
-    def test_volume_batch(self, benchmark, batch_polys):
+    def test_volume_batch(self, benchmark, tiny_poly_objects):
         def go():
-            return [p.volume() for p in batch_polys]
+            return [p.volume() for p in tiny_poly_objects]
         benchmark.pedantic(go, rounds=3, iterations=1)
 
     def test_minkowski_sum(self, benchmark):
@@ -392,20 +370,20 @@ class TestGLSM:
     def test_glsm_linear_relations_5v(self, benchmark):
         benchmark(POLY_5V.glsm_linear_relations)
 
-    def test_glsm_charge_matrix_batch(self, benchmark, batch_polys):
+    def test_glsm_charge_matrix_batch(self, benchmark, tiny_poly_objects):
         def go():
-            return [p.glsm_charge_matrix() for p in batch_polys]
+            return [p.glsm_charge_matrix() for p in tiny_poly_objects]
         benchmark.pedantic(go, rounds=3, iterations=1)
 
-    def test_glsm_charge_matrix_small_batch(self, benchmark, small_batch_polys):
+    def test_glsm_charge_matrix_small_batch(self, benchmark, small_poly_objects):
         def go():
-            return [p.glsm_charge_matrix() for p in small_batch_polys]
+            return [p.glsm_charge_matrix() for p in small_poly_objects]
         benchmark.pedantic(go, rounds=3, iterations=1)
 
     @pytest.mark.slow
-    def test_glsm_charge_matrix_medium_batch(self, benchmark, medium_batch_polys):
+    def test_glsm_charge_matrix_medium_batch(self, benchmark, medium_poly_objects):
         def go():
-            return [p.glsm_charge_matrix() for p in medium_batch_polys]
+            return [p.glsm_charge_matrix() for p in medium_poly_objects]
         benchmark.pedantic(go, rounds=1, iterations=1)
 
 
@@ -429,25 +407,25 @@ class TestTopology:
     def test_hpq_12_5v(self, benchmark):
         benchmark(lambda: POLY_5V.hpq(1, 2, lattice="N"))
 
-    def test_chi_batch(self, benchmark, batch_polys):
+    def test_chi_batch(self, benchmark, tiny_poly_objects):
         def go():
-            return [p.chi(lattice="N") for p in batch_polys]
+            return [p.chi(lattice="N") for p in tiny_poly_objects]
         benchmark.pedantic(go, rounds=3, iterations=1)
 
-    def test_hpq_batch(self, benchmark, batch_polys):
+    def test_hpq_batch(self, benchmark, tiny_poly_objects):
         def go():
-            return [p.hpq(1, 1, lattice="N") for p in batch_polys]
+            return [p.hpq(1, 1, lattice="N") for p in tiny_poly_objects]
         benchmark.pedantic(go, rounds=3, iterations=1)
 
-    def test_chi_small_batch(self, benchmark, small_batch_polys):
+    def test_chi_small_batch(self, benchmark, small_poly_objects):
         def go():
-            return [p.chi(lattice="N") for p in small_batch_polys]
+            return [p.chi(lattice="N") for p in small_poly_objects]
         benchmark.pedantic(go, rounds=3, iterations=1)
 
     @pytest.mark.slow
-    def test_chi_medium_batch(self, benchmark, medium_batch_polys):
+    def test_chi_medium_batch(self, benchmark, medium_poly_objects):
         def go():
-            return [p.chi(lattice="N") for p in medium_batch_polys]
+            return [p.chi(lattice="N") for p in medium_poly_objects]
         benchmark.pedantic(go, rounds=1, iterations=1)
 
 
@@ -471,13 +449,13 @@ class TestTriangulation:
     def test_all_triangulations_2triang(self, benchmark):
         def go():
             p = Polytope([[1,0,0,0],[0,1,0,0],[0,0,1,0],[0,0,0,1],[-1,-2,-1,-1],[-2,-1,-1,-1]])
-            return list(p.all_triangulations(as_list=True))
+            return list(p.all_triangulations())
         benchmark(go)
 
     def test_all_triangulations_no_filters(self, benchmark):
         def go():
             p = Polytope([[1,0,0,0],[0,1,0,0],[0,0,1,0],[0,0,0,1],[-1,-2,-1,-1],[-2,-1,-1,-1]])
-            return list(p.all_triangulations(only_fine=False, only_regular=False, only_star=False, as_list=True))
+            return list(p.all_triangulations(only_fine=False, only_regular=False, only_star=False))
         benchmark(go)
 
     def test_triangulate_batch(self, benchmark, tiny_polys):
@@ -495,7 +473,7 @@ class TestTriangulation:
     def test_random_triangulations_fast_5(self, benchmark):
         def go():
             p = Polytope([[1,0,0,0],[0,1,0,0],[0,0,1,0],[0,0,0,1],[-1,-1,-6,-9]])
-            return list(p.random_triangulations_fast(N=5, progress_bar=False))
+            return list(p.random_triangulations_fast(N=5))
         benchmark(go)
 
     def test_vc_5v(self, benchmark):

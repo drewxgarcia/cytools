@@ -3,7 +3,7 @@ requires = ["hatchling>=1.27"]
 build-backend = "hatchling.build"
 
 [tool.hatch.version]
-path = "src/cytools/__init__.py"
+path = "src/cytools/_version.py"
 pattern = 'version = "(?P<version>[^"]+)"'
 
 [project]
@@ -41,7 +41,6 @@ dependencies = [
     "pandas",
     "pyarrow",
     "sympy",
-    "scikit-sparse>=0.5.0",   # CHOLMOD sparse solves; needs SuiteSparse
 ]
 classifiers = [
   "Development Status :: 5 - Production/Stable",
@@ -62,16 +61,14 @@ classifiers = [
 ]
 
 [project.optional-dependencies]
-datasets = ["huggingface-hub"]
-test = [
-  "pytest"
-]
-mosek = [
-  "Mosek"
-]
-gnn = [
-  "dualgnn"
-]
+benchmark = ["pytest", "pytest-benchmark"]
+gnn = ["dualgnn"]
+mosek = ["Mosek"]
+normaliz = ["PyNormaliz>=2.24"]
+notebook = ["huggingface-hub", "jupyterlab", "ipywidgets"]
+performance = ["scikit-sparse>=0.5.0"]  # CHOLMOD; needs SuiteSparse
+streaming = ["huggingface-hub"]
+test = ["pytest"]
 
 [dependency-groups]
 dev = [
@@ -80,9 +77,9 @@ dev = [
 ]
 
 [tool.pytest.ini_options]
-testpaths = ["tests", "benchmarks"]
-pythonpath = ["benchmarks"]
+testpaths = ["tests"]
 python_files = ["test_*.py", "bench_*.py"]
+addopts = ["--strict-config", "--strict-markers"]
 markers = ["slow: long-running benchmarks (deselect with -m 'not slow')"]
 
 [tool.uv]
@@ -92,9 +89,17 @@ default-groups = ["dev"]
 Homepage = "https://cy.tools"
 Documentation = "https://cy.tools/docs/documentation/"
 Repository = "https://github.com/LiamMcAllisterGroup/cytools"
+Changelog = "https://github.com/LiamMcAllisterGroup/cytools/blob/main/CHANGELOG.md"
+Issues = "https://github.com/LiamMcAllisterGroup/cytools/issues"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/cytools"]
 
 [tool.hatch.build.targets.sdist]
-packages = ["src/cytools"]
+include = [
+  "/src/cytools",
+  "/demos/*.ipynb",
+  "/ARCHITECTURE.md",
+  "/CHANGELOG.md",
+  "/INSTALL.md",
+]

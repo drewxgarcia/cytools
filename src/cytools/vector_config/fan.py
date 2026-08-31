@@ -21,15 +21,22 @@
 
 # external imports
 import collections
+from collections.abc import Collection, Iterable
 import itertools
 from numba import njit
 import numpy as np
-import regfans
-from typing import Union
+import regfans.fan
+from typing import Literal, overload, TYPE_CHECKING, Union
 
 # core CYTools imports
-from cytools import Cone, HPolytope, utils
+from cytools.cone import Cone
+from cytools.h_polytope import HPolytope
+import cytools.utils as utils
+from cytools._typing import Vector
 from cytools.triangulation import Triangulation
+
+if TYPE_CHECKING:
+    from cytools.vector_config.vectorconfiguration import VectorConfiguration
 
 _INTERSECTION_NUMBERS_DEFAULT_EPS = 1e-4
 _INTERSECTION_NUMBERS_DEFAULT_DIGITS = 10
@@ -58,9 +65,59 @@ class Fan(regfans.fan.Fan):
     **Returns:**
     Nothing.
     """
+
+    #: A CYTools `VectorConfiguration`, which adds the toric methods
+    #: (`cone`, `conv`, `divisor_basis`, ...) that the regfans base lacks.
+    vc: "VectorConfiguration"
+
+    def __init__(
+        self,
+        vc: "VectorConfiguration",
+        cones: Collection[Iterable[int]],
+        heights: list[float] | None = None,
+    ) -> None:
+        """
+        **Description:**
+        Initializes a `Fan` object.
+
+        Widens `cones` to its real contract. regfans annotates it as
+        `list[list[int]]`, but it only takes the length and iterates, then
+        rebuilds `{tuple(sorted(c)) for c in cones}` itself -- so a set of
+        tuples (the natural output of the callers here) is already valid, and
+        converting to lists first would just be thrown away.
+
+        **Arguments:**
+        - `vc`:      The ambient vector configuration.
+        - `cones`:   The cones, each a collection of integer labels.
+        - `heights`: The heights defining the fan, if it is regular.
+
+        **Returns:**
+        Nothing.
+        """
+        super().__init__(vc, cones, heights)  # ty: ignore[invalid-argument-type]
+
+    def vectors(
+        self, which: int | Iterable[int] | None = None, lifted: bool = False
+    ) -> np.ndarray:
+        """
+        **Description:**
+        Return the fan's vectors, as an array.
+
+        regfans types this as `ArrayLike`; it is always an array in practice,
+        and callers here index into it and transpose it.
+
+        **Arguments:**
+        - `which`:  A single label, or a list of labels. All, if not given.
+        - `lifted`: Whether to lift the vectors by the heights.
+
+        **Returns:**
+        The vectors.
+        """
+        return np.asarray(super().vectors(which, lifted))
+
     # read from regfans type
     @classmethod
-    def from_regfans(cls, fan: "regfans.Fan") -> "Fan":
+    def from_regfans(cls, fan: "regfans.fan.Fan") -> "Fan":
         """
         **Description:**
         Convert a `regfans.Fans` object to a object of the CYTools Fan class.
@@ -68,7 +125,7 @@ class Fan(regfans.fan.Fan):
         method.
 
         **Arguments:**
-        - `fan`: The `regfans.Fan` object.
+        - `fan`: The `regfans.fan.Fan` object.
 
         **Returns:**
         The CYTools Fan object.
@@ -80,11 +137,13 @@ class Fan(regfans.fan.Fan):
     # cones/simplices
     # ---------------
     def cones(self,
-        dim: int = None,
-        formal: bool = False,
+        dim: int | None = None,
+        as_rays: bool = False,
         as_hyps: bool = False,
         as_inds: bool = False,
-        ind_offset: int = 0) -> Union[ tuple[tuple[int]], list["Cone"] ]:
+        ind_offset: int = 0,
+        *,
+        formal: bool = False) -> Union[tuple, list]:
         """
         **Description:**
         Returns the cones in the fan, each cone specified either by
@@ -108,14 +167,27 @@ class Fan(regfans.fan.Fan):
         **Returns:**
         The cones in the fan (maximal, or `dim`-dimensional if `dim` is set).
         """
+        # regfans annotates `dim` as int but defaults it to None, so omit it
         if formal:
-            return tuple([self.vc.cone(c) for c in super(Fan, self).cones(dim=dim)])
-        else:
+            raw = (
+                super(Fan, self).cones()
+                if dim is None
+                else super(Fan, self).cones(dim=dim)
+            )
+            return tuple([self.vc.cone(np.asarray(c).tolist()) for c in raw])
+
+        if dim is None:
             return super(Fan, self).cones(
-                dim=dim,
+                as_rays=as_rays,
                 as_hyps=as_hyps,
                 as_inds=as_inds,
                 ind_offset=ind_offset)
+        return super(Fan, self).cones(
+            dim=dim,
+            as_rays=as_rays,
+            as_hyps=as_hyps,
+            as_inds=as_inds,
+            ind_offset=ind_offset)
 
     # aliases
     simplices = cones
@@ -212,6 +284,9 @@ class Fan(regfans.fan.Fan):
             p = self.vc.conv(which=self.labels)
             pts_in_facets = (self.labels == p.labels[1:])
             h = self.heights()
+            if h is None:
+                raise ValueError("A regular fan must have heights.")
+            h = np.asarray(h)
             if not np.all(h >= 0):
                 msg =   "Heights are assumed non-negative here... "
                 msg += f"your heights={h}..."
@@ -275,7 +350,7 @@ class Fan(regfans.fan.Fan):
             H = super().secondary_cone_hyperplanes(
                 via_circuits=via_circuits,
                 verbosity=verbosity)
-            self._secondary_cone = Cone(hyperplanes=H)
+            self._secondary_cone = Cone(hyperplanes=np.asarray(H))
 
         cone = self._secondary_cone
 
@@ -286,6 +361,33 @@ class Fan(regfans.fan.Fan):
 
     # toric stuff
     # -----------
+    @overload
+    def intersection_numbers(
+        self,
+        pushed_down: bool = False,
+        in_basis: bool = False,
+        symmetrize: bool = False,
+        as_np_array: Literal[False] = False,
+        eps: float = _INTERSECTION_NUMBERS_DEFAULT_EPS,
+        digits: int | None = _INTERSECTION_NUMBERS_DEFAULT_DIGITS,
+        copy: bool = True,
+        verbosity: int = 0,
+    ) -> dict: ...
+
+    @overload
+    def intersection_numbers(
+        self,
+        pushed_down: bool = False,
+        in_basis: bool = False,
+        symmetrize: bool = False,
+        *,
+        as_np_array: Literal[True],
+        eps: float = _INTERSECTION_NUMBERS_DEFAULT_EPS,
+        digits: int | None = _INTERSECTION_NUMBERS_DEFAULT_DIGITS,
+        copy: bool = True,
+        verbosity: int = 0,
+    ) -> np.ndarray: ...
+
     def intersection_numbers(
         self,
         pushed_down: bool = False,
@@ -293,10 +395,10 @@ class Fan(regfans.fan.Fan):
         symmetrize: bool = False,
         as_np_array: bool = False,
         eps: float = _INTERSECTION_NUMBERS_DEFAULT_EPS,
-        digits: int = _INTERSECTION_NUMBERS_DEFAULT_DIGITS,
+        digits: int | None = _INTERSECTION_NUMBERS_DEFAULT_DIGITS,
         copy: bool = True,
         verbosity: int = 0,
-    ) -> Union[dict, "ArrayLike"]:
+    ) -> Union[dict, np.ndarray]:
         """
         **Description:**
         Compute the intersection numbers of the toric variety defined by the
@@ -681,7 +783,7 @@ class Fan(regfans.fan.Fan):
     int_nums = intersection_numbers
     kappa    = intersection_numbers
 
-    def c2(self, eps: float = 1e-4, digits: int = 4) -> "ArrayLike":
+    def c2(self, eps: float = 1e-4, digits: int = 4) -> np.ndarray:
         """
         **Description:**
         Compute the second chern class associated to the fan.
@@ -717,9 +819,9 @@ class Fan(regfans.fan.Fan):
             total = vals.sum()
             out.append( round(vals.sum()) )
 
-        return out
+        return np.array(out)
 
-    def mori_rays(self) -> "ArrayLike":
+    def mori_rays(self) -> np.ndarray:
         """
         **Description:**
         Compute the rays of the Mori cone of the toric variety defined by the
@@ -913,7 +1015,9 @@ class Fan(regfans.fan.Fan):
             np.array(
                 [
                     list(point) + [divisor[n]]
-                    for n, point in enumerate(self.vectors(which=self.used_labels))
+                    for n, point in enumerate(
+                        np.asarray(self.vectors(which=self.used_labels))
+                    )
                 ]
             ),
             verbosity=0,
@@ -1135,9 +1239,8 @@ def flop(fan, kappa, circ, verbosity=0):
 
         return kappa_flopped
 
-# misc
-# ----
-# give Triangulation a method to directly generate VCs/Fans
+# Triangulation feature methods
+# -----------------------------
 def vc(self, include_points_interior_to_facets=None):
     """
     **Description:**
@@ -1158,7 +1261,6 @@ def vc(self, include_points_interior_to_facets=None):
     vc = self.polytope().vc(include_points_interior_to_facets=include_points_interior_to_facets)
 
     return vc
-Triangulation.vc = vc
 
 def fan(self, include_points_interior_to_facets=None):
     """
@@ -1190,4 +1292,3 @@ def fan(self, include_points_interior_to_facets=None):
     ]
     fan = vc.subdivide(cells=cells)
     return fan
-Triangulation.fan = fan

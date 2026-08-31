@@ -1,4 +1,4 @@
-import shutil
+import builtins
 
 import numpy as np
 import pytest
@@ -145,14 +145,24 @@ def test_find_lattice_points_finite_coord_bound_exhausted():
         )
 
 
-@pytest.mark.skipif(
-    shutil.which("normaliz") is None,
-    reason="requires the external normaliz executable",
-)
-def test_hibert_basis():
+def test_hilbert_basis():
+    pytest.importorskip("PyNormaliz", reason="requires the normaliz extra")
     c = Cone([[1, 3], [2, 1]])
     hb = c.hilbert_basis()
-    assert len(hb) == 4
+    assert {tuple(row) for row in hb} == {(1, 1), (1, 2), (1, 3), (2, 1)}
+
+
+def test_hilbert_basis_missing_extra_is_actionable(monkeypatch):
+    real_import = builtins.__import__
+
+    def without_pynormaliz(name, *args, **kwargs):
+        if name == "PyNormaliz":
+            raise ModuleNotFoundError("hidden for test", name="PyNormaliz")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", without_pynormaliz)
+    with pytest.raises(ImportError, match=r"cytools\[normaliz\]"):
+        Cone([[1, 3], [2, 1]]).hilbert_basis()
 
 
 def test_intersection():
@@ -192,7 +202,9 @@ def test_is_solid():
 
 def test_tip_of_stretched_cone():
     c = Cone([[3, 2], [5, 3]])
-    tip = c.tip_of_stretched_cone(1).tolist()
+    tip_arr = c.tip_of_stretched_cone(1)
+    assert tip_arr is not None
+    tip = tip_arr.tolist()
     assert np.isclose(tip, [8.0, 5.0]).all()
 
 
@@ -201,3 +213,48 @@ def test_equality():
     c2 = Cone([[2, 0, 1], [0, 1, 0], [1, 0, 2]])
     assert c1 == c1
     assert c1 != c2
+
+
+def test_dimension_is_lazy_not_computed_on_construction():
+    """Constructing a Cone from rays must not compute its dimension.
+
+    The rank is an SVD of the ray matrix -- ~(1500 x 200) for a Mori cone at
+    h11 ~ 200 -- and the Kahler-cone/tip path that dominates ensemble scans
+    never asks for it. Computing it eagerly in `__init__` cost 26% of that
+    path. This pins the laziness so it cannot regress.
+    """
+    calls = []
+    real = np.linalg.matrix_rank
+
+    def spy(M, *a, **k):
+        calls.append(np.asarray(M).shape)
+        return real(M, *a, **k)
+
+    rays = [[1, 0, 0], [0, 1, 0], [0, 0, 1], [1, 1, 1]]
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(np.linalg, "matrix_rank", spy)
+        c = Cone(rays)
+        assert calls == [], f"__init__ computed a rank: {calls}"
+        assert c.dimension() == 3          # computed on demand
+        assert len(calls) == 1
+        assert c.dimension() == 3          # and cached thereafter
+        assert len(calls) == 1
+
+
+def test_repr_reports_dimension_when_unset():
+    """`__repr__` must go through the accessor, not the raw cached field.
+
+    With a lazily-unset `_dim`, interpolating the field directly renders
+    "A None-dimensional ..." on a freshly constructed cone.
+    """
+    c = Cone([[1, 0, 0], [0, 1, 0], [0, 0, 1]])
+    assert "A 3-dimensional" in repr(c)
+    assert "None" not in repr(c)
+
+
+def test_rays_of_hyperplane_cone_leaves_dimension_consistent():
+    """The rays() path also defers the rank; dim() must still be the true rank."""
+    c = Cone(hyperplanes=[[1, 0, 0], [0, 1, 0], [0, 0, 1], [1, 1, 1]])
+    rays = c.rays()
+    assert c.dimension() == np.linalg.matrix_rank(rays)
+    assert "None" not in repr(c)

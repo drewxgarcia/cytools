@@ -19,7 +19,7 @@ Everything is keyed on the stable ``ks_id`` that
 :class:`~cytools.dataset.PolytopeBatch` carries, so derived datasets are
 relational against the source and against each other::
 
-    <root>/<quantity>/v<version>/part-<hex>.parquet
+    <root>/<quantity>/v<version>/part-<write-time>-<hex>.parquet
 
         ks_id  int64      the join key
         ...               one column per field the payload returns
@@ -45,11 +45,13 @@ Usage::
         "hodge", hodge, store=store,
         scan=scan_batches(n_vertices=[13, 14], n=10000),
     )
-    # {'requested': 10000, 'computed': 10000, 'skipped': 0, 'failed': 0}
+    # {'requested': 10000, 'computed': 10000, 'skipped': 0,
+    #  'unsupported': 0, 'failed': 0}
 
     # run it again: nothing left to do
     summary = materialize(...)
-    # {'requested': 10000, 'computed': 0, 'skipped': 10000, 'failed': 0}
+    # {'requested': 10000, 'computed': 0, 'skipped': 10000,
+    #  'unsupported': 0, 'failed': 0}
 
     table = store.read("hodge")          # everything computed so far
 """
@@ -57,6 +59,7 @@ Usage::
 from __future__ import annotations
 
 import os
+import time
 import uuid
 from pathlib import Path
 
@@ -64,21 +67,55 @@ import numpy as np
 import pyarrow as pa
 import pyarrow.parquet as pq
 
-__all__ = ["DerivedStore", "materialize"]
+__all__ = [
+    "ERROR_COLUMN",
+    "UNSUPPORTED_COLUMN",
+    "DerivedStore",
+    "Unsupported",
+    "materialize",
+]
 
 _ID_COLUMN = "ks_id"
-_ERROR_COLUMN = "error"
+
+# The two status columns a payload can produce instead of results. Both are
+# public: consumers need to recognise them to tell a status row from a
+# computed one, and exporting only one of the pair invites the other to be
+# hard-coded at the call site.
+ERROR_COLUMN = "error"
+UNSUPPORTED_COLUMN = "unsupported"
+
+
+class Unsupported(Exception):
+    """Raised by a payload when a geometry cannot support the requested work.
+
+    Distinct from an error: a non-favorable polytope has no Calabi-Yau
+    hypersurface in the non-experimental regime, which is a fact about the
+    geometry rather than a bug. `materialize` counts these apart from failures
+    and still writes the row, so the scan does not retry it on the next run.
+
+    Named for the outcome it produces. `materialize` reports four
+    mutually exclusive outcomes per row -- `computed`, `skipped`, `unsupported`
+    and `failed` -- and this exception is how a payload asks for the third.
+    Note in particular that it is *not* `skipped`, which means the row was
+    already in the store.
+    """
 
 
 def _resolve_root(root: Path | str | None) -> Path:
+    """Locate the store, defaulting to a user cache directory.
+
+    Nothing should have to be configured before a result can be computed, so an
+    unset `CYTOOLS_DERIVED_DIR` falls back to the platform cache location
+    rather than raising.
+    """
     if root is None:
         env = os.environ.get("CYTOOLS_DERIVED_DIR")
-        if not env:
-            raise ValueError(
-                "No derived-results directory configured. Pass root= or set the "
-                "CYTOOLS_DERIVED_DIR environment variable."
-            )
-        root = env
+        if env:
+            root = env
+        else:
+            from platformdirs import user_cache_dir
+
+            root = Path(user_cache_dir("cytools")) / "derived"
     return Path(root).expanduser()
 
 
@@ -88,7 +125,8 @@ class DerivedStore:
     A directory of derived quantities, keyed by `ks_id`.
 
     **Arguments:**
-    - `root`: Directory to hold the store. Defaults to `CYTOOLS_DERIVED_DIR`.
+    - `root`: Directory to hold the store. Defaults to `CYTOOLS_DERIVED_DIR`,
+        then the platform's CYTools user-cache directory.
     """
 
     def __init__(self, root: Path | str | None = None) -> None:
@@ -127,7 +165,31 @@ class DerivedStore:
         d = self.quantity_dir(quantity, version)
         if not d.exists():
             return []
-        return sorted(d.glob("part-*.parquet"))
+        return sorted(d.glob("part-*.parquet"), key=self._part_order)
+
+    @staticmethod
+    def _part_order(path: Path) -> tuple[int, str]:
+        """Sort parts by write order, including stores made by older versions.
+
+        New part names carry a nanosecond timestamp. Legacy names contain only
+        a UUID, so their modification time is the best available ordering. The
+        filename is a deterministic tie-breaker for filesystems with coarse
+        timestamps.
+        """
+        pieces = path.stem.split("-", 2)
+        if len(pieces) >= 3 and pieces[1].isdigit():
+            written = int(pieces[1])
+        else:
+            try:
+                written = path.stat().st_mtime_ns
+            except OSError:
+                written = 0
+        return written, path.name
+
+    @staticmethod
+    def _part_path(directory: Path) -> Path:
+        """Return a collision-resistant part name that preserves write order."""
+        return directory / f"part-{time.time_ns():020d}-{uuid.uuid4().hex}.parquet"
 
     def _part_ranges(self, quantity: str, version: int = 1):
         """Yield ``(path, min_id, max_id)`` per part, from Parquet footers only.
@@ -233,8 +295,9 @@ class DerivedStore:
         **Description:**
         Read stored results for *quantity*, optionally restricted to `ks_ids`.
 
-        Duplicate ids -- possible if two runs computed the same row -- are
-        reduced to their first occurrence, so the result is one row per id.
+        Duplicate ids -- possible after recomputation or concurrent runs -- are
+        reduced to their most recently written occurrence, so a successful
+        recomputation deterministically supersedes the prior value.
         """
         parts = self._parts(quantity, version)
         if not parts:
@@ -252,8 +315,10 @@ class DerivedStore:
         table = pa.concat_tables(tables, promote_options="default")
 
         ids = table.column(_ID_COLUMN).to_numpy(zero_copy_only=False).astype(np.int64)
-        _, first = np.unique(ids, return_index=True)
-        keep = np.sort(first)
+        # Parts are concatenated oldest to newest. Select from the reversed id
+        # array so every duplicate resolves to the latest completed write.
+        _, latest_from_end = np.unique(ids[::-1], return_index=True)
+        keep = np.sort(len(ids) - 1 - latest_from_end)
 
         if ks_ids is not None:
             wanted = np.asarray(ks_ids, dtype=np.int64)
@@ -301,7 +366,7 @@ class DerivedStore:
         table = table.sort_by(_ID_COLUMN)
 
         d = self.quantity_dir(quantity, version)
-        final = d / f"part-{uuid.uuid4().hex}.parquet"
+        final = self._part_path(d)
         tmp = final.with_suffix(".parquet.tmp")
         pq.write_table(table, tmp)
         tmp.replace(final)
@@ -379,7 +444,7 @@ class DerivedStore:
 
         d = self.quantity_dir(quantity, version)
         d.mkdir(parents=True, exist_ok=True)
-        final = d / f"part-{uuid.uuid4().hex}.parquet"
+        final = self._part_path(d)
         tmp = final.with_suffix(".parquet.tmp")
         pq.write_table(table, tmp)
         tmp.replace(final)
@@ -447,8 +512,12 @@ class _Task:
 def _safe(fn, vertices):
     try:
         out = fn(vertices)
+    except Unsupported as e:
+        # A fact about the geometry, not a failure. Recorded so the row is not
+        # retried, and counted apart from errors.
+        return {UNSUPPORTED_COLUMN: str(e) or "unsupported"}
     except Exception as e:  # noqa: BLE001 - one bad geometry must not stop a scan
-        return {_ERROR_COLUMN: f"{type(e).__name__}: {e}"}
+        return {ERROR_COLUMN: f"{type(e).__name__}: {e}"}
     if not isinstance(out, dict):
         raise TypeError(
             f"payload must return a dict of scalars/sequences, got {type(out).__name__}"
@@ -504,9 +573,19 @@ def materialize(
     - `on_progress`: Optional `(summary_dict) -> None`, called per batch.
 
     **Returns:**
-    *(dict)* Counts: `requested`, `computed`, `skipped`, `failed`.
+    *(dict)* Counts: `requested`, `computed`, `skipped`, `unsupported`,
+    `failed`. `skipped` counts rows already present in the store;
+    `unsupported` counts rows whose payload raised :class:`Unsupported`,
+    i.e. the geometry cannot support the requested work. The four outcomes are
+    mutually exclusive and sum to `requested`.
     """
-    totals = {"requested": 0, "computed": 0, "skipped": 0, "failed": 0}
+    totals = {
+        "requested": 0,
+        "computed": 0,
+        "skipped": 0,
+        "unsupported": 0,
+        "failed": 0,
+    }
 
     # One read of the id column per run rather than per batch. This is
     # I/O-optimal when most ids will be tested anyway, but it holds the whole
@@ -525,7 +604,13 @@ def materialize(
         totals["requested"] += len(ids)
 
         if len(known):
-            todo = np.flatnonzero(~np.isin(ids, known))
+            # known_ids() is sorted. Binary search avoids asking np.isin to
+            # preprocess a many-million-row cache index for every 2k-row
+            # source batch.
+            positions = np.searchsorted(known, ids)
+            present = positions < len(known)
+            present[present] = known[positions[present]] == ids[present]
+            todo = np.flatnonzero(~present)
         else:
             todo = np.arange(len(ids))
 
@@ -540,11 +625,15 @@ def materialize(
 
         ok_ids, ok_results = [], []
         for i, res in zip(todo, results):
-            failed = _ERROR_COLUMN in res
+            failed = ERROR_COLUMN in res
             if failed:
                 totals["failed"] += 1
                 if not store_errors:
                     continue
+            elif UNSUPPORTED_COLUMN in res:
+                # Written regardless of store_errors: an unsupported geometry
+                # will still be unsupported next run, so retrying is waste.
+                totals["unsupported"] += 1
             else:
                 totals["computed"] += 1
             ok_ids.append(int(ids[i]))
@@ -552,7 +641,11 @@ def materialize(
 
         if ok_ids:
             store.write(quantity, ok_ids, ok_results, version)
-            known = np.union1d(known, np.asarray(ok_ids, dtype=np.int64))
+            # Do not grow the in-memory id index on a cold sweep. KS scan ids
+            # are unique, and repeatedly unioning every batch made both time
+            # and memory grow with the output (quadratic copying over a long
+            # run). Duplicate ids from a custom scan are harmless: append-only
+            # parts retain them and read() deterministically keeps the latest.
 
         if on_progress:
             on_progress(dict(totals))
