@@ -191,12 +191,13 @@ or native-runtime hazards on every development checkout.
 
 ## Phase 8 — Long tail
 
-- [ ] **8.1** Consolidate the triplicated import-time FPU mutation
-      (`ctypes.CDLL(None).fesetround(0)` in `polytope.py`, `cone.py`,
-      `h_polytope.py`). **Do not simply delete**: none of the 9 native imports
-      changes the rounding mode on arm64 macOS with current versions, but this
-      may be a real fix for x86-64 or older `ppl`. Verify cross-platform, then
-      move to one place.
+- [x] **8.1** Consolidated the triplicated import-time FPU mutation behind
+      `cytools._backends.ppl`. Every PPL consumer now shares one import boundary,
+      which restores `FE_TONEAREST` exactly once after the engine loads. The
+      low-level call has an explicit C signature and failure handling; unit,
+      subprocess, and architecture tests preserve the native workaround for
+      x86-64 and older PPL builds without scattering process-state mutation
+      through domain modules.
 - [ ] **8.2** God functions: `fan.intersection_numbers` (390 lines),
       `normal_form` (317), `find_lattice_points` (310, 12 params),
       `Triangulation.__init__` (295), `fetch_polytopes` (262 lines, **23

@@ -20,19 +20,15 @@
 # -----------------------------------------------------------------------------
 
 # 'standard' imports
-import ctypes
 import itertools
 
 # 3rd party imports
 import numpy as np
-import ppl
-
-from cytools._typing import Matrix
-
-ctypes.CDLL(None).fesetround(0)  # ppl changes FPU rounding mode; reset to FE_TONEAREST
 
 # CYTools imports
 import cytools.polytope as polytope
+from cytools._backends.ppl import ppl
+from cytools._typing import Matrix
 from cytools.utils import gcd_list
 
 

@@ -57,7 +57,10 @@ Each adapter owns dependency detection, dependency-specific calls, and output
 normalization. It must not import `Polytope`, `Cone`, or another domain class.
 For example, `Cone.hilbert_basis()` passes rays to
 `cytools._backends.normaliz.hilbert_basis()` and caches the returned array; only
-the adapter knows about PyNormaliz.
+the adapter knows about PyNormaliz. Process-level compatibility work also lives
+at this boundary: all PPL consumers import the engine through
+`cytools._backends.ppl`, which restores the native floating-point rounding mode
+once after the engine loads.
 
 ## Extension modules
 

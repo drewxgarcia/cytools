@@ -58,6 +58,24 @@ def test_optional_engines_are_not_imported_when_adapter_modules_load():
     assert not violations, "optional engine imported eagerly: " + ", ".join(violations)
 
 
+def test_ppl_is_imported_only_through_its_compatibility_boundary():
+    boundary = PACKAGE / "_backends" / "ppl.py"
+    violations = []
+    for path in PACKAGE.rglob("*.py"):
+        if path == boundary:
+            continue
+        for node in ast.walk(_tree(path)):
+            if isinstance(node, ast.Import) and any(
+                alias.name == "ppl" for alias in node.names
+            ):
+                violations.append(f"{path.relative_to(PACKAGE)}:{node.lineno}")
+            elif isinstance(node, ast.ImportFrom) and node.module == "ppl":
+                violations.append(f"{path.relative_to(PACKAGE)}:{node.lineno}")
+    assert not violations, "PPL imported outside compatibility boundary: " + ", ".join(
+        violations
+    )
+
+
 def test_feature_modules_do_not_mutate_domain_classes():
     domain_classes = {"Cone", "Polytope", "PolytopeFace", "Triangulation"}
     violations = []

@@ -38,6 +38,8 @@ are occasionally published a day or two later.
   managing temporary files and shelling out to the Normaliz executable.
 - Third-party engine calls now have an internal adapter boundary, and internal
   modules import concrete implementation modules instead of the public facade.
+- PPL now loads through one compatibility boundary that restores the process
+  floating-point rounding mode once, replacing three scattered `ctypes` calls.
 - NTFE and vector-configuration methods are now declared by their owning
   domain classes and resolved lazily, replacing import-time class mutation and
   eager feature imports without changing the method API.

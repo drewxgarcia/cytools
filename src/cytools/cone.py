@@ -20,7 +20,6 @@
 # -----------------------------------------------------------------------------
 from __future__ import annotations
 
-import ctypes
 import itertools
 import warnings
 
@@ -33,18 +32,14 @@ from typing import TYPE_CHECKING, overload
 
 import highspy
 import joblib
+import latticepts
 import numpy as np
-import ppl
+import qpsolvers
 
 # 3rd party imports
 from flint import fmpq, fmpz, fmpz_mat
 from ortools.linear_solver import pywraplp
 from ortools.sat.python import cp_model
-
-ctypes.CDLL(None).fesetround(0)  # ppl changes FPU rounding mode; reset to FE_TONEAREST
-
-import latticepts
-import qpsolvers
 from scipy import sparse
 from scipy.optimize import linprog, nnls
 
@@ -57,6 +52,7 @@ from cytools._backends.extremalrays import (
     is_available as _extremalrays_available,
 )
 from cytools._backends.normaliz import hilbert_basis as _normaliz_hilbert_basis
+from cytools._backends.ppl import ppl
 
 # CYTools imports
 from cytools._extensions import lazy_method

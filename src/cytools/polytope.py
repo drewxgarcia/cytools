@@ -21,7 +21,6 @@
 from __future__ import annotations
 
 import copy
-import ctypes
 import itertools
 import math
 import time
@@ -32,30 +31,24 @@ from collections import defaultdict
 from collections.abc import Iterable, Iterator, Sequence
 from typing import TYPE_CHECKING, Any, Literal, overload
 
+import latticepts
 import numpy as np
-import ppl
+import pypalp
 
 # 3rd party imports
 from flint import fmpq_mat, fmpz_mat
-
-from cytools._typing import Matrix, Vector, VectorOrMatrix
-
-ctypes.CDLL(None).fesetround(0)  # ppl changes FPU rounding mode; reset to FE_TONEAREST
-import latticepts
-import pypalp
 from scipy.spatial import ConvexHull
 from tqdm import tqdm
 
 import cytools.config as config
-
-# CYTools imports
+from cytools._backends.ppl import ppl
 from cytools._extensions import lazy_method
+from cytools._typing import Matrix, Vector, VectorOrMatrix
+from cytools.utils import gcd_list, instanced_lru_cache, integral_nullspace, lll_reduce
 
 if TYPE_CHECKING:
     from cytools.polytopeface import PolytopeFace
     from cytools.triangulation import Triangulation
-
-from cytools.utils import gcd_list, instanced_lru_cache, integral_nullspace, lll_reduce
 
 
 class Polytope:
