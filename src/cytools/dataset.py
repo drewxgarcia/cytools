@@ -67,6 +67,7 @@ zero-configuration fallback. The 5D API remains local-only.
 from __future__ import annotations
 
 import os
+from collections import OrderedDict
 from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
@@ -205,13 +206,14 @@ def _resolve_dir(
     )
 
 
-#: HuggingFace dataset repositories holding the Parquet shards. Used only as a
-#: fallback: a shard present locally is never re-fetched.
+#: HuggingFace dataset repository holding the 4D Parquet shards. Used only as a
+#: fallback: a shard present locally is never re-fetched. There is deliberately
+#: no 5D counterpart -- the 5D API is local-only, and a constant naming a remote
+#: repo that nothing reads only suggests otherwise.
 _HF_4D_REPO = "calabi-yau-data/polytopes-4d"
-_HF_5D_REPO = "calabi-yau-data/ws-5d"
 
 
-def _hf_download(repo_id: str, filename: str, token: str | None = None) -> Path:
+def _hf_download(repo_id: str, filename: str) -> Path:
     """
     Fetch one Parquet shard from a HuggingFace dataset repo, returning its
     local path.
@@ -223,6 +225,11 @@ def _hf_download(repo_id: str, filename: str, token: str | None = None) -> Path:
 
     `huggingface_hub` is imported lazily, so the local-Parquet path never
     depends on it being installed.
+
+    Authentication is `$HF_TOKEN` only. An explicit token argument used to be
+    threaded through the resolution helpers, but no public entry point ever
+    accepted one, so every caller passed None -- dead plumbing that read as a
+    supported feature.
     """
     try:
         from huggingface_hub import hf_hub_download
@@ -240,7 +247,7 @@ def _hf_download(repo_id: str, filename: str, token: str | None = None) -> Path:
             repo_id=repo_id,
             filename=filename,
             repo_type="dataset",
-            token=token or os.environ.get("HF_TOKEN"),
+            token=os.environ.get("HF_TOKEN"),
         )
     )
 
@@ -249,12 +256,7 @@ def _hf_4d_filename(n_verts: int) -> str:
     return f"polytopes-4d-{n_verts:02d}-vertices.parquet"
 
 
-def _hf_5d_filename(file_idx: int, reflexive: bool) -> str:
-    subset = "reflexive" if reflexive else "non-reflexive"
-    return f"{subset}/full/{file_idx:04d}.parquet"
-
-
-def _hf_4d_vertex_counts(token: str | None = None) -> list[int]:
+def _hf_4d_vertex_counts() -> list[int]:
     """The vertex counts the remote 4D repository actually publishes."""
     try:
         from huggingface_hub import list_repo_files
@@ -266,7 +268,11 @@ def _hf_4d_vertex_counts(token: str | None = None) -> list[int]:
             "CYTOOLS_DB_DIR."
         ) from e
 
-    published = set(list_repo_files(_HF_4D_REPO, repo_type="dataset", token=token))
+    published = set(
+        list_repo_files(
+            _HF_4D_REPO, repo_type="dataset", token=os.environ.get("HF_TOKEN")
+        )
+    )
     return [n for n in range(5, 37) if _hf_4d_filename(n) in published]
 
 
@@ -290,9 +296,7 @@ def _optional_dir(
     return Path(env) if env else None
 
 
-def _available_4d_vertex_counts(
-    resolved_dir: Path | None, hf_token: str | None = None
-) -> list[int]:
+def _available_4d_vertex_counts(resolved_dir: Path | None) -> list[int]:
     """
     The vertex counts to scan when the caller did not name any.
 
@@ -305,7 +309,7 @@ def _available_4d_vertex_counts(
         local = _all_vertex_counts(resolved_dir)
         if local:
             return local
-    return _hf_4d_vertex_counts(hf_token)
+    return _hf_4d_vertex_counts()
 
 
 def _weights_to_vertices(weights: np.ndarray) -> np.ndarray:
@@ -396,11 +400,16 @@ def _extract_vertices_from_table(table: pa.Table) -> list[np.ndarray]:
     A single 4D KS Parquet file has a uniform vertex count (the file name
     encodes it), so the common case can be served by reshaping the flat int32
     child buffer with zero copies.  Uniformity is *verified* with vectorized
-    integer compares over the Arrow offset buffers rather than assumed: a
-    filtered query may merge rows from several vertex-count files, and a
-    mismatched stride there silently mis-slices vertices into the wrong rows.
-    The O(n) check is on numpy arrays and costs far less than the per-row
-    Python fallback it guards.
+    integer compares over the Arrow offset buffers rather than assumed, because
+    a mismatched stride silently mis-slices vertices into the wrong rows -- and
+    that is a corrupted polytope rather than an error.  The O(n) check is on
+    numpy arrays and costs far less than the per-row Python fallback it guards.
+
+    The ragged branch is unreachable through `scan_batches` today: batches are
+    yielded one source file at a time, so no batch mixes vertex counts. It is
+    kept as a guard for tables assembled some other way -- a hand-built table,
+    or a future re-partitioning of the database that groups counts together --
+    since the failure it prevents is silent.
     """
     col = table.column("vertices").combine_chunks()
     n_rows = len(table)
@@ -604,7 +613,7 @@ class PolytopeBatch:
         )
 
 
-def _resolve_4d_path(vc, resolved_dir, hf_token: str | None = None) -> Path:
+def _resolve_4d_path(vc, resolved_dir) -> Path:
     """Resolve one Parquet path when its generator is first consumed.
 
     Lazy so that a capped query does not touch every vertex-count file, and so
@@ -618,7 +627,7 @@ def _resolve_4d_path(vc, resolved_dir, hf_token: str | None = None) -> Path:
         if path.exists():
             return path
 
-    return _hf_download(_HF_4D_REPO, _hf_4d_filename(vc), hf_token)
+    return _hf_download(_HF_4D_REPO, _hf_4d_filename(vc))
 
 
 def _dnf_constraints(dnf) -> list[tuple]:
@@ -657,7 +666,38 @@ def _row_group_can_match(metadata, rg_index: int, constraints, col_index) -> boo
     return True
 
 
-_MATCH_COUNT_CACHE: dict = {}
+class _BoundedCache(OrderedDict):
+    """A least-recently-used dict with a hard entry cap.
+
+    Both caches here used to be plain dicts that only ever grew. That is the
+    same unbounded process-level retention `_iter_record_batches` documents
+    having removed from the 4D query path, and it is worse for the 5D cache,
+    whose values are lists of live `Polytope` objects.
+    """
+
+    def __init__(self, maxsize: int) -> None:
+        super().__init__()
+        self.maxsize = maxsize
+
+    def __setitem__(self, key, value) -> None:
+        if key in self:
+            self.move_to_end(key)
+        super().__setitem__(key, value)
+        while len(self) > self.maxsize:
+            self.popitem(last=False)
+
+    def get_lru(self, key):
+        """Fetch and mark as recently used, or None when absent."""
+        if key not in self:
+            return None
+        self.move_to_end(key)
+        return self[key]
+
+
+# Row counts per (file, filter). Values are single ints, so the cap can be
+# generous; it exists to stop a long-running process accumulating one entry per
+# distinct filter forever.
+_MATCH_COUNT_CACHE = _BoundedCache(4096)
 
 
 def _file_weights(counts, dnf, resolved_dir) -> list[int]:
@@ -689,8 +729,9 @@ def _file_weights(counts, dnf, resolved_dir) -> list[int]:
             continue
 
         key = (str(path), repr(dnf))
-        if key in _MATCH_COUNT_CACHE:
-            weights.append(_MATCH_COUNT_CACHE[key])
+        cached = _MATCH_COUNT_CACHE.get_lru(key)
+        if cached is not None:
+            weights.append(cached)
             continue
 
         constraints = _dnf_constraints(dnf)
@@ -785,9 +826,10 @@ def _iter_record_batches(
         file_rng = np.random.default_rng(None if seed is None else seed + idx)
         yield from _stream_one_file(path, dnf, expr, file_rng, batch_size)
 
-    # Generators resolve their files on first use, so a capped scan does not
-    # five-row sample from 32 requested vertex counts downloads at most five
-    # files unless one of those files has no matching rows.
+    # Generators resolve their files on first use, so a capped scan touches
+    # only the files it actually reads from: a five-row sample across 32
+    # requested vertex counts opens at most five of them, and more only if one
+    # of those turns out to have no matching rows.
     gens = [one_file(idx, vc) for idx, vc in enumerate(counts)]
 
     if n is None:
@@ -883,7 +925,7 @@ def _iter_record_batches(
             break
 
 
-def _stream_one_file(path: Path, dnf, expr, rng, batch_size: int):
+def _stream_one_file(path: Path, dnf, expr, rng, batch_size: int, columns=None):
     """Yield record batches from one file with memory bounded by *batch_size*.
 
     Uses ``ParquetFile.iter_batches`` rather than the dataset Scanner. The row
@@ -895,7 +937,15 @@ def _stream_one_file(path: Path, dnf, expr, rng, batch_size: int):
     The cost is that ``iter_batches`` takes no filter, so the predicate is
     applied per batch and row-group pruning is done from column statistics
     instead.
+
+    *columns* defaults to the 4D load set. The 5D loader passes its own, so
+    both databases share one streaming reader rather than each growing a
+    private one that drifts.
+
+    *rng* may be None, in which case row groups are visited in file order.
     """
+    if columns is None:
+        columns = _LOAD_COLUMNS
     pf = pq.ParquetFile(path)
     metadata = pf.metadata
     constraints = _dnf_constraints(dnf)
@@ -911,10 +961,14 @@ def _stream_one_file(path: Path, dnf, expr, rng, batch_size: int):
 
     # Random row-group order: file order correlates with how the database was
     # generated, so a prefix taken in file order is a biased sample.
-    for i in rng.permutation(len(candidates)):
-        rg = candidates[int(i)]
+    order = (
+        [candidates[int(i)] for i in rng.permutation(len(candidates))]
+        if rng is not None
+        else candidates
+    )
+    for rg in order:
         for batch in pf.iter_batches(
-            batch_size=batch_size, columns=_LOAD_COLUMNS, row_groups=[rg]
+            batch_size=batch_size, columns=columns, row_groups=[rg]
         ):
             if not batch.num_rows:
                 continue
@@ -1100,35 +1154,34 @@ def _load_table(
     columns: list[str],
 ) -> pa.Table:
     """
-    Read matching rows from one Parquet file.
+    Read up to *n* matching rows from one Parquet file.
 
-    When *arrow_filter* is set, delegate to ``pq.read_table`` with native
-    predicate pushdown so pyarrow can skip row groups via column statistics.
+    With *n* set, memory is bounded by one batch and the row groups are visited
+    in a shuffled order, whether or not a filter is in play. The filtered path
+    used to read the whole file through ``pq.read_table(filters=...)`` and slice
+    afterwards, which had two problems: the caller held every matching row of
+    every shard at once, and the surviving rows were a *file-order prefix*
+    rather than a sample -- file order correlates with how the database was
+    generated, which is exactly the bias the shuffled order exists to remove.
 
-    When only *n* is set (no filter), use ``iter_batches`` with an early exit
-    so we decompress only the minimum number of row groups needed.
+    With *n* unset there is nothing to bound or sample, so the whole file is
+    read in one call and pyarrow's native predicate pushdown does the work.
     """
-    if arrow_filter is not None:
-        tbl = pq.read_table(path, columns=columns, filters=arrow_filter)
-        return tbl.slice(0, n) if (n is not None and len(tbl) > n) else tbl
-
     if n is None:
+        if arrow_filter is not None:
+            return pq.read_table(path, columns=columns, filters=arrow_filter)
         return pq.read_table(path, columns=columns)
 
-    pf = pq.ParquetFile(path)
-    n_rg = pf.metadata.num_row_groups
-    order = rng.permutation(n_rg).tolist() if rng is not None else list(range(n_rg))
+    expr = pq.filters_to_expression(arrow_filter) if arrow_filter else None
 
     batches: list[pa.Table] = []
     collected = 0
-    for rg_idx in order:
-        need = n - collected
-        for batch in pf.iter_batches(
-            batch_size=need, columns=columns, row_groups=[rg_idx]
-        ):
-            batches.append(pa.Table.from_batches([batch]))
-            collected += len(batch)
-            break
+    for batch in _stream_one_file(
+        path, arrow_filter, expr, rng, batch_size=n, columns=columns
+    ):
+        take = min(batch.num_rows, n - collected)
+        batches.append(pa.Table.from_batches([batch.slice(0, take)]))
+        collected += take
         if collected >= n:
             break
 
@@ -1190,7 +1243,9 @@ def _build_5d_arrow_filter(
     return [parts] if parts else None
 
 
-_CACHE_5D: dict[tuple, list[PolytopeRecord5D]] = {}
+# Values are lists of live `Polytope` objects, so this is capped tightly. It
+# serves the interactive "run the same query again" case; it is not a store.
+_CACHE_5D = _BoundedCache(16)
 
 
 def _table_to_5d_records(table: pa.Table, reflexive: bool) -> list[PolytopeRecord5D]:
@@ -1395,6 +1450,10 @@ def load_5d_polytopes(
             "Set CYTOOLS_5D_DB_DIR to a directory of 5D Parquet files."
         )
 
+    # Keyed on the *resolved* directory. Keying on the raw `db_dir` argument
+    # meant every default call keyed on the string "None", so two calls that
+    # read different directories -- because CYTOOLS_5D_DB_DIR changed between
+    # them -- collided and the second was served the first one's records.
     cache_key = (
         reflexive,
         h11,
@@ -1405,10 +1464,14 @@ def load_5d_polytopes(
         n_dual_points,
         n,
         seed,
-        str(db_dir),
+        str(resolved_dir),
     )
-    if cache_key in _CACHE_5D:
-        return _CACHE_5D[cache_key]
+    cached = _CACHE_5D.get_lru(cache_key)
+    if cached is not None:
+        # A copy of the list, not the list. Handing back the cached object let a
+        # caller who mutated the result -- `recs.clear()`, `recs.sort()` --
+        # silently corrupt every later call with the same query.
+        return list(cached)
 
     rng = np.random.default_rng(seed)
     # Shuffle file order for unbiased random sampling across files
@@ -1421,13 +1484,15 @@ def load_5d_polytopes(
         if not path.exists():
             continue  # sparse local copy — skip missing files
 
-        remaining = (
-            (n - collected) if (n is not None and arrow_filter is None) else None
-        )
+        # `n` bounds the read whether or not a filter is set. It used to bound
+        # only the unfiltered path, so a filtered query read every matching row
+        # of every shard before subsampling: `load_5d_polytopes(h11=3, n=2)`
+        # pulled all ~400 reflexive shards into memory to return two records.
+        remaining = (n - collected) if n is not None else None
         tbl = _load_table(path, arrow_filter, remaining, rng, load_cols)
         tables.append(tbl)
         collected += len(tbl)
-        if n is not None and arrow_filter is None and collected >= n:
+        if n is not None and collected >= n:
             break
 
     full_table = (
@@ -1440,4 +1505,4 @@ def load_5d_polytopes(
 
     records = _table_to_5d_records(full_table, reflexive)
     _CACHE_5D[cache_key] = records
-    return records
+    return list(records)

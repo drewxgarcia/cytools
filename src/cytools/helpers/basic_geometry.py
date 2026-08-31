@@ -18,10 +18,11 @@
 # Description:  This module contains various basic geometry helpers
 # -----------------------------------------------------------------------------
 
+import collections
+
 # CYTools imports
 # typing
 from cytools._typing import Matrix
-from cytools.helpers import matrix
 
 
 def get_bdry(self) -> set:
@@ -45,27 +46,33 @@ def get_bdry(self) -> set:
     **Example:**
     ```python {3}
     from cytools import Polytope
-    import lib.geom.elementary
     p = Polytope([[0,0],[3,1],[2,2]])
     p.get_bdry()
-    # {frozenset({2, 4}), frozenset({1, 4}), frozenset({1, 3}), frozenset({2, 3})}
+    # {frozenset({1, 2}), frozenset({1, 3}), frozenset({2, 3})}
     ```
     """
     simps = self.triangulate().simplices()
-    edges = matrix.flatten_top(
-        [[(s[0], s[1]), (s[0], s[2]), (s[1], s[2])] for s in simps]
+
+    # An edge is on the boundary iff it belongs to an odd number of simplices,
+    # i.e. exactly one for a 2D triangulation.
+    #
+    # Counted rather than paired off. The previous form repeatedly did
+    # `edges.pop(edges.index(e))` inside a `while len(edges)` loop, which is a
+    # linear search plus a list shift per edge -- O(E^2) in the number of edges,
+    # for a job that is one pass. It agrees with this on every count: popping an
+    # instance and then failing to find a partner classifies exactly the
+    # odd-count edges as boundary.
+    #
+    # Keyed on frozensets, not on the ordered tuples the old version built.
+    # Those were only canonical because `simplices()` happens to return sorted
+    # labels; had one simplex listed a shared edge as (b, a), it would have been
+    # counted as a second distinct edge and both copies reported as boundary.
+    counts = collections.Counter(
+        frozenset(pair)
+        for s in simps
+        for pair in ((s[0], s[1]), (s[0], s[2]), (s[1], s[2]))
     )
-
-    # organize the edges
-    bdry = set()
-    while len(edges):
-        e = edges.pop()
-        try:
-            edges.pop(edges.index(e))
-        except ValueError:
-            bdry.add(frozenset(e))
-
-    return bdry
+    return {edge for edge, count in counts.items() if count % 2}
 
 
 def ccw(A: list, B: list, C: list) -> bool:

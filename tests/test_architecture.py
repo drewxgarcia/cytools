@@ -220,3 +220,31 @@ def test_every_lazy_method_target_resolves_to_a_callable():
             assert callable(getattr(owner, name)), (
                 f"cannot resolve {owner.__name__}.{name}"
             )
+
+
+def test_lazy_method_resolves_its_target_once(monkeypatch):
+    """Warm calls must not repeat module import and target validation."""
+    import types
+
+    import cytools._extensions as extensions
+
+    calls = []
+
+    def implementation(self, value):
+        return self.offset + value
+
+    def fake_import(name):
+        calls.append(name)
+        return types.SimpleNamespace(implementation=implementation)
+
+    monkeypatch.setattr(extensions, "import_module", fake_import)
+
+    class Example:
+        method = extensions.LazyMethod("example.feature", "implementation")
+
+        def __init__(self, offset):
+            self.offset = offset
+
+    assert Example(2).method(3) == 5
+    assert Example(10).method(4) == 14
+    assert calls == ["example.feature"]

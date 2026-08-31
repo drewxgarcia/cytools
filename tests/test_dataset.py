@@ -23,6 +23,35 @@ def _safe_extract(table):
     return [np.array(col[i].as_py(), dtype=np.int32) for i in range(len(table))]
 
 
+def test_bounded_cache_evicts_the_least_recently_used_entry():
+    cache = ds._BoundedCache(2)
+    cache["a"] = 1
+    cache["b"] = 2
+    assert cache.get_lru("a") == 1
+    cache["c"] = 3
+    assert list(cache) == ["a", "c"]
+    assert cache.get_lru("b") is None
+
+
+def test_filtered_load_table_honors_the_row_cap(tmp_path):
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+
+    path = tmp_path / "rows.parquet"
+    pq.write_table(pa.table({"value": list(range(20))}), path, row_group_size=5)
+
+    table = ds._load_table(
+        path,
+        [[("value", "in", [1, 3, 5, 7, 9, 11])]],
+        n=3,
+        rng=np.random.default_rng(7),
+        columns=["value"],
+    )
+
+    assert table.num_rows == 3
+    assert set(table.column("value").to_pylist()) <= {1, 3, 5, 7, 9, 11}
+
+
 def test_batch_exposes_all_zero_construction_database_counts():
     """Landscape columns must reach the batch without constructing Polytope."""
     import pyarrow as pa

@@ -39,6 +39,16 @@ def check_for_updates() -> None:
     """
     import requests
 
+    # Checked before the request, and unconditionally. This used to sit after
+    # the `except ... : return` below, so the one warning that needs no network
+    # at all -- "the version you are running is known to be broken" -- was the
+    # one an offline or firewalled user never saw.
+    if version in versions_with_serious_bugs:
+        print(
+            f"Warning: CYTools Workbench {version} contains a serious bug. "
+            "Upgrade before continuing."
+        )
+
     try:
         response = requests.get(
             "https://pypi.org/pypi/cytools-workbench/json", timeout=2
@@ -48,11 +58,6 @@ def check_for_updates() -> None:
     except (KeyError, TypeError, ValueError, requests.RequestException):
         return
 
-    if version in versions_with_serious_bugs:
-        print(
-            f"Warning: CYTools Workbench {version} contains a serious bug. "
-            "Upgrade before continuing."
-        )
     if _release_tuple(latest) > _release_tuple(version):
         print(
             f"A newer CYTools Workbench release is available: {version} -> {latest}. "

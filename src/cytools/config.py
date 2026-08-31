@@ -61,16 +61,35 @@ def check_mosek_license(silent=False):
         os.environ["MOSEKLM_LICENSE_FILE"] = _mosek_license
     global _mosek_error
     global _mosek_is_activated
+    # The import is in its own try. When it was inside the block below, an
+    # import failure that was *not* an ImportError -- an OSError from an
+    # unloadable libmosek shared object is the realistic one -- fell through to
+    # `except mosek.Error`, and evaluating that clause raised
+    # `UnboundLocalError: cannot access local variable 'mosek'`, masking the
+    # real error and escaping the `except Exception` fallback entirely.
     try:
         import mosek
+    except ImportError:
+        _mosek_error = "Info: Mosek is not installed."
+        _mosek_is_activated = False
+        if not silent:
+            print(_mosek_error)
+        return
+    except Exception as e:
+        _mosek_error = (
+            "Info: Mosek is installed but could not be imported "
+            f"({type(e).__name__}: {e}). An alternative optimizer will be used."
+        )
+        _mosek_is_activated = False
+        if not silent:
+            print(_mosek_error)
+        return
 
+    try:
         mosek.Env().Task(0, 0).optimize()
         _mosek_is_activated = True
         if not silent:
             print("Mosek was successfully activated.")
-    except ImportError:
-        _mosek_error = "Info: Mosek is not installed."
-        _mosek_is_activated = False
     except mosek.Error as e:
         _mosek_error = (
             "Info: Mosek is not activated. "
@@ -150,5 +169,7 @@ def enable_experimental_features():
         "Warning: You have enabled experimental features of CYTools.\n"
         "Some of these features may be broken or not fully tested,\n"
         "and they may undergo significant changes in future versions.\n"
-        "**************************************************************\n"
+        "**************************************************************\n",
+        UserWarning,
+        stacklevel=2,
     )

@@ -192,6 +192,13 @@ def test_intersection():
     assert len(c3.rays()) == 2
 
 
+def test_intersection_rejects_a_single_cone_in_another_dimension():
+    c2 = Cone([[1, 0], [0, 1]])
+    c3 = Cone([[1, 0, 0], [0, 1, 0], [0, 0, 1]])
+    with pytest.raises(ValueError, match="same dimension"):
+        c2.intersection(c3)
+
+
 def test_is_pointed():
     c1 = Cone([[1, 0], [0, 1]])
     c2 = Cone([[1, 0], [0, 1], [-1, 0]])
