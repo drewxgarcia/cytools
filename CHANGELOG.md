@@ -32,6 +32,8 @@ are occasionally published a day or two later.
   served directly from columnar database buffers without constructing
   `Polytope` objects. Large sweeps avoid collecting result frames and cap
   automatic worker fan-out at eight processes.
+- Parallel materialization now reuses one lazily created process pool across
+  source batches and starts no workers for a fully cached scan.
 - Landscape volume scans can evaluate at a deterministic sampled direction in
   the Kähler cone with `moduli="sampled"`; the selected `kahler_point` is
   requestable, recorded mode metadata is explicit, and caches remain isolated

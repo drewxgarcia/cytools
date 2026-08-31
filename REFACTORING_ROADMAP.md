@@ -214,6 +214,38 @@ or native-runtime hazards on every development checkout.
       is genuinely best-effort — documented rather than narrowed.
 - [x] **8.5** Docstring typo "triangularions" fixed in 2 files.
 
+## Phase 9 — Pipeline performance
+
+Measured 2026-08-31 on the paper-realistic payload (`triangulate` ->
+`intersection_numbers` -> `toric_kahler_cone` -> `tip_of_stretched_cone` ->
+`compute_divisor_volumes`), favorable KS polytopes, medians of n=3.
+
+- [x] **9.0** Reuse one lazily created process pool across every nonempty
+      source batch in a materialization. A fully cached scan starts no workers;
+      pool reuse and shutdown are pinned mechanically.
+- [ ] **9.1** **Make the optional CHOLMOD path easy to install — worth ~3.0x
+      end to end, with no algorithm change.** `intersection_numbers` is ~77% of
+      the payload and 89% of that is one `solve_linear_system` call, which
+      falls through the `backend="all"` waterfall to SciPy's SuperLU when
+      scikit-sparse is absent. On the real h11(N)=300 system (M 28576x15238,
+      nnz 158080): **CHOLMOD 39.1 ms vs SuperLU 793.8 ms**, with a better
+      residual (1.9e-08 vs 3.7e-08). End to end 1105.9 -> 365.0 ms at h11=300,
+      428.2 -> 142.1 ms at h11=150. Keep it in the dedicated backend CI job and
+      optional `performance` extra: Phase 7 records why compiled, hard-linked
+      scikit-sparse and its OpenMP interaction cannot return to the portable
+      default environment.
+- [ ] **9.2** After 9.1, the cone stages are the next target and the only ones
+      with a bad exponent: `toric_kahler_cone` h11^2.13 and
+      `tip_of_stretched_cone` h11^1.92, against h11^1.19-1.28 for everything
+      else. Together they are 15.7% of the payload at h11=150 and 23.9% at
+      h11=300, so they dominate as h11 grows. `tip` is the larger half (18.6%
+      at h11=300) and is LP-bound, not sparse-solve-bound, so CHOLMOD does not
+      help it.
+- [ ] **9.3** Do not re-optimize triangulation or intnum assembly.
+      `_construct_intnum_equations_4d` is **5%** of `intersection_numbers`;
+      the assembly work already landed. With CHOLMOD in place no single stage
+      exceeds ~31%, so kernel-level wins are capped near 1.3x.
+
 ---
 
 ## Appendix A — what is already clean

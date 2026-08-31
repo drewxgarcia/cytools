@@ -486,9 +486,15 @@ def _check_parallel_payload(fn) -> None:
         ) from e
 
 
-def _run_batch(vertex_list, fn, workers, chunksize):
+def _make_pool(workers, fn):
+    """Create the one process pool shared by a scan's nonempty batches.
+
+    Spawned workers re-import the library. Keeping the pool alive across source
+    batches pays that startup cost once per materialization rather than once per
+    batch.
+    """
     if workers <= 1:
-        return [_safe(fn, v) for v in vertex_list]
+        return None
 
     _check_parallel_payload(fn)
 
@@ -497,8 +503,13 @@ def _run_batch(vertex_list, fn, workers, chunksize):
 
     # fork is unsafe here: the compiled dependencies segfault in a forked child
     ctx = mp.get_context("spawn")
-    with ProcessPoolExecutor(max_workers=workers, mp_context=ctx) as ex:
-        return list(ex.map(_Task(fn), vertex_list, chunksize=chunksize))
+    return ProcessPoolExecutor(max_workers=workers, mp_context=ctx)
+
+
+def _run_batch(vertex_list, fn, chunksize, pool=None):
+    if pool is None:
+        return [_safe(fn, v) for v in vertex_list]
+    return list(pool.map(_Task(fn), vertex_list, chunksize=chunksize))
 
 
 class _Task:
@@ -599,55 +610,62 @@ def materialize(
         np.empty(0, dtype=np.int64) if recompute else store.known_ids(quantity, version)
     )
 
-    for batch in scan:
-        ids = np.asarray(batch.ks_ids, dtype=np.int64)
-        totals["requested"] += len(ids)
+    pool = None
+    try:
+        for batch in scan:
+            ids = np.asarray(batch.ks_ids, dtype=np.int64)
+            totals["requested"] += len(ids)
 
-        if len(known):
-            # known_ids() is sorted. Binary search avoids asking np.isin to
-            # preprocess a many-million-row cache index for every 2k-row
-            # source batch.
-            positions = np.searchsorted(known, ids)
-            present = positions < len(known)
-            present[present] = known[positions[present]] == ids[present]
-            todo = np.flatnonzero(~present)
-        else:
-            todo = np.arange(len(ids))
+            if len(known):
+                # known_ids() is sorted. Binary search avoids asking np.isin to
+                # preprocess a many-million-row cache index for every 2k-row
+                # source batch.
+                positions = np.searchsorted(known, ids)
+                present = positions < len(known)
+                present[present] = known[positions[present]] == ids[present]
+                todo = np.flatnonzero(~present)
+            else:
+                todo = np.arange(len(ids))
 
-        totals["skipped"] += len(ids) - len(todo)
-        if not len(todo):
+            totals["skipped"] += len(ids) - len(todo)
+            if not len(todo):
+                if on_progress:
+                    on_progress(dict(totals))
+                continue
+
+            if workers > 1 and pool is None:
+                pool = _make_pool(workers, fn)
+            vertex_list = [batch.vertices(int(i)) for i in todo]
+            results = _run_batch(vertex_list, fn, chunksize, pool=pool)
+
+            ok_ids, ok_results = [], []
+            for i, res in zip(todo, results):
+                failed = ERROR_COLUMN in res
+                if failed:
+                    totals["failed"] += 1
+                    if not store_errors:
+                        continue
+                elif UNSUPPORTED_COLUMN in res:
+                    # Written regardless of store_errors: an unsupported geometry
+                    # will still be unsupported next run, so retrying is waste.
+                    totals["unsupported"] += 1
+                else:
+                    totals["computed"] += 1
+                ok_ids.append(int(ids[i]))
+                ok_results.append(res)
+
+            if ok_ids:
+                store.write(quantity, ok_ids, ok_results, version)
+                # Do not grow the in-memory id index on a cold sweep. KS scan ids
+                # are unique, and repeatedly unioning every batch made both time
+                # and memory grow with the output (quadratic copying over a long
+                # run). Duplicate ids from a custom scan are harmless: append-only
+                # parts retain them and read() deterministically keeps the latest.
+
             if on_progress:
                 on_progress(dict(totals))
-            continue
-
-        vertex_list = [batch.vertices(int(i)) for i in todo]
-        results = _run_batch(vertex_list, fn, workers, chunksize)
-
-        ok_ids, ok_results = [], []
-        for i, res in zip(todo, results):
-            failed = ERROR_COLUMN in res
-            if failed:
-                totals["failed"] += 1
-                if not store_errors:
-                    continue
-            elif UNSUPPORTED_COLUMN in res:
-                # Written regardless of store_errors: an unsupported geometry
-                # will still be unsupported next run, so retrying is waste.
-                totals["unsupported"] += 1
-            else:
-                totals["computed"] += 1
-            ok_ids.append(int(ids[i]))
-            ok_results.append(res)
-
-        if ok_ids:
-            store.write(quantity, ok_ids, ok_results, version)
-            # Do not grow the in-memory id index on a cold sweep. KS scan ids
-            # are unique, and repeatedly unioning every batch made both time
-            # and memory grow with the output (quadratic copying over a long
-            # run). Duplicate ids from a custom scan are harmless: append-only
-            # parts retain them and read() deterministically keeps the latest.
-
-        if on_progress:
-            on_progress(dict(totals))
+    finally:
+        if pool is not None:
+            pool.shutdown(wait=True)
 
     return totals

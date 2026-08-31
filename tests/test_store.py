@@ -271,6 +271,56 @@ def test_parallel_workers_produce_the_same_results(store, tmp_path):
     assert a == b
 
 
+def test_parallel_scan_reuses_one_pool_across_batches(store, monkeypatch):
+    import cytools.store as store_mod
+
+    class FakePool:
+        def __init__(self):
+            self.maps = 0
+            self.shutdown_calls = []
+
+        def map(self, fn, values, chunksize):
+            self.maps += 1
+            return map(fn, values)
+
+        def shutdown(self, wait):
+            self.shutdown_calls.append(wait)
+
+    pool = FakePool()
+    creations = []
+
+    def make_pool(workers, fn):
+        creations.append((workers, fn))
+        return pool
+
+    monkeypatch.setattr(store_mod, "_make_pool", make_pool)
+    summary = materialize(
+        "q", payload, store=store, scan=make_scan(range(10), batch_size=3), workers=4
+    )
+
+    assert summary["computed"] == 10
+    assert creations == [(4, payload)]
+    assert pool.maps == 4
+    assert pool.shutdown_calls == [True]
+
+
+def test_fully_cached_parallel_scan_does_not_start_workers(store, monkeypatch):
+    import cytools.store as store_mod
+
+    materialize("q", payload, store=store, scan=make_scan(range(8)))
+
+    def unexpected_pool(*_):
+        raise AssertionError("a no-op scan started worker processes")
+
+    monkeypatch.setattr(store_mod, "_make_pool", unexpected_pool)
+    summary = materialize(
+        "q", payload, store=store, scan=make_scan(range(8)), workers=4
+    )
+
+    assert summary["skipped"] == 8
+    assert summary["computed"] == 0
+
+
 def test_progress_callback_is_called_per_batch(store):
     seen = []
     materialize(
