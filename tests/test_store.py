@@ -4,11 +4,9 @@ These use synthetic batches rather than the KS database, so they run anywhere.
 """
 
 import numpy as np
-import pyarrow.parquet as pq
 import pytest
 
 from cytools.store import DerivedStore, Unsupported, materialize
-
 
 # ---------------------------------------------------------------------------
 # A minimal stand-in for PolytopeBatch: the store only needs ks_ids +
@@ -154,9 +152,7 @@ def test_results_round_trip(store):
     table = store.read("q")
 
     assert set(table.column_names) >= {"ks_id", "value", "n_verts"}
-    rows = {
-        r["ks_id"]: r for r in table.to_pylist()
-    }
+    rows = {r["ks_id"]: r for r in table.to_pylist()}
     for i in range(4):
         assert rows[i]["value"] == i * 2
         assert rows[i]["n_verts"] == 3
@@ -175,16 +171,12 @@ def test_missing_reports_only_absent_ids(store):
 
 
 def test_failures_are_recorded_and_not_retried(store):
-    summary = materialize(
-        "q", failing_payload, store=store, scan=make_scan(range(9))
-    )
+    summary = materialize("q", failing_payload, store=store, scan=make_scan(range(9)))
     # 0, 3, 6 raise
     assert summary["failed"] == 3
     assert summary["computed"] == 6
 
-    again = materialize(
-        "q", failing_payload, store=store, scan=make_scan(range(9))
-    )
+    again = materialize("q", failing_payload, store=store, scan=make_scan(range(9)))
     assert again["skipped"] == 9, "recorded failures should not be retried"
 
     table = store.read("q")
@@ -208,9 +200,7 @@ def test_failures_can_be_left_for_retry(store):
 
 
 def test_unsupported_rows_are_recorded_separately_and_not_retried(store):
-    first = materialize(
-        "q", unsupported_payload, store=store, scan=make_scan(range(6))
-    )
+    first = materialize("q", unsupported_payload, store=store, scan=make_scan(range(6)))
     assert first["computed"] == 3
     assert first["unsupported"] == 3
     assert first["failed"] == 0

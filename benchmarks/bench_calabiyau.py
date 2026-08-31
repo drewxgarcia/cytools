@@ -42,13 +42,12 @@ Run full suite:
 import numpy as np
 import pytest
 
-from cytools import Polytope
 from benchmarks._data import POLY_5V
-
 
 # ---------------------------------------------------------------------------
 # Module-scope fixtures
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture(scope="module")
 def cy_5v():
@@ -83,6 +82,7 @@ def tloc_5v(cy_5v):
 # 1. Metadata / pipeline accessors
 # ---------------------------------------------------------------------------
 
+
 class TestMetadata:
     def test_ambient_dimension_5v(self, benchmark, cy_5v):
         benchmark(cy_5v.ambient_dimension)
@@ -106,6 +106,7 @@ class TestMetadata:
 # ---------------------------------------------------------------------------
 # 2. Hodge numbers / chi
 # ---------------------------------------------------------------------------
+
 
 class TestHodgeNumbers:
     def test_chi_5v(self, benchmark, cy_5v):
@@ -132,22 +133,26 @@ class TestHodgeNumbers:
     def test_hodge_batch(self, benchmark, batch_cys):
         def go():
             return [(cy.h11(), cy.h12()) for cy in batch_cys]
+
         benchmark.pedantic(go, rounds=5, iterations=1)
 
     def test_hodge_large(self, benchmark, large_cys):
         def go():
             return [(cy.h11(), cy.h12()) for cy in large_cys]
+
         benchmark.pedantic(go, rounds=3, iterations=1)
 
     def test_chi_batch(self, benchmark, batch_cys):
         def go():
             return [cy.chi() for cy in batch_cys]
+
         benchmark.pedantic(go, rounds=5, iterations=1)
 
 
 # ---------------------------------------------------------------------------
 # 3. GLSM / basis
 # ---------------------------------------------------------------------------
+
 
 class TestGLSMBasis:
     def test_glsm_charge_matrix_5v(self, benchmark, cy_5v):
@@ -174,12 +179,14 @@ class TestGLSMBasis:
     def test_glsm_batch(self, benchmark, batch_cys):
         def go():
             return [cy.glsm_charge_matrix() for cy in batch_cys]
+
         benchmark.pedantic(go, rounds=5, iterations=1)
 
 
 # ---------------------------------------------------------------------------
 # 4. Intersection numbers
 # ---------------------------------------------------------------------------
+
 
 class TestIntersectionNumbers:
     def test_intersection_numbers_dok_5v(self, benchmark, cy_5v):
@@ -200,12 +207,14 @@ class TestIntersectionNumbers:
     def test_intersection_numbers_batch(self, benchmark, batch_cys):
         def go():
             return [cy.intersection_numbers() for cy in batch_cys]
+
         benchmark.pedantic(go, rounds=3, iterations=1)
 
     @pytest.mark.slow
     def test_intersection_numbers_large(self, benchmark, large_cys):
         def go():
             return [cy.intersection_numbers() for cy in large_cys]
+
         benchmark.pedantic(go, rounds=1, iterations=1)
 
     def test_second_chern_class_5v(self, benchmark, cy_5v):
@@ -217,12 +226,14 @@ class TestIntersectionNumbers:
     def test_second_chern_batch(self, benchmark, batch_cys):
         def go():
             return [cy.second_chern_class() for cy in batch_cys]
+
         benchmark.pedantic(go, rounds=3, iterations=1)
 
 
 # ---------------------------------------------------------------------------
 # 5. Smoothness
 # ---------------------------------------------------------------------------
+
 
 class TestSmoothness:
     def test_is_smooth_5v(self, benchmark, cy_5v):
@@ -231,12 +242,14 @@ class TestSmoothness:
     def test_is_smooth_batch(self, benchmark, batch_cys):
         def go():
             return [cy.is_smooth() for cy in batch_cys]
+
         benchmark.pedantic(go, rounds=3, iterations=1)
 
 
 # ---------------------------------------------------------------------------
 # 6. Cones
 # ---------------------------------------------------------------------------
+
 
 class TestCones:
     def test_toric_kahler_cone_5v(self, benchmark, cy_5v):
@@ -259,17 +272,20 @@ class TestCones:
     def test_toric_kahler_cone_batch(self, benchmark, batch_cys):
         def go():
             return [cy.toric_kahler_cone() for cy in batch_cys]
+
         benchmark.pedantic(go, rounds=3, iterations=1)
 
     def test_toric_mori_cone_batch(self, benchmark, batch_cys):
         def go():
             return [cy.toric_mori_cone() for cy in batch_cys]
+
         benchmark.pedantic(go, rounds=3, iterations=1)
 
 
 # ---------------------------------------------------------------------------
 # 7. Geometric compute_* methods (require tloc in Kähler cone)
 # ---------------------------------------------------------------------------
+
 
 class TestComputeMethods:
     def test_compute_cy_volume_5v(self, benchmark, cy_5v, tloc_5v):
@@ -306,12 +322,14 @@ class TestComputeMethods:
                 cy.compute_cy_volume(t)
                 cy.compute_kappa_matrix(t)
                 cy.compute_inverse_kahler_metric(t)
+
         benchmark.pedantic(go, rounds=3, iterations=1)
 
 
 # ---------------------------------------------------------------------------
 # 8. GV / GW invariants
 # ---------------------------------------------------------------------------
+
 
 class TestGVGW:
     def test_compute_gvs_5v(self, benchmark, cy_5v):

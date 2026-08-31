@@ -1,4 +1,3 @@
-
 from cytools import Polytope
 
 
@@ -95,9 +94,7 @@ def test_dual_face_saturated_ineqs():
     for d in range(p.dim()):
         for f in p.faces(d):
             df = f.dual()
-            expected = frozenset(
-                dual_ineqs.index(v) for v in f.vertices().tolist()
-            )
+            expected = frozenset(dual_ineqs.index(v) for v in f.vertices().tolist())
             assert df._saturated_ineqs == expected
             assert df.dim() == p.dim() - d - 1
 

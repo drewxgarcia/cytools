@@ -20,13 +20,12 @@ import copy
 import math
 
 import numpy as np
+import pytest
 import scipy.linalg
 import scipy.sparse as sp
-import pytest
 
 from cytools import Polytope
-from cytools.utils import integral_nullspace, lll_reduce, gcd_list
-
+from cytools.utils import gcd_list, integral_nullspace, lll_reduce
 
 # ---------------------------------------------------------------------------
 # 1. get_bdry — O(n²) edge-removal
@@ -36,9 +35,9 @@ from cytools.utils import integral_nullspace, lll_reduce, gcd_list
 # We time it on polytopes of increasing size so the scaling is visible.
 
 _SMALL_POLYS_2D = [
-    Polytope([[1, 0, 0], [0, 1, 0], [-1, -1, 0]]),                          # 3 verts
-    Polytope([[2, 0, 0], [0, 2, 0], [-1, -1, 0], [1, -1, 0]]),              # 4 verts
-    Polytope([[3, 0, 0], [0, 3, 0], [-1, -1, 0], [1, -1, 0], [-1, 2, 0]]), # 5 verts
+    Polytope([[1, 0, 0], [0, 1, 0], [-1, -1, 0]]),  # 3 verts
+    Polytope([[2, 0, 0], [0, 2, 0], [-1, -1, 0], [1, -1, 0]]),  # 4 verts
+    Polytope([[3, 0, 0], [0, 3, 0], [-1, -1, 0], [1, -1, 0], [-1, 2, 0]]),  # 5 verts
 ]
 
 
@@ -51,6 +50,7 @@ class TestGetBdry:
 # ---------------------------------------------------------------------------
 # 2. integral_nullspace / lll_reduce  (utils.py)
 # ---------------------------------------------------------------------------
+
 
 def _rand_int_matrix(rows: int, cols: int, seed: int = 0) -> list[list[int]]:
     rng = np.random.default_rng(seed)
@@ -76,6 +76,7 @@ class TestLinearAlgebraHelpers:
 #    Quantifies the cost of each uncached call in cone.py / utils.py
 # ---------------------------------------------------------------------------
 
+
 class TestNumpyRankBaseline:
     @pytest.mark.parametrize("n", [10, 30, 60, 100])
     def test_matrix_rank(self, benchmark, n):
@@ -88,6 +89,7 @@ class TestNumpyRankBaseline:
 # 4. Double-sort pattern vs single np.sort
 #    Reproduces triangulation.py: sorted([sorted(s) for s in simps])
 # ---------------------------------------------------------------------------
+
 
 class TestSortingOverhead:
     @pytest.mark.parametrize("n", [100, 500, 2000])
@@ -114,6 +116,7 @@ class TestSortingOverhead:
 #    Reproduces polytope.py: return copy.deepcopy(cached_array)
 # ---------------------------------------------------------------------------
 
+
 class TestCopyOverhead:
     @pytest.mark.parametrize("n", [100, 1000, 10_000])
     def test_deepcopy_array(self, benchmark, n):
@@ -130,6 +133,7 @@ class TestCopyOverhead:
 # 6. list.index() vs pre-built dict lookup
 #    Reproduces polytope.py: {i: pts.index(pt) for i, pt in enumerate(pts)}
 # ---------------------------------------------------------------------------
+
 
 class TestLookupOverhead:
     @pytest.mark.parametrize("n", [100, 500, 2000])
@@ -152,6 +156,7 @@ class TestLookupOverhead:
 #    hyperplane vector.  Small arrays of integers are the common case.
 # ---------------------------------------------------------------------------
 
+
 class TestGcdList:
     @pytest.mark.parametrize("n", [4, 16, 64])
     def test_gcd_list_integers(self, benchmark, n):
@@ -171,6 +176,7 @@ class TestGcdList:
     def test_math_gcd_direct(self, benchmark, n):
         """Baseline: functools.reduce(math.gcd, ...) with no dispatch overhead."""
         import functools
+
         rng = np.random.default_rng(0)
         arr = rng.integers(1, 100, size=n).tolist()
         benchmark(lambda: functools.reduce(math.gcd, arr))
@@ -191,6 +197,7 @@ class TestGcdList:
 #      n=2000  — near the new threshold upper bound
 # ---------------------------------------------------------------------------
 
+
 def _make_spd_system(n: int, seed: int = 0):
     """
     Build a random sparse SPD matrix M (n x n) and RHS vector C (n,)
@@ -200,8 +207,7 @@ def _make_spd_system(n: int, seed: int = 0):
     The sparse format matches what solve_linear_system expects.
     """
     rng = np.random.default_rng(seed)
-    A = sp.random(n, n, density=0.3, format="csc", dtype=float,
-                  random_state=rng)
+    A = sp.random(n, n, density=0.3, format="csc", dtype=float, random_state=rng)
     M = A.T @ A + n * sp.eye(n, format="csc")
     C = rng.standard_normal(n)
     return M, C
@@ -220,7 +226,9 @@ class TestSolveLinearSystemBackends:
         M, C = _make_spd_system(n)
         MtM = (M.T @ M).toarray()
         MtC = -(M.T @ C)
+
         def go():
             c_fac, low = scipy.linalg.cho_factor(MtM)
             return scipy.linalg.cho_solve((c_fac, low), MtC).tolist()
+
         benchmark(go)

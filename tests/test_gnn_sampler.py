@@ -147,42 +147,11 @@ def _block_dualgnn(monkeypatch):
     monkeypatch.setitem(sys.modules, "dualgnn.model", None)
 
 
-def test_missing_dualgnn_noninteractive(monkeypatch):
-    from cytools.ntfe import face_triangulations as ft
-
+def test_missing_dualgnn_is_actionable_and_never_installs(monkeypatch):
     _block_dualgnn(monkeypatch)
-    monkeypatch.setattr(ft, "_is_interactive", lambda: False)
     # max_npts=0 forces sampling (rather than enumeration) on every 2-face
-    with pytest.raises(ImportError, match="dualgnn"):
+    with pytest.raises(ImportError, match=r"cytools\[gnn\]"):
         quintic_dual.face_triangs(triang_method="dualgnn", max_npts=0)
-
-
-def test_missing_dualgnn_install_declined(monkeypatch):
-    from cytools.ntfe import face_triangulations as ft
-
-    _block_dualgnn(monkeypatch)
-    monkeypatch.setattr(ft, "_is_interactive", lambda: True)
-    monkeypatch.setattr("builtins.input", lambda prompt: "n")
-    calls = []
-    monkeypatch.setattr(ft.subprocess, "check_call", lambda cmd: calls.append(cmd))
-    with pytest.raises(ImportError, match="dualgnn"):
-        quintic_dual.face_triangs(triang_method="dualgnn", max_npts=0)
-    assert calls == []
-
-
-def test_missing_dualgnn_install_accepted(monkeypatch):
-    from cytools.ntfe import face_triangulations as ft
-
-    _block_dualgnn(monkeypatch)
-    monkeypatch.setattr(ft, "_is_interactive", lambda: True)
-    monkeypatch.setattr("builtins.input", lambda prompt: "y")
-    calls = []
-    monkeypatch.setattr(ft.subprocess, "check_call", lambda cmd: calls.append(cmd))
-    # the (mocked) install can't actually make dualgnn importable here, so
-    # the re-import still fails -- but pip must have been invoked
-    with pytest.raises(ImportError):
-        quintic_dual.face_triangs(triang_method="dualgnn", max_npts=0)
-    assert calls == [[sys.executable, "-m", "pip", "install", "dualgnn"]]
 
 
 @pytest.mark.skipif(not HAS_DUALGNN, reason="dualgnn is not installed")
@@ -228,9 +197,7 @@ def test_seed_reproducibility():
 
 @pytest.mark.skipif(not HAS_DUALGNN, reason="dualgnn is not installed")
 def test_fills_N():
-    triangs = list(
-        p_h11_8.random_triangulations_gnn(N=10, N_face_triangs=5, seed=0)
-    )
+    triangs = list(p_h11_8.random_triangulations_gnn(N=10, N_face_triangs=5, seed=0))
     assert len(triangs) == 10
     assert len(set(triangs)) == 10
 

@@ -1,4 +1,3 @@
-
 import numpy as np
 import pytest
 
@@ -56,8 +55,7 @@ def test_automorphism_orbit_with_filtered_automorphism():
         i
         for i, a in enumerate(autos)
         if any(
-            (p.labels[j] in t.labels) != (p.labels[k] in t.labels)
-            for j, k in a.items()
+            (p.labels[j] in t.labels) != (p.labels[k] in t.labels) for j, k in a.items()
         )
     ]
     assert filtered  # otherwise this test isn't exercising anything
@@ -139,9 +137,7 @@ def test_heights_round_trip_after_make_star():
     assert t.is_star()
 
     h = t.heights()
-    t2 = p.triangulate(
-        backend="qhull", heights=h, make_star=False, check_heights=False
-    )
+    t2 = p.triangulate(backend="qhull", heights=h, make_star=False, check_heights=False)
     assert t == t2
 
 
@@ -247,9 +243,16 @@ def test_neighbor_triangulations_nontrivial_labels():
     # otherwise it gave wrong neighbors or crashed the interpreter.
     p = Polytope(
         [
-            [1, -1, -2, 1], [1, -1, 0, -1], [-1, 0, 1, 1], [-1, 2, 1, -1],
-            [1, 0, 0, 0], [-1, 0, 0, 0], [0, 0, 0, 1], [0, 0, 1, 0],
-            [0, 1, 0, 0], [0, 1, 1, -1],
+            [1, -1, -2, 1],
+            [1, -1, 0, -1],
+            [-1, 0, 1, 1],
+            [-1, 2, 1, -1],
+            [1, 0, 0, 0],
+            [-1, 0, 0, 0],
+            [0, 0, 0, 1],
+            [0, 0, 1, 0],
+            [0, 1, 0, 0],
+            [0, 1, 1, -1],
         ]
     )
     face = p.faces(2)[19]  # a 5-point polygon with labels (3, 4, 7, 9, 12)
@@ -281,8 +284,16 @@ def test_random_flips_defaults():
     # "match the current triangulation". They used to be treated as False, so
     # the default walk was completely unrestricted
     p = Polytope(
-        [[0, 0, 1, 0], [-2, -2, -1, -2], [0, 0, 1, 2], [-1, 0, 1, 0],
-         [1, 2, -2, -1], [-1, 0, 0, -1], [0, 1, 0, 0], [1, 0, 0, 0]]
+        [
+            [0, 0, 1, 0],
+            [-2, -2, -1, -2],
+            [0, 0, 1, 2],
+            [-1, 0, 1, 0],
+            [1, 2, -2, -1],
+            [-1, 0, 0, -1],
+            [0, 1, 0, 0],
+            [1, 0, 0, 0],
+        ]
     )
     t = p.triangulate()
     assert t.is_fine() and t.is_star() and t.is_regular()
@@ -295,8 +306,9 @@ def test_random_flips_defaults():
 
     # explicitly opting out still allows non-fine/non-star triangulations
     results = [
-        t.random_flips(5, only_fine=False, only_star=False, only_regular=False,
-                       seed=seed)
+        t.random_flips(
+            5, only_fine=False, only_star=False, only_regular=False, seed=seed
+        )
         for seed in range(6)
     ]
     assert not all(r.is_fine() and r.is_star() for r in results)
@@ -318,8 +330,16 @@ def test_fine_neighbors_2d():
 
 def test_two_neighbors():
     p = Polytope(
-        [[0, 0, 1, 0], [-2, -2, -1, -2], [0, 0, 1, 2], [-1, 0, 1, 0],
-         [1, 2, -2, -1], [-1, 0, 0, -1], [0, 1, 0, 0], [1, 0, 0, 0]]
+        [
+            [0, 0, 1, 0],
+            [-2, -2, -1, -2],
+            [0, 0, 1, 2],
+            [-1, 0, 1, 0],
+            [1, 2, -2, -1],
+            [-1, 0, 0, -1],
+            [0, 1, 0, 0],
+            [1, 0, 0, 0],
+        ]
     )
     t = p.triangulate()
     triangs = t.neighbor_triangulations(two_neighbors=True)
@@ -336,15 +356,19 @@ def test_two_neighbors_skips_unextendable_flips():
     # triangulation, so two_neighbors returns fewer FRSTs than there are flips.
     p = Polytope(
         [
-            [-2, 2, 1, 0], [0, 0, 1, 0], [4, -2, -1, -2], [-2, 0, -1, 2],
-            [-2, 2, 0, 1], [0, 0, 0, 1], [0, 1, 0, 0], [1, -1, 1, -2],
+            [-2, 2, 1, 0],
+            [0, 0, 1, 0],
+            [4, -2, -1, -2],
+            [-2, 0, -1, 2],
+            [-2, 2, 0, 1],
+            [0, 0, 0, 1],
+            [0, 1, 0, 0],
+            [1, -1, 1, -2],
             [1, 0, 0, 0],
         ]
     )
     t = p.triangulate()
-    total_flips = sum(
-        len(ft._fine_neighbors_2d()) for ft in t.restrict(as_poly=True)
-    )
+    total_flips = sum(len(ft._fine_neighbors_2d()) for ft in t.restrict(as_poly=True))
     neighbors = t.neighbor_triangulations(two_neighbors=True)
     assert total_flips == 8
     assert len(neighbors) == 7  # one flip is not realizable and is skipped

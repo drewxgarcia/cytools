@@ -45,9 +45,8 @@ import os
 import resource
 import sys
 import time
-from dataclasses import dataclass, asdict
+from dataclasses import asdict, dataclass
 from pathlib import Path
-
 
 # ---------------------------------------------------------------------------
 # Instrumentation
@@ -80,7 +79,12 @@ def install_polytope_counter():
         state["n"] += 1
         return original(self, *args, **kwargs)
 
-    Polytope.__init__ = counting_init  # ty: ignore[invalid-assignment]
+    # A deliberate, process-lifetime monkeypatch: the counter must observe every
+    # Polytope built by the run, so it is installed rather than scoped. Assigning
+    # a differently-typed callable to `__init__` is exactly what a type checker
+    # should object to, so the objection is acknowledged here rather than dodged
+    # via `setattr`, which would hide the same thing without saying so.
+    Polytope.__init__ = counting_init
     _COUNTER_GET = lambda: state["n"]
     return _COUNTER_GET
 
@@ -96,9 +100,7 @@ def peak_rss_bytes() -> int:
 def cpu_seconds() -> float:
     r_self = resource.getrusage(resource.RUSAGE_SELF)
     r_kids = resource.getrusage(resource.RUSAGE_CHILDREN)
-    return (
-        r_self.ru_utime + r_self.ru_stime + r_kids.ru_utime + r_kids.ru_stime
-    )
+    return r_self.ru_utime + r_self.ru_stime + r_kids.ru_utime + r_kids.ru_stime
 
 
 # ---------------------------------------------------------------------------
@@ -216,9 +218,7 @@ def run_once(vertex_arrays, workers: int, chunksize: int = 8) -> Result:
 
             cpu0 = cpu_seconds()
             t0 = time.perf_counter()
-            results = list(
-                ex.map(compute_one_safe, vertex_arrays, chunksize=chunksize)
-            )
+            results = list(ex.map(compute_one_safe, vertex_arrays, chunksize=chunksize))
             wall = time.perf_counter() - t0
         finally:
             # RUSAGE_CHILDREN only accounts for *reaped* children, so worker CPU
@@ -324,7 +324,9 @@ def report(results, scan_s, baseline=None):
             b = base_by_w.get(r.workers)
             if not b:
                 continue
-            delta = r.geoms_per_s / b["geoms_per_s"] if b["geoms_per_s"] else float("nan")
+            delta = (
+                r.geoms_per_s / b["geoms_per_s"] if b["geoms_per_s"] else float("nan")
+            )
             arrow = "faster" if delta >= 1 else "SLOWER"
             print(
                 f"  workers={r.workers:>2}: {b['geoms_per_s']:.2f} -> "
@@ -340,7 +342,9 @@ def main(argv=None):
         default="13,14,15,16,17",
         help="KS vertex-count files to sample (13-17 is 65.9%% of the database)",
     )
-    ap.add_argument("--workers", default="1,2,4,8", help="comma-separated worker counts")
+    ap.add_argument(
+        "--workers", default="1,2,4,8", help="comma-separated worker counts"
+    )
     ap.add_argument("--db-dir", default=None)
     ap.add_argument("--json", default=None, help="write results here")
     ap.add_argument("--compare", default=None, help="compare against a results file")

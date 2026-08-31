@@ -17,32 +17,34 @@
 # -----------------------------------------------------------------------------
 # Description:  This module contains tools designed to compute triangulations.
 # -----------------------------------------------------------------------------
+from __future__ import annotations
 
-# 'standard' imports
-from collections.abc import Iterable, Sequence
 import copy
-from typing import Generator, Literal, overload, TYPE_CHECKING
-import itertools
 import math
 import warnings
+
+# 'standard' imports
+from collections.abc import Generator, Iterable, Sequence
+from typing import TYPE_CHECKING, Literal, overload
 
 # 3rd party imports
 import flint
 import numpy as np
-from cytools._typing import Matrix, Vector, VectorOrMatrix
-from scipy.spatial import ConvexHull
 import triangulumancer
+from scipy.spatial import ConvexHull
 
 # CYTools imports
 from cytools._extensions import lazy_method
-from cytools.cone import Cone
-from cytools.toricvariety import ToricVariety
+from cytools._typing import Matrix, Vector, VectorOrMatrix
+from cytools.helpers.arithmetic import gcd_reduce, primitive
 from cytools.utils import gcd_list, lll_reduce
 
 if TYPE_CHECKING:
     from cytools.calabiyau import CalabiYau
+    from cytools.cone import Cone
     from cytools.polytope import Polytope
     from cytools.polytopeface import PolytopeFace
+    from cytools.toricvariety import ToricVariety
 
 
 class Triangulation:
@@ -123,7 +125,7 @@ class Triangulation:
 
     #: The triangulation this one was restricted out of, if any. Set by
     #: `restrict(as_poly=True)` on the triangulation it produces.
-    _ambient_triangulation: "Triangulation | None" = None
+    _ambient_triangulation: Triangulation | None = None
 
     if TYPE_CHECKING:
         # Signatures for lazily loaded feature methods.
@@ -137,7 +139,7 @@ class Triangulation:
 
     def __init__(
         self,
-        poly: "Polytope",
+        poly: Polytope,
         pts: Sequence,
         make_star: bool = False,
         simplices: Iterable | None = None,
@@ -316,7 +318,7 @@ class Triangulation:
                 # construct the heights
                 if backend is None:
                     raise ValueError(
-                        "Simplices must be specified when working" "without a backend"
+                        "Simplices must be specified when working without a backend"
                     )
 
                 # Heights need to be perturbed around the Delaunay heights for
@@ -346,9 +348,9 @@ class Triangulation:
                 self._simplices = _qhull_triangulate(triang_pts, heights_arr)
 
                 # map to labels
-                self._simplices = np.asarray([
-                    [self._labels[i] for i in s] for s in self._simplices
-                ])
+                self._simplices = np.asarray(
+                    [[self._labels[i] for i in s] for s in self._simplices]
+                )
 
                 # convert to star
                 if make_star:
@@ -377,9 +379,7 @@ class Triangulation:
                     # (don't assume that the origin sits at index 0!)
                     other_heights = heights_masked.compressed()
                     if len(other_heights):
-                        origin_step = max(
-                            10, other_heights.max() - other_heights.min()
-                        )
+                        origin_step = max(10, other_heights.max() - other_heights.min())
                     else:
                         origin_step = 10
 
@@ -388,17 +388,17 @@ class Triangulation:
                         heights_arr[self._origin_index] -= origin_step
                         self._simplices = _cgal_triangulate(triang_pts, heights_arr)
                 # map to labels
-                self._simplices = np.asarray([
-                    [self._labels[i] for i in s] for s in self._simplices
-                ])
+                self._simplices = np.asarray(
+                    [[self._labels[i] for i in s] for s in self._simplices]
+                )
 
             else:  # Use TOPCOM
                 self._simplices = _topcom_triangulate(triang_pts)
 
                 # map to labels
-                self._simplices = np.asarray([
-                    [self._labels[i] for i in s] for s in self._simplices
-                ])
+                self._simplices = np.asarray(
+                    [[self._labels[i] for i in s] for s in self._simplices]
+                )
 
                 # convert to star
                 if make_star:
@@ -800,6 +800,8 @@ class Triangulation:
         # A simplicial compact 4-dimensional toric variety with 9 affine patches
         ```
         """
+        from cytools.toricvariety import ToricVariety
+
         # check if we know the answer
         if self._toricvariety is not None:
             return self._toricvariety
@@ -821,7 +823,7 @@ class Triangulation:
         # return
         return self._toricvariety
 
-    def get_cy(self, nef_partition: list[tuple[int]] | None = None) -> "CalabiYau":
+    def get_cy(self, nef_partition: list[tuple[int]] | None = None) -> CalabiYau:
         """
         **Description:**
         Returns a CalabiYau object corresponding to the anti-canonical
@@ -936,36 +938,35 @@ class Triangulation:
             if self._labels2inds is None:
                 self._labels2inds = {v: i for i, v in enumerate(self._labels)}
             return np.array([self._labels2inds[label] for label in which])
-        else:
-            if optimal and (not as_poly_indices):
-                dim_diff = self.ambient_dim() - self.dim()
-                if dim_diff > 0:
-                    # asking for optimal points, where the optimal value may
-                    # differ from the entire polytope
+        if optimal and (not as_poly_indices):
+            dim_diff = self.ambient_dim() - self.dim()
+            if dim_diff > 0:
+                # asking for optimal points, where the optimal value may
+                # differ from the entire polytope
 
-                    # calculate the map from labels to optimal points
-                    if self._labels2optPts is None:
-                        pts_opt = self.points()
-                        pts_opt = lll_reduce(pts_opt - pts_opt[0])[:, dim_diff:]
+                # calculate the map from labels to optimal points
+                if self._labels2optPts is None:
+                    pts_opt = self.points()
+                    pts_opt = lll_reduce(pts_opt - pts_opt[0])[:, dim_diff:]
 
-                        self._labels2optPts = dict()
-                        for label, pt in zip(self.labels, pts_opt):
-                            self._labels2optPts[label] = tuple(pt)
+                    self._labels2optPts = dict()
+                    for label, pt in zip(self.labels, pts_opt):
+                        self._labels2optPts[label] = tuple(pt)
 
-                    # return the relevant points
-                    return np.array([self._labels2optPts[l] for l in which])
+                # return the relevant points
+                return np.array([self._labels2optPts[l] for l in which])
 
-            # normal case
-            return self.poly.points(
-                which=which, optimal=optimal, as_indices=as_poly_indices
-            )
+        # normal case
+        return self.poly.points(
+            which=which, optimal=optimal, as_indices=as_poly_indices
+        )
 
     # aliases
     pts = points
 
     def points_to_labels(
         self, points: VectorOrMatrix, is_optimal: bool = False
-    ) -> "list | None":
+    ) -> list | None:
         """
         **Description:**
         Returns the list of labels corresponding to the given points. It also
@@ -1004,7 +1005,7 @@ class Triangulation:
         points: VectorOrMatrix,
         is_optimal: bool = False,
         as_poly_indices: bool = False,
-    ) -> "np.ndarray | int":
+    ) -> np.ndarray | int:
         """
         **Description:**
         Returns the list of indices corresponding to the given points. It also
@@ -1049,10 +1050,9 @@ class Triangulation:
         # get/return the indices
         if single_pt and len(inds):
             return inds[0]  # just return the single index
-        else:
-            return inds  # return a list of indices
+        return inds  # return a list of indices
 
-    def triangulation_to_polytope_indices(self, inds) -> "np.ndarray | int":
+    def triangulation_to_polytope_indices(self, inds) -> np.ndarray | int:
         """
         **Description:**
         Takes a list of indices of points of the triangulation and it returns
@@ -1110,11 +1110,11 @@ class Triangulation:
         simps = self.simplices()
         # simps = np.array([self.points(s, as_triang_indices=True) for s in simps])
 
-        if simps.shape[1] != self.dim()+1:
+        if simps.shape[1] != self.dim() + 1:
             self._is_valid = False
             return self._is_valid
 
-        #if simps.shape[0] == 1:
+        # if simps.shape[0] == 1:
         #    # triangulation is trivial
         #    self._is_valid = True
         #    return self._is_valid
@@ -1179,6 +1179,8 @@ class Triangulation:
             return self._is_valid
 
         # Finally, check if simplices have full-dimensional intersections
+        from cytools.cone import Cone
+
         for i, s1 in enumerate(simps):
             pts_1 = [pts_ext[i] for i in s1]
 
@@ -1277,7 +1279,7 @@ class Triangulation:
         split_by_face: bool = False,
         as_np_array: bool = True,
         as_indices: bool = False,
-    ) -> "set | list | np.ndarray":
+    ) -> set | list | np.ndarray:
         """
         **Description:**
         Returns the simplices of the triangulation. It also has the option of
@@ -1336,9 +1338,8 @@ class Triangulation:
 
             if as_np_array:
                 return np.array(out)
-            else:
-                return {frozenset(simp) for simp in out}
-        elif on_faces_dim is not None:
+            return {frozenset(simp) for simp in out}
+        if on_faces_dim is not None:
             faces_dim = on_faces_dim
         elif on_faces_codim is not None:
             faces_dim = self.dim() - on_faces_codim
@@ -1353,8 +1354,9 @@ class Triangulation:
             full_simp = [frozenset(s) for s in self._simplices]
 
             # get face indices
-            face_labels = [frozenset(face.labels)
-                           for face in self.polytope().faces(faces_dim)]
+            face_labels = [
+                frozenset(face.labels) for face in self.polytope().faces(faces_dim)
+            ]
 
             # actually restrict
             restricted = []
@@ -1393,7 +1395,7 @@ class Triangulation:
 
     def restrict(
         self,
-        restrict_to: "PolytopeFace | Iterable[PolytopeFace] | None" = None,
+        restrict_to: PolytopeFace | Iterable[PolytopeFace] | None = None,
         restrict_dim: int = 2,
         as_poly: bool = False,
         verbosity: int = 0,
@@ -1456,8 +1458,7 @@ class Triangulation:
             )
             restricted._ambient_triangulation = self
             return restricted
-        else:
-            return sorted([sorted([int(i) for i in simp]) for simp in face_simps])
+        return sorted([sorted([int(i) for i in simp]) for simp in face_simps])
 
     # regularity
     # ----------
@@ -1489,7 +1490,7 @@ class Triangulation:
         as_cone: bool = True,
         on_faces_dim: int | None = None,
         use_cache: bool = True,
-    ) -> "Cone | np.ndarray | list":
+    ) -> Cone | np.ndarray | list:
         """
         **Description:**
         Computes the (hyperplanes defining the) secondary cone of the
@@ -1547,6 +1548,9 @@ class Triangulation:
         # A rational polyhedral cone in RR^7 defined by 3 hyperplanes normals
         ```
         """
+        if as_cone:
+            from cytools.cone import Cone
+
         # input sanitization
         # ------------------
         args_id = int(include_points_not_in_triangulation)
@@ -1606,8 +1610,7 @@ class Triangulation:
                     hyps = np.zeros((0, len(self.labels)), dtype=int)
 
                 return Cone(hyperplanes=hyps, check=False)
-            else:
-                return hyps
+            return hyps
 
         # want the secondary cone of the triangulation
         cached_hyps = self._secondary_cone[args_id]
@@ -1622,8 +1625,7 @@ class Triangulation:
                     hyps = np.zeros((0, len(self.labels)), dtype=int)
 
                 return Cone(hyperplanes=hyps, check=False)
-            else:
-                return hyps
+            return hyps
 
         # we don't yet know the answer... calculate it now!
         if backend == "topcom":
@@ -1746,8 +1748,7 @@ class Triangulation:
 
             if integral:
                 return heights_out.astype(int)
-            else:
-                return heights_out
+            return heights_out
 
         # need to calculate the heights
         Npts = len(self.labels)
@@ -1940,7 +1941,7 @@ class Triangulation:
 
     def is_equivalent(
         self,
-        other: "Triangulation",
+        other: Triangulation,
         use_automorphisms: bool = True,
         on_faces_dim: int | None = None,
         on_faces_codim: int | None = None,
@@ -2014,7 +2015,7 @@ class Triangulation:
         two_neighbors_track_flips: bool = False,
         backend: str | None = None,
         verbose: bool = False,
-    ) -> list["Triangulation"]:
+    ) -> list[Triangulation]:
         """
         **Description:**
         Returns the list of triangulations that differ by one bistellar flip
@@ -2086,9 +2087,7 @@ class Triangulation:
 
         # optimized method for 2D fine neighbors
         if self.is_fine() and (self.dim() == 2) and only_fine:
-            return self._fine_neighbors_2d(
-                only_regular=only_regular, backend=backend
-            )
+            return self._fine_neighbors_2d(only_regular=only_regular, backend=backend)
 
         # triangulumancer indexes points by their position in the point
         # configuration (i.e., row of self.points(...)), while self._simplices
@@ -2138,7 +2137,7 @@ class Triangulation:
         only_star: bool | None = None,
         backend: str | None = None,
         seed: int | None = None,
-    ) -> "Triangulation":
+    ) -> Triangulation:
         """
         **Description:**
         Returns a triangulation obtained by performing N random bistellar
@@ -2221,7 +2220,7 @@ class Triangulation:
         self,
         only_regular: bool = False,
         backend: str | None = None,
-    ) -> list["Triangulation"]:
+    ) -> list[Triangulation]:
         """
         **Description:**
         An optimized variant of neighbor_triangulations for triangulations that
@@ -2287,7 +2286,7 @@ class Triangulation:
         make_star: bool | None = None,
         backend: str | None = None,
         two_neighbors_track_flips: bool = False,
-    ) -> list["Triangulation"]:
+    ) -> list[Triangulation]:
         """
         **Description:**
         Returns the "2-neighbors": the FRSTs reachable by a single 2D diagonal
@@ -2329,8 +2328,7 @@ class Triangulation:
         n_faces = len(face_triangs)
 
         def ineqs(ft):
-            return np.asarray(_2d_frt_cone_ineqs(ft, npts).toarray(),
-                              dtype=np.float64)
+            return np.asarray(_2d_frt_cone_ineqs(ft, npts).toarray(), dtype=np.float64)
 
         # A single 2-face flip changes only that one face's inequalities, so
         # the other faces' blocks are stacked once into a warm incremental LP
@@ -2350,14 +2348,21 @@ class Triangulation:
             lp = _IncrementalLP(npts)
             cur = None
             for i, flipped, circuit in chunk:
-                key = (i, tuple(sorted(
-                    tuple(sorted(int(x) for x in s))
-                    for s in flipped.simplices())))
+                key = (
+                    i,
+                    tuple(
+                        sorted(
+                            tuple(sorted(int(x) for x in s))
+                            for s in flipped.simplices()
+                        )
+                    ),
+                )
                 if key in seen:
                     continue
                 if cur != i:
-                    other = [fixed[j] for j in range(n_faces)
-                             if j != i and len(fixed[j])]
+                    other = [
+                        fixed[j] for j in range(n_faces) if j != i and len(fixed[j])
+                    ]
                     base = np.vstack(other) if other else np.zeros((0, npts))
                     lp = _IncrementalLP(npts)
                     lp.push(base)
@@ -2372,7 +2377,8 @@ class Triangulation:
                 tri = poly.triangulate(
                     heights=np.delete(heights, poly.labels_facet),
                     include_points_interior_to_facets=False,
-                    make_star=make_star, check_heights=False,
+                    make_star=make_star,
+                    check_heights=False,
                     **({} if backend is None else {"backend": backend}),
                 )
                 out.append((tri, i, circuit) if two_neighbors_track_flips else tri)
@@ -2382,15 +2388,20 @@ class Triangulation:
             # the diagonal swap rewrites the 2-face's triangulation; the
             # symmetric difference of the two spans exactly the quadrilateral
             before = {tuple(sorted(int(v) for v in s)) for s in pre.simplices()}
-            after  = {tuple(sorted(int(v) for v in s)) for s in post.simplices()}
+            after = {tuple(sorted(int(v) for v in s)) for s in post.simplices()}
             return tuple(sorted({v for s in before ^ after for v in s}))
 
         # the (face, flip) tasks, grouped by face so each chunk reuses its
         # warm LP for a face's flips
-        tasks = [(i, flipped, _flip_circuit(ft, flipped) if two_neighbors_track_flips
-                  else None)
-                 for i, ft in enumerate(face_triangs)
-                 for flipped in ft._fine_neighbors_2d()]
+        tasks = [
+            (
+                i,
+                flipped,
+                _flip_circuit(ft, flipped) if two_neighbors_track_flips else None,
+            )
+            for i, ft in enumerate(face_triangs)
+            for flipped in ft._fine_neighbors_2d()
+        ]
 
         # parallelization follows CYTools' global config.n_threads
         from multiprocessing import cpu_count
@@ -2409,7 +2420,7 @@ class Triangulation:
 
         n = joblib.effective_n_jobs(n_threads)
         size = -(-len(tasks) // n)
-        chunks = [tasks[k * size:(k + 1) * size] for k in range(n)]
+        chunks = [tasks[k * size : (k + 1) * size] for k in range(n)]
         chunks = [c for c in chunks if c]
         batches = joblib.Parallel(n_jobs=n_threads)(
             joblib.delayed(extend_chunk)(c, fixed) for c in chunks
@@ -2691,7 +2702,7 @@ def _normalize_heights(heights: Vector) -> np.ndarray:
         # triangulation, so we keep the full float precision instead.
         heights = np.asarray(heights, dtype=np.float64)
         if heights.size:
-            heights = heights - heights.min()
+            heights = heights - np.min(heights)
         return heights
 
     # integral heights: divide out the gcd and shift so the minimum is 0
@@ -2699,11 +2710,11 @@ def _normalize_heights(heights: Vector) -> np.ndarray:
         heights = heights.astype(np.int64)
     else:
         heights = np.rint(heights).astype(np.int64)
-    gcd = np.gcd.reduce(np.abs(heights)) if heights.size else 0  # ty: ignore[no-matching-overload]
+    gcd = int(gcd_reduce(heights)) if heights.size else 0
     if gcd > 1:
         heights = heights // gcd
     if heights.size:
-        heights = heights - heights.min()
+        heights = heights - np.min(heights)
 
     # Pick the smallest dtype that fits. This *must* be done after the values
     # are final (rounding first, then choosing the dtype), and the dtype must
@@ -2881,7 +2892,7 @@ def _topcom_triangulate(points: Matrix) -> np.ndarray:
 
 
 def all_triangulations(
-    poly: "Polytope",
+    poly: Polytope,
     pts: Sequence,
     only_fine: bool = False,
     only_regular: bool = False,
@@ -2889,7 +2900,7 @@ def all_triangulations(
     star_origin: int | None = None,
     backend: str | None = None,
     raw_output: bool = False,
-) -> "Generator[Triangulation, None, None]":
+) -> Generator[Triangulation | np.ndarray, None, None]:
     """
     **Description:**
     Computes all triangulations of the input point configuration using TOPCOM.
@@ -2939,7 +2950,7 @@ def all_triangulations(
     # configuration with 7 points in ZZ^4
     len(list(p.all_triangulations())) # Number of fine, regular, star triangulations
     # 2
-    len(list(p.all_triangulations(only_regular=False, only_star=False, only_fine=False))) # Number of triangularions, no matter if fine, regular, or star
+    len(list(p.all_triangulations(only_regular=False, only_star=False, only_fine=False))) # Number of triangulations, no matter if fine, regular, or star
     # 6
     ```
     """
@@ -2997,7 +3008,7 @@ def all_triangulations(
 
 
 def random_triangulations_fast_generator(
-    poly: "Polytope",
+    poly: Polytope,
     pts: Sequence,
     N: int | None = None,
     c: float = 0.2,
@@ -3007,7 +3018,7 @@ def random_triangulations_fast_generator(
     backend: str = "cgal",
     seed: int | None = None,
     verbosity: int = 0,
-) -> "Generator[Triangulation, None, None]":
+) -> Generator[Triangulation, None, None]:
     """
     Constructs pseudorandom regular (optionally fine and star) triangulations
     of a given point set. This is done by picking random heights around the
@@ -3122,7 +3133,7 @@ def random_triangulations_fast_generator(
 
 
 def random_triangulations_fair_generator(
-    poly: "Polytope",
+    poly: Polytope,
     pts: Sequence,
     N: int | None = None,
     n_walk: int = 10,
@@ -3135,7 +3146,7 @@ def random_triangulations_fair_generator(
     make_star: bool = False,
     backend: str = "cgal",
     seed: int | None = None,
-) -> "Generator[Triangulation, None, None]":
+) -> Generator[Triangulation, None, None]:
     r"""
     **Description:**
     Constructs pseudorandom regular (optionally star) triangulations of a given
@@ -3449,8 +3460,8 @@ def _secondary_cone_hyperplanes_native(triang) -> list:
     if not len(interior):
         return []
 
-    shared = sorted_facets[interior]           # (n_pairs, width-1)
-    opposite_a = sorted_dropped[interior]      # (n_pairs,)
+    shared = sorted_facets[interior]  # (n_pairs, width-1)
+    opposite_a = sorted_dropped[interior]  # (n_pairs,)
     opposite_b = sorted_dropped[interior + 1]
     n_pairs = len(interior)
 
@@ -3467,9 +3478,7 @@ def _secondary_cone_hyperplanes_native(triang) -> list:
     mats[:, :-1, 1] = coords[row_of[opposite_b]]
     mats[:, :-1, 2 : 2 + (width - 1)] = coords[row_of[shared]].transpose(0, 2, 1)
     if is_star:
-        mats[:, :-1, -1] = np.asarray(
-            triang.points(which=origin, optimal=True)
-        )
+        mats[:, :-1, -1] = np.asarray(triang.points(which=origin, optimal=True))
 
     # generalized cross product via signed minors
     null = np.empty((n_pairs, n_cols), dtype=np.int64)
@@ -3481,15 +3490,11 @@ def _secondary_cone_hyperplanes_native(triang) -> list:
 
     # normalize sign, then reduce by the gcd
     np.negative(null, out=null, where=(null[:, :1] < 0))
-    gcds = np.gcd.reduce(np.abs(null), axis=1)  # ty: ignore[no-matching-overload]
-    gcds[gcds == 0] = 1
-    null //= gcds[:, None]
+    null = primitive(null, axis=1)
 
     # exact verification: M v must vanish over the integers
     residual = np.einsum("nij,nj->ni", mats, null)
-    suspect = np.flatnonzero(
-        (residual != 0).any(axis=1) | (null == 0).all(axis=1)
-    )
+    suspect = np.flatnonzero((residual != 0).any(axis=1) | (null == 0).all(axis=1))
     if len(suspect):
         # Correct but slow: the batched path is self-healing, so a bug in it
         # shows up as a silent loss of speed rather than a wrong answer. Count
@@ -3548,9 +3553,7 @@ def _secondary_cone_hyperplanes_flint(triang) -> list:
 
     if triang.is_star():
         simps = [s - {triang.poly._label_origin} for s in simps]
-        mat[:-1, -1] = triang.points(
-            which=triang.poly._label_origin, optimal=True
-        )
+        mat[:-1, -1] = triang.points(which=triang.poly._label_origin, optimal=True)
 
     facet_to_simps = {}
     for idx, s in enumerate(simps):

@@ -26,60 +26,83 @@ Run full suite:
     pytest benchmarks/bench_polytope.py --benchmark-only
 """
 
-import numpy as np
 import pytest
 
-from cytools import Polytope
 from benchmarks._data import POLY_5V
+from cytools import Polytope
 
 # Two polytopes for equivalence tests
-_P1 = Polytope([[1,0,0,0],[0,1,0,0],[0,0,1,0],[0,0,0,1],[-1,-1,-1,-1]])
-_P2 = Polytope([[1,0,0,1],[0,1,0,1],[0,0,1,1],[0,0,0,2],[-1,-1,-1,0]])
+_P1 = Polytope(
+    [[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1], [-1, -1, -1, -1]]
+)
+_P2 = Polytope(
+    [[1, 0, 0, 1], [0, 1, 0, 1], [0, 0, 1, 1], [0, 0, 0, 2], [-1, -1, -1, 0]]
+)
 
 # Two small polytopes for Minkowski sum
-_MS1 = Polytope([[1,0,0],[0,1,0],[-1,-1,0]])
-_MS2 = Polytope([[0,0,1],[0,0,-1]])
+_MS1 = Polytope([[1, 0, 0], [0, 1, 0], [-1, -1, 0]])
+_MS2 = Polytope([[0, 0, 1], [0, 0, -1]])
 
 # 4D reflexive with a known 2D reflexive subpolytope
-_P_4D_REFL = Polytope([[1,0,0,0],[0,1,0,0],[0,0,1,0],[0,0,0,1],[-1,-1,-6,-9]])
+_P_4D_REFL = Polytope(
+    [[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1], [-1, -1, -6, -9]]
+)
 
 
 # ---------------------------------------------------------------------------
 # 1. Construction
 # ---------------------------------------------------------------------------
 
+
 class TestConstruction:
     def test_construct_5v(self, benchmark):
-        benchmark(Polytope, [[1,0,0,0],[0,1,0,0],[0,0,1,0],[0,0,0,1],[-1,-1,-6,-9]])
+        benchmark(
+            Polytope,
+            [[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1], [-1, -1, -6, -9]],
+        )
 
     def test_construct_simplex_5d(self, benchmark):
         """5D simplex — tests PPL fallback for dim > 4."""
-        verts = [[1,0,0,0,0],[0,1,0,0,0],[0,0,1,0,0],[0,0,0,1,0],[0,0,0,0,1],[-1,-1,-1,-1,-1]]
+        verts = [
+            [1, 0, 0, 0, 0],
+            [0, 1, 0, 0, 0],
+            [0, 0, 1, 0, 0],
+            [0, 0, 0, 1, 0],
+            [0, 0, 0, 0, 1],
+            [-1, -1, -1, -1, -1],
+        ]
         benchmark(Polytope, verts)
 
     def test_construct_batch(self, benchmark, tiny_polys):
         verts_list = [list(r.polytope.vertices()) for r in tiny_polys]
+
         def go():
             return [Polytope(v) for v in verts_list]
+
         benchmark.pedantic(go, rounds=3, iterations=1)
 
     def test_construct_small_batch(self, benchmark, small_polys):
         verts_list = [list(r.polytope.vertices()) for r in small_polys]
+
         def go():
             return [Polytope(v) for v in verts_list]
+
         benchmark.pedantic(go, rounds=3, iterations=1)
 
     @pytest.mark.slow
     def test_construct_medium_batch(self, benchmark, medium_polys):
         verts_list = [list(r.polytope.vertices()) for r in medium_polys]
+
         def go():
             return [Polytope(v) for v in verts_list]
+
         benchmark.pedantic(go, rounds=1, iterations=1)
 
 
 # ---------------------------------------------------------------------------
 # 2. Metadata / labels (cheap, but tested for regression)
 # ---------------------------------------------------------------------------
+
 
 class TestMetadata:
     def test_ambient_dimension(self, benchmark):
@@ -123,6 +146,7 @@ class TestMetadata:
 # 3. Inequalities
 # ---------------------------------------------------------------------------
 
+
 class TestInequalities:
     def test_inequalities_5v(self, benchmark):
         benchmark(POLY_5V.inequalities)
@@ -130,17 +154,20 @@ class TestInequalities:
     def test_inequalities_batch(self, benchmark, tiny_poly_objects):
         def go():
             return [p.inequalities() for p in tiny_poly_objects]
+
         benchmark.pedantic(go, rounds=3, iterations=1)
 
     def test_inequalities_small_batch(self, benchmark, small_poly_objects):
         def go():
             return [p.inequalities() for p in small_poly_objects]
+
         benchmark.pedantic(go, rounds=3, iterations=1)
 
 
 # ---------------------------------------------------------------------------
 # 4. Points / vertices
 # ---------------------------------------------------------------------------
+
 
 class TestPointsVertices:
     def test_points_5v(self, benchmark):
@@ -173,23 +200,27 @@ class TestPointsVertices:
     def test_points_batch(self, benchmark, tiny_poly_objects):
         def go():
             return [p.points() for p in tiny_poly_objects]
+
         benchmark.pedantic(go, rounds=3, iterations=1)
 
     def test_points_small_batch(self, benchmark, small_poly_objects):
         def go():
             return [p.points() for p in small_poly_objects]
+
         benchmark.pedantic(go, rounds=3, iterations=1)
 
     @pytest.mark.slow
     def test_points_medium_batch(self, benchmark, medium_poly_objects):
         def go():
             return [p.points() for p in medium_poly_objects]
+
         benchmark.pedantic(go, rounds=1, iterations=1)
 
 
 # ---------------------------------------------------------------------------
 # 5. Faces / facets
 # ---------------------------------------------------------------------------
+
 
 class TestFaces:
     def test_faces_all_5v(self, benchmark):
@@ -213,17 +244,20 @@ class TestFaces:
     def test_faces_batch(self, benchmark, tiny_poly_objects):
         def go():
             return [p.faces() for p in tiny_poly_objects]
+
         benchmark.pedantic(go, rounds=3, iterations=1)
 
     def test_faces_small_batch(self, benchmark, small_poly_objects):
         def go():
             return [p.faces() for p in small_poly_objects]
+
         benchmark.pedantic(go, rounds=3, iterations=1)
 
     @pytest.mark.slow
     def test_faces_medium_batch(self, benchmark, medium_poly_objects):
         def go():
             return [p.faces() for p in medium_poly_objects]
+
         benchmark.pedantic(go, rounds=1, iterations=1)
 
 
@@ -231,14 +265,17 @@ class TestFaces:
 # 6. Dual polytope
 # ---------------------------------------------------------------------------
 
+
 class TestDualPolytope:
     def test_dual_polytope_5v(self, benchmark):
         benchmark(_P1.dual_polytope)
 
     def test_dual_polytope_batch(self, benchmark, tiny_poly_objects):
         """All KS 4D polytopes are reflexive by definition — no filter needed."""
+
         def go():
             return [p.dual_polytope() for p in tiny_poly_objects]
+
         benchmark.pedantic(go, rounds=3, iterations=1)
 
     def test_dual_roundtrip_5v(self, benchmark):
@@ -250,6 +287,7 @@ class TestDualPolytope:
 # ---------------------------------------------------------------------------
 # 7. Automorphisms
 # ---------------------------------------------------------------------------
+
 
 class TestAutomorphisms:
     def test_automorphisms_5v(self, benchmark):
@@ -264,17 +302,20 @@ class TestAutomorphisms:
     def test_automorphisms_batch(self, benchmark, tiny_poly_objects):
         def go():
             return [p.automorphisms() for p in tiny_poly_objects]
+
         benchmark.pedantic(go, rounds=3, iterations=1)
 
     def test_automorphisms_small_batch(self, benchmark, small_poly_objects):
         def go():
             return [p.automorphisms() for p in small_poly_objects]
+
         benchmark.pedantic(go, rounds=3, iterations=1)
 
 
 # ---------------------------------------------------------------------------
 # 8. Normal form
 # ---------------------------------------------------------------------------
+
 
 class TestNormalForm:
     def test_normal_form_5v(self, benchmark):
@@ -286,11 +327,13 @@ class TestNormalForm:
     def test_normal_form_batch(self, benchmark, tiny_poly_objects):
         def go():
             return [p.normal_form() for p in tiny_poly_objects]
+
         benchmark.pedantic(go, rounds=3, iterations=1)
 
     def test_normal_form_small_batch(self, benchmark, small_poly_objects):
         def go():
             return [p.normal_form() for p in small_poly_objects]
+
         benchmark.pedantic(go, rounds=3, iterations=1)
 
 
@@ -298,10 +341,15 @@ class TestNormalForm:
 # 9. Equivalence tests
 # ---------------------------------------------------------------------------
 
+
 class TestEquivalence:
     def test_is_linearly_equivalent_true(self, benchmark):
-        p1 = Polytope([[1,0,0,0],[0,1,0,0],[0,0,1,0],[0,0,0,1],[-1,-1,-1,-1]])
-        p2 = Polytope([[-1,0,0,0],[0,-1,0,0],[0,0,-1,0],[0,0,0,-1],[1,1,1,1]])
+        p1 = Polytope(
+            [[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1], [-1, -1, -1, -1]]
+        )
+        p2 = Polytope(
+            [[-1, 0, 0, 0], [0, -1, 0, 0], [0, 0, -1, 0], [0, 0, 0, -1], [1, 1, 1, 1]]
+        )
         benchmark(p1.is_linearly_equivalent, p2)
 
     def test_is_linearly_equivalent_false(self, benchmark):
@@ -319,6 +367,7 @@ class TestEquivalence:
     def test_is_favorable_batch(self, benchmark, tiny_poly_objects):
         def go():
             return [p.is_favorable(lattice="N") for p in tiny_poly_objects]
+
         benchmark.pedantic(go, rounds=3, iterations=1)
 
 
@@ -326,9 +375,10 @@ class TestEquivalence:
 # 10. Volume + geometry
 # ---------------------------------------------------------------------------
 
+
 class TestGeometry:
     def test_volume_3d(self, benchmark):
-        p = Polytope([[1,0,0],[0,1,0],[0,0,1],[0,0,0]])
+        p = Polytope([[1, 0, 0], [0, 1, 0], [0, 0, 1], [0, 0, 0]])
         benchmark(p.volume)
 
     def test_volume_4d_5v(self, benchmark):
@@ -337,13 +387,14 @@ class TestGeometry:
     def test_volume_batch(self, benchmark, tiny_poly_objects):
         def go():
             return [p.volume() for p in tiny_poly_objects]
+
         benchmark.pedantic(go, rounds=3, iterations=1)
 
     def test_minkowski_sum(self, benchmark):
         benchmark(_MS1.minkowski_sum, _MS2)
 
     def test_get_bdry_5v(self, benchmark):
-        p = Polytope([[1,0,0],[0,1,0],[-1,-1,0]])
+        p = Polytope([[1, 0, 0], [0, 1, 0], [-1, -1, 0]])
         benchmark(p.get_bdry)
 
     def test_find_2d_reflexive_subpolytopes(self, benchmark):
@@ -356,6 +407,7 @@ class TestGeometry:
 # ---------------------------------------------------------------------------
 # 11. GLSM / linear algebra
 # ---------------------------------------------------------------------------
+
 
 class TestGLSM:
     def test_glsm_charge_matrix_5v(self, benchmark):
@@ -373,23 +425,27 @@ class TestGLSM:
     def test_glsm_charge_matrix_batch(self, benchmark, tiny_poly_objects):
         def go():
             return [p.glsm_charge_matrix() for p in tiny_poly_objects]
+
         benchmark.pedantic(go, rounds=3, iterations=1)
 
     def test_glsm_charge_matrix_small_batch(self, benchmark, small_poly_objects):
         def go():
             return [p.glsm_charge_matrix() for p in small_poly_objects]
+
         benchmark.pedantic(go, rounds=3, iterations=1)
 
     @pytest.mark.slow
     def test_glsm_charge_matrix_medium_batch(self, benchmark, medium_poly_objects):
         def go():
             return [p.glsm_charge_matrix() for p in medium_poly_objects]
+
         benchmark.pedantic(go, rounds=1, iterations=1)
 
 
 # ---------------------------------------------------------------------------
 # 12. Topological invariants
 # ---------------------------------------------------------------------------
+
 
 class TestTopology:
     def test_chi_N_5v(self, benchmark):
@@ -410,22 +466,26 @@ class TestTopology:
     def test_chi_batch(self, benchmark, tiny_poly_objects):
         def go():
             return [p.chi(lattice="N") for p in tiny_poly_objects]
+
         benchmark.pedantic(go, rounds=3, iterations=1)
 
     def test_hpq_batch(self, benchmark, tiny_poly_objects):
         def go():
             return [p.hpq(1, 1, lattice="N") for p in tiny_poly_objects]
+
         benchmark.pedantic(go, rounds=3, iterations=1)
 
     def test_chi_small_batch(self, benchmark, small_poly_objects):
         def go():
             return [p.chi(lattice="N") for p in small_poly_objects]
+
         benchmark.pedantic(go, rounds=3, iterations=1)
 
     @pytest.mark.slow
     def test_chi_medium_batch(self, benchmark, medium_poly_objects):
         def go():
             return [p.chi(lattice="N") for p in medium_poly_objects]
+
         benchmark.pedantic(go, rounds=1, iterations=1)
 
 
@@ -433,47 +493,103 @@ class TestTopology:
 # 13. Triangulation
 # ---------------------------------------------------------------------------
 
+
 class TestTriangulation:
     def test_triangulate_5v(self, benchmark):
         def go():
-            p = Polytope([[1,0,0,0],[0,1,0,0],[0,0,1,0],[0,0,0,1],[-1,-1,-6,-9]])
+            p = Polytope(
+                [
+                    [1, 0, 0, 0],
+                    [0, 1, 0, 0],
+                    [0, 0, 1, 0],
+                    [0, 0, 0, 1],
+                    [-1, -1, -6, -9],
+                ]
+            )
             return p.triangulate()
+
         benchmark(go)
 
     def test_triangulate_no_star(self, benchmark):
         def go():
-            p = Polytope([[1,0,0,0],[0,1,0,0],[0,0,1,0],[0,0,0,1],[-1,-1,-6,-9]])
+            p = Polytope(
+                [
+                    [1, 0, 0, 0],
+                    [0, 1, 0, 0],
+                    [0, 0, 1, 0],
+                    [0, 0, 0, 1],
+                    [-1, -1, -6, -9],
+                ]
+            )
             return p.triangulate(make_star=False)
+
         benchmark(go)
 
     def test_all_triangulations_2triang(self, benchmark):
         def go():
-            p = Polytope([[1,0,0,0],[0,1,0,0],[0,0,1,0],[0,0,0,1],[-1,-2,-1,-1],[-2,-1,-1,-1]])
+            p = Polytope(
+                [
+                    [1, 0, 0, 0],
+                    [0, 1, 0, 0],
+                    [0, 0, 1, 0],
+                    [0, 0, 0, 1],
+                    [-1, -2, -1, -1],
+                    [-2, -1, -1, -1],
+                ]
+            )
             return list(p.all_triangulations())
+
         benchmark(go)
 
     def test_all_triangulations_no_filters(self, benchmark):
         def go():
-            p = Polytope([[1,0,0,0],[0,1,0,0],[0,0,1,0],[0,0,0,1],[-1,-2,-1,-1],[-2,-1,-1,-1]])
-            return list(p.all_triangulations(only_fine=False, only_regular=False, only_star=False))
+            p = Polytope(
+                [
+                    [1, 0, 0, 0],
+                    [0, 1, 0, 0],
+                    [0, 0, 1, 0],
+                    [0, 0, 0, 1],
+                    [-1, -2, -1, -1],
+                    [-2, -1, -1, -1],
+                ]
+            )
+            return list(
+                p.all_triangulations(
+                    only_fine=False, only_regular=False, only_star=False
+                )
+            )
+
         benchmark(go)
 
     def test_triangulate_batch(self, benchmark, tiny_polys):
         verts_list = [list(r.polytope.vertices()) for r in tiny_polys]
+
         def go():
             return [Polytope(v).triangulate() for v in verts_list]
+
         benchmark.pedantic(go, rounds=3, iterations=1)
 
     def test_triangulate_small_batch(self, benchmark, small_polys):
         verts_list = [list(r.polytope.vertices()) for r in small_polys]
+
         def go():
             return [Polytope(v).triangulate() for v in verts_list]
+
         benchmark.pedantic(go, rounds=3, iterations=1)
 
     def test_random_triangulations_fast_5(self, benchmark):
         def go():
-            p = Polytope([[1,0,0,0],[0,1,0,0],[0,0,1,0],[0,0,0,1],[-1,-1,-6,-9]])
+            p = Polytope(
+                [
+                    [1, 0, 0, 0],
+                    [0, 1, 0, 0],
+                    [0, 0, 1, 0],
+                    [0, 0, 0, 1],
+                    [-1, -1, -6, -9],
+                ]
+            )
             return list(p.random_triangulations_fast(N=5))
+
         benchmark(go)
 
     def test_vc_5v(self, benchmark):
@@ -488,6 +604,8 @@ class TestTriangulation:
     @pytest.mark.slow
     def test_triangulate_medium_batch(self, benchmark, medium_polys):
         verts_list = [list(r.polytope.vertices()) for r in medium_polys]
+
         def go():
             return [Polytope(v).triangulate() for v in verts_list]
+
         benchmark.pedantic(go, rounds=1, iterations=1)

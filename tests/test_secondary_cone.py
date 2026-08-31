@@ -25,8 +25,12 @@ POLYTOPES = [
     [[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1], [-1, -1, -6, -9]],
     [[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1], [-1, -1, -1, -1]],
     [
-        [1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1],
-        [-1, -1, -3, -6], [-1, -1, -1, -1],
+        [1, 0, 0, 0],
+        [0, 1, 0, 0],
+        [0, 0, 1, 0],
+        [0, 0, 0, 1],
+        [-1, -1, -3, -6],
+        [-1, -1, -1, -1],
     ],
     [[-6, -8, -5, -5], [0, 1, 0, 0], [1, 0, 0, 0], [2, 4, 5, 0], [3, 3, 0, 5]],
 ]
@@ -115,9 +119,7 @@ def test_cached_and_uncached_agree(verts):
     triang = Polytope(verts).triangulate()
     first = triang.secondary_cone(use_cache=False)
     second = triang.secondary_cone()
-    assert set(map(tuple, first.hyperplanes())) == set(
-        map(tuple, second.hyperplanes())
-    )
+    assert set(map(tuple, first.hyperplanes())) == set(map(tuple, second.hyperplanes()))
 
 
 def test_batched_path_does_not_fall_back():

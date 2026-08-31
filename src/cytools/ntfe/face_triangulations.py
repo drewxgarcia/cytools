@@ -19,76 +19,39 @@
 # -----------------------------------------------------------------------------
 
 # 'standard' imports
-import importlib
 import math
-import subprocess
-import sys
 import time
 import warnings
+from collections.abc import Iterable
+
+# typing
+from typing import Union
 
 # 3rd party imports
 import numpy as np
 
-# CYTools imports
-from cytools.polytope import Polytope, Triangulation
 from cytools.helpers import basic_geometry
 
-# typing
-from typing import Iterable, Union
+# CYTools imports
+from cytools.polytope import Polytope
+from cytools.triangulation import Triangulation
 
 _DUALGNN_HINT = (
     "The optional dualgnn package is required for GNN-based sampling "
     "(triang_method='dualgnn'). Install it with "
-    "`python -m pip install \"cytools[gnn]\"`."
+    '`python -m pip install "cytools[gnn]"`.'
 )
 
 
-def _is_interactive() -> bool:
-    """Whether a human is plausibly at the controls (REPL, Jupyter, tty)."""
-    return (
-        hasattr(sys, "ps1")
-        or "ipykernel" in sys.modules
-        or (hasattr(sys.stdin, "isatty") and sys.stdin.isatty())
-    )
-
-
 def _import_dualgnn():
-    """
-    Import dualgnn, returning (sample_frts, DualGNN). If it's missing and the
-    session is interactive, offer to pip-install it (never install without
-    explicit consent).
-    """
+    """Import the optional GNN implementation or raise an actionable error."""
     try:
         from dualgnn import sample_frts
         from dualgnn.model import DualGNN
+
         return sample_frts, DualGNN
     except ImportError as e:
-        if not _is_interactive():
-            raise ImportError(_DUALGNN_HINT) from e
-
-    try:
-        import torch  # noqa: F401
-        size_note = ""
-    except ImportError:
-        size_note = (
-            "\n(This will also install PyTorch, which may be a multi-GB "
-            "download.)"
-        )
-    try:
-        answer = input(
-            "GNN-based sampling requires the optional dualgnn package."
-            f"{size_note}\nInstall it now via pip? [y/N] "
-        )
-    except EOFError:
-        answer = ""
-    if answer.strip().lower() not in ("y", "yes"):
-        raise ImportError(_DUALGNN_HINT)
-
-    subprocess.check_call([sys.executable, "-m", "pip", "install", "dualgnn"])
-    importlib.invalidate_caches()
-    from dualgnn import sample_frts
-    from dualgnn.model import DualGNN
-    return sample_frts, DualGNN
+        raise ImportError(_DUALGNN_HINT) from e
 
 
 def _dualgnn_face_triangs(
@@ -224,7 +187,6 @@ def face_triangs(
                     "samples."
                 )
 
-            
             if triang_method == "fast":
                 triangs.append(
                     list(
@@ -295,8 +257,6 @@ def face_triangs(
     return triangs
 
 
-
-
 def n_2face_triangs(self, only_regular: bool = True) -> int:
     """
     **Description:**
@@ -310,8 +270,6 @@ def n_2face_triangs(self, only_regular: bool = True) -> int:
     """
     triangs = self.face_triangs(dim=2, only_regular=only_regular)
     return math.prod([len(f) for f in triangs])
-
-
 
 
 def _as_2d_poly(poly: "Polytope", verbosity: int = 0) -> "Polytope":
@@ -466,8 +424,7 @@ def grow_ft(
 
             if verbosity >= 3:
                 print(
-                    f"Trying new vertex {i:03d}... ({len(to_try):03d} left)"
-                    " -> ",
+                    f"Trying new vertex {i:03d}... ({len(to_try):03d} left) -> ",
                     end="",
                 )
 
@@ -580,8 +537,6 @@ def grow_ft(
     )
 
 
-
-
 def grow_frt(
     self,
     N: int = 1,
@@ -649,5 +604,4 @@ def grow_frt(
 
     if len(frts) == 1:
         return next(iter(frts))
-    else:
-        return frts
+    return frts

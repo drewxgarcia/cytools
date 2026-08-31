@@ -1,5 +1,9 @@
 """Tests for the sparse linear solver backends in cytools.utils."""
 
+import builtins
+import contextlib
+from unittest import mock
+
 import numpy as np
 import pytest
 import scipy.sparse as sp
@@ -26,7 +30,10 @@ def test_scikit_sparse_api_when_installed():
     name should fail loudly here rather than degrade the solver silently.
     """
     pytest.importorskip("sksparse.cholmod")
-    from sksparse.cholmod import CholmodError, cho_factor  # noqa: F401  # ty: ignore[unresolved-import]  # compiled extension, no stubs
+    from sksparse.cholmod import (  # noqa: F401  # ty: ignore[unresolved-import]  # compiled extension, no stubs
+        CholmodError,
+        cho_factor,
+    )
 
 
 @pytest.mark.parametrize("backend", ["sksparse", "scipy", "all"])
@@ -64,10 +71,14 @@ def test_inconsistent_system_is_rejected_by_the_residual_check():
     assert solve_linear_system(M, C, backend="all", check=True) is None
 
 
-def test_explicit_optional_backend_fails_with_install_guidance():
-    """Explicit sksparse stays fail-loud and tells the user how to enable it."""
-    import builtins
+@contextlib.contextmanager
+def _sksparse_unavailable():
+    """Simulate a base install in which importing `sksparse` fails.
 
+    `mock.patch.object` rather than assigning `builtins.__import__` directly:
+    it restores the real import hook even if the body raises, so a failing
+    assertion cannot leave the interpreter unable to import anything.
+    """
     real_import = builtins.__import__
 
     def blocked(name, *args, **kwargs):
@@ -75,32 +86,23 @@ def test_explicit_optional_backend_fails_with_install_guidance():
             raise ImportError("simulated: scikit-sparse not installed")
         return real_import(name, *args, **kwargs)
 
+    with mock.patch.object(builtins, "__import__", blocked):
+        yield
+
+
+def test_explicit_optional_backend_fails_with_install_guidance():
+    """Explicit sksparse stays fail-loud and tells the user how to enable it."""
     M, C, _ = _least_squares_system()
-    builtins.__import__ = blocked  # ty: ignore[invalid-assignment]
-    try:
+    with _sksparse_unavailable():
         with pytest.raises(ImportError, match=r"cytools\[performance\]"):
             solve_linear_system(M, C, backend="sksparse")
-    finally:
-        builtins.__import__ = real_import
 
 
 def test_automatic_backend_falls_back_when_scikit_sparse_is_absent():
     """A base install remains functional on platforms without SuiteSparse."""
-    import builtins
-
-    real_import = builtins.__import__
-
-    def blocked(name, *args, **kwargs):
-        if name.startswith("sksparse"):
-            raise ImportError("simulated: scikit-sparse not installed")
-        return real_import(name, *args, **kwargs)
-
     M, C, x_true = _least_squares_system()
-    builtins.__import__ = blocked  # ty: ignore[invalid-assignment]
-    try:
+    with _sksparse_unavailable():
         sol = solve_linear_system(M, C, backend="all")
-    finally:
-        builtins.__import__ = real_import
 
     assert sol is not None
     assert np.allclose(np.asarray(sol).ravel(), x_true, atol=1e-6)

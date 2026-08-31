@@ -75,9 +75,7 @@ Two access modes are supported for each database:
 from __future__ import annotations
 
 import os
-import hashlib
 from collections.abc import Iterable
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
 from typing import NamedTuple
@@ -118,6 +116,7 @@ _HF_5D_REPO = "calabi-yau-data/ws-5d"
 # Record types
 # ---------------------------------------------------------------------------
 
+
 class PolytopeRecord(NamedTuple):
     """
     One row of the 4D Kreuzer-Skarke Parquet database.
@@ -138,21 +137,21 @@ class PolytopeRecord(NamedTuple):
        ``cy.h11()`` returns.  Use ``h12=`` to select on the N-lattice ``h11``.
     """
 
-    polytope:            Polytope
-    vertex_count:        int
-    h11:                 int   # M-lattice h11  == polytope.h21(lattice="N")
-    h12:                 int   # M-lattice h12  == polytope.h11(lattice="N")
+    polytope: Polytope
+    vertex_count: int
+    h11: int  # M-lattice h11  == polytope.h21(lattice="N")
+    h12: int  # M-lattice h12  == polytope.h11(lattice="N")
     euler_characteristic: int  # M-lattice chi  == -polytope.chi(lattice="N")
 
 
 class PolytopeRecord5D(NamedTuple):
-    polytope:   Polytope
-    weights:    np.ndarray   # shape (6,) int32 — original weight system
+    polytope: Polytope
+    weights: np.ndarray  # shape (6,) int32 — original weight system
     vertex_count: int
-    h11:        int | None   # None for non-reflexive polytopes
-    h12:        int | None
-    h13:        int | None
-    reflexive:  bool
+    h11: int | None  # None for non-reflexive polytopes
+    h12: int | None
+    h13: int | None
+    reflexive: bool
 
 
 # ---------------------------------------------------------------------------
@@ -172,16 +171,24 @@ _LOAD_COLUMNS = [
 
 _5D_WEIGHT_COLUMNS = [f"weight{i}" for i in range(6)]
 _5D_REFLEXIVE_LOAD_COLUMNS = _5D_WEIGHT_COLUMNS + [
-    "vertex_count", "facet_count", "point_count", "dual_point_count",
-    "h11", "h12", "h13",
+    "vertex_count",
+    "facet_count",
+    "point_count",
+    "dual_point_count",
+    "h11",
+    "h12",
+    "h13",
 ]
 _5D_NONREFLEXIVE_LOAD_COLUMNS = _5D_WEIGHT_COLUMNS + [
-    "vertex_count", "facet_count", "point_count",
+    "vertex_count",
+    "facet_count",
+    "point_count",
 ]
 
 # ---------------------------------------------------------------------------
 # Shared helpers
 # ---------------------------------------------------------------------------
+
 
 def _resolve_dir(
     db_dir: Path | str | None,
@@ -223,7 +230,7 @@ def _hf_download(repo_id: str, filename: str, token: str | None) -> Path:
     path never depends on it).
     """
     try:
-        from huggingface_hub import hf_hub_download
+        from huggingface_hub import hf_hub_download  # ty: ignore[unresolved-import]
     except ImportError as e:
         raise ImportError(
             "Downloading datasets requires huggingface_hub. Install it with "
@@ -231,12 +238,14 @@ def _hf_download(repo_id: str, filename: str, token: str | None) -> Path:
             "point CYTOOLS_DB_DIR at a local directory of Parquet files."
         ) from e
 
-    return Path(hf_hub_download(
-        repo_id=repo_id,
-        filename=filename,
-        repo_type="dataset",
-        token=token,
-    ))
+    return Path(
+        hf_hub_download(
+            repo_id=repo_id,
+            filename=filename,
+            repo_type="dataset",
+            token=token,
+        )
+    )
 
 
 def _hf_4d_filename(n_verts: int) -> str:
@@ -281,6 +290,7 @@ def _weights_to_vertices(weights: np.ndarray) -> np.ndarray:
 # 4D internal helpers
 # ---------------------------------------------------------------------------
 
+
 def _db_path(n_verts: int, db_dir: Path) -> Path:
     return db_dir / f"polytopes-4d-{n_verts:02d}-vertices.parquet"
 
@@ -308,12 +318,12 @@ def _build_arrow_filter(
     """
     parts = []
     for val, col in [
-        (h11,          "h11"),
-        (h12,          "h12"),
-        (chi,          "euler_characteristic"),
-        (n_facets,     "facet_count"),
-        (n_points,     "point_count"),
-        (n_dual_points,"dual_point_count"),
+        (h11, "h11"),
+        (h12, "h12"),
+        (chi, "euler_characteristic"),
+        (n_facets, "facet_count"),
+        (n_points, "point_count"),
+        (n_dual_points, "dual_point_count"),
     ]:
         if val is None:
             continue
@@ -517,7 +527,7 @@ class PolytopeBatch:
         """Materialize the whole batch. Constructs one Polytope per row."""
         return [self.record(i) for i in range(len(self))]
 
-    def take(self, indices) -> "PolytopeBatch":
+    def take(self, indices) -> PolytopeBatch:
         """A new batch with only *indices*, re-packed contiguously."""
         indices = np.asarray(indices, dtype=np.int64)
         blocks = [self.vertices(int(i)) for i in indices]
@@ -764,10 +774,7 @@ def _stream_one_file(path: Path, dnf, expr, rng, batch_size: int):
     pf = pq.ParquetFile(path)
     metadata = pf.metadata
     constraints = _dnf_constraints(dnf)
-    col_index = {
-        metadata.schema.column(j).name: j
-        for j in range(metadata.num_columns)
-    }
+    col_index = {metadata.schema.column(j).name: j for j in range(metadata.num_columns)}
 
     candidates = [
         rg
@@ -1047,7 +1054,9 @@ def _load_table(
     collected = 0
     for rg_idx in order:
         need = n - collected
-        for batch in pf.iter_batches(batch_size=need, columns=columns, row_groups=[rg_idx]):
+        for batch in pf.iter_batches(
+            batch_size=need, columns=columns, row_groups=[rg_idx]
+        ):
             batches.append(pa.Table.from_batches([batch]))
             collected += len(batch)
             break
@@ -1056,7 +1065,9 @@ def _load_table(
 
     if not batches:
         schema = pq.read_schema(path)
-        return pa.table({col: pa.array([], type=schema.field(col).type) for col in columns})
+        return pa.table(
+            {col: pa.array([], type=schema.field(col).type) for col in columns}
+        )
     return pa.concat_tables(batches)
 
 
@@ -1064,10 +1075,10 @@ def _table_to_records(table: pa.Table) -> list[PolytopeRecord]:
     if not len(table):
         return []
     verts_list = _extract_vertices_from_table(table)
-    vc  = table.column("vertex_count").to_numpy(zero_copy_only=False)
+    vc = table.column("vertex_count").to_numpy(zero_copy_only=False)
     h11 = table.column("h11").to_numpy(zero_copy_only=False)
     h12 = table.column("h12").to_numpy(zero_copy_only=False)
-    ec  = table.column("euler_characteristic").to_numpy(zero_copy_only=False)
+    ec = table.column("euler_characteristic").to_numpy(zero_copy_only=False)
     return [
         PolytopeRecord(
             polytope=Polytope(verts),
@@ -1083,6 +1094,7 @@ def _table_to_records(table: pa.Table) -> list[PolytopeRecord]:
 # ---------------------------------------------------------------------------
 # 5D internal helpers
 # ---------------------------------------------------------------------------
+
 
 def _5d_path(file_idx: int, reflexive: bool, db_dir: Path) -> Path:
     subset = "reflexive" if reflexive else "non-reflexive"
@@ -1100,6 +1112,7 @@ def _all_5d_file_indices(reflexive: bool, db_dir: Path) -> list[int]:
         try:
             indices.append(int(f.stem))
         except ValueError:
+            # Not an index shard -- the directory may hold other parquet files.
             pass
     return indices
 
@@ -1114,14 +1127,14 @@ def _build_5d_arrow_filter(
     reflexive: bool,
 ) -> list[list[tuple]] | None:
     mapping = [
-        (n_facets,      "facet_count"),
-        (n_points,      "point_count"),
+        (n_facets, "facet_count"),
+        (n_points, "point_count"),
     ]
     if reflexive:
         mapping += [
-            (h11,           "h11"),
-            (h12,           "h12"),
-            (h13,           "h13"),
+            (h11, "h11"),
+            (h12, "h12"),
+            (h13, "h13"),
             (n_dual_points, "dual_point_count"),
         ]
     parts = [(col, "=", val) for val, col in mapping if val is not None]
@@ -1136,10 +1149,10 @@ def _table_to_5d_records(table: pa.Table, reflexive: bool) -> list[PolytopeRecor
         return []
 
     # Extract weight columns and batch-convert to vertex matrices
-    weights = np.column_stack([
-        table.column(f"weight{i}").to_numpy(zero_copy_only=False) for i in range(6)
-    ]).astype(np.int32)                                  # shape (n, 6)
-    verts_batch = _weights_to_vertices(weights)          # shape (n, 7, 6)
+    weights = np.column_stack(
+        [table.column(f"weight{i}").to_numpy(zero_copy_only=False) for i in range(6)]
+    ).astype(np.int32)  # shape (n, 6)
+    verts_batch = _weights_to_vertices(weights)  # shape (n, 7, 6)
 
     vc = table.column("vertex_count").to_numpy(zero_copy_only=False)
     if reflexive:
@@ -1167,6 +1180,7 @@ def _table_to_5d_records(table: pa.Table, reflexive: bool) -> list[PolytopeRecor
 # ---------------------------------------------------------------------------
 # Public API — 4D
 # ---------------------------------------------------------------------------
+
 
 def load_polytopes(
     n_vertices: int | Iterable[int] | None = None,
@@ -1235,7 +1249,8 @@ def load_polytopes(
     # Resolve local directory once (ignored when streaming)
     resolved_dir = (
         _resolve_dir(db_dir, DB_DIR, "CYTOOLS_DB_DIR", "4D polytope")
-        if not stream else None
+        if not stream
+        else None
     )
 
     # Normalise n_vertices → list
@@ -1270,6 +1285,7 @@ def load_polytopes(
 # ---------------------------------------------------------------------------
 # Public API — 5D
 # ---------------------------------------------------------------------------
+
 
 def load_5d_polytopes(
     reflexive: bool = True,
@@ -1369,8 +1385,17 @@ def load_5d_polytopes(
             )
 
     cache_key = (
-        reflexive, h11, h12, h13, n_facets, n_points, n_dual_points,
-        n, seed, stream, str(db_dir) if not stream else None,
+        reflexive,
+        h11,
+        h12,
+        h13,
+        n_facets,
+        n_points,
+        n_dual_points,
+        n,
+        seed,
+        stream,
+        str(db_dir) if not stream else None,
     )
     if cache_key in _CACHE_5D:
         return _CACHE_5D[cache_key]
@@ -1389,7 +1414,9 @@ def load_5d_polytopes(
             if not path.exists():
                 continue  # sparse local download — skip missing files
 
-        remaining = (n - collected) if (n is not None and arrow_filter is None) else None
+        remaining = (
+            (n - collected) if (n is not None and arrow_filter is None) else None
+        )
         tbl = _load_table(path, arrow_filter, remaining, rng, load_cols)
         tables.append(tbl)
         collected += len(tbl)
@@ -1397,8 +1424,7 @@ def load_5d_polytopes(
             break
 
     full_table = (
-        pa.concat_tables(tables) if tables
-        else pa.table({col: [] for col in load_cols})
+        pa.concat_tables(tables) if tables else pa.table({col: [] for col in load_cols})
     )
 
     if n is not None and len(full_table) > n:

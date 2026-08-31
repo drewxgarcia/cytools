@@ -130,9 +130,7 @@ def test_find_lattice_points():
 
 def test_find_lattice_points_min_points_exceeds_old_default_coord_bound():
     c = Cone([[1]])
-    pts = c.find_lattice_points(
-        min_points=1002, fast_mode=False, deg_window=1000
-    )
+    pts = c.find_lattice_points(min_points=1002, fast_mode=False, deg_window=1000)
     assert len(pts) >= 1002
     assert pts[-1][0] >= 1001
 
@@ -140,9 +138,7 @@ def test_find_lattice_points_min_points_exceeds_old_default_coord_bound():
 def test_find_lattice_points_finite_coord_bound_exhausted():
     c = Cone([[1]])
     with pytest.raises(ValueError, match="finite max_coord=1"):
-        c.find_lattice_points(
-            min_points=3, fast_mode=False, max_coord=1, deg_window=10
-        )
+        c.find_lattice_points(min_points=3, fast_mode=False, max_coord=1, deg_window=10)
 
 
 def test_hilbert_basis():
@@ -235,9 +231,9 @@ def test_dimension_is_lazy_not_computed_on_construction():
         mp.setattr(np.linalg, "matrix_rank", spy)
         c = Cone(rays)
         assert calls == [], f"__init__ computed a rank: {calls}"
-        assert c.dimension() == 3          # computed on demand
+        assert c.dimension() == 3  # computed on demand
         assert len(calls) == 1
-        assert c.dimension() == 3          # and cached thereafter
+        assert c.dimension() == 3  # and cached thereafter
         assert len(calls) == 1
 
 

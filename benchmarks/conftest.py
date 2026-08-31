@@ -8,7 +8,6 @@ import pytest
 
 from benchmarks._data import load_h11_sample, load_tier
 
-
 # Database records ---------------------------------------------------------
 
 

@@ -19,17 +19,19 @@ Run with:
 
 import pytest
 
-from cytools import Polytope
 from benchmarks._data import POLY_5V
+from cytools import Polytope
 
 # ---------------------------------------------------------------------------
 # Module-scope fixtures
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture(scope="module")
 def tv_5v():
     t = POLY_5V.triangulate()
     return t.get_toric_variety()
+
 
 @pytest.fixture(scope="module")
 def tiny_tvs(tiny_polys):
@@ -41,10 +43,13 @@ def tiny_tvs(tiny_polys):
             results.append(t.get_toric_variety())
         except Exception as e:
             skipped += 1
-            import warnings; warnings.warn(f"tiny_tvs: skipped polytope ({e})")
+            import warnings
+
+            warnings.warn(f"tiny_tvs: skipped polytope ({e})")
     if not results:
         raise RuntimeError("tiny_tvs: all polytopes failed — check DB or pipeline")
     return results
+
 
 @pytest.fixture(scope="module")
 def small_tvs(small_polys):
@@ -54,10 +59,13 @@ def small_tvs(small_polys):
             t = r.polytope.triangulate()
             results.append(t.get_toric_variety())
         except Exception as e:
-            import warnings; warnings.warn(f"small_tvs: skipped polytope ({e})")
+            import warnings
+
+            warnings.warn(f"small_tvs: skipped polytope ({e})")
     if not results:
         raise RuntimeError("small_tvs: all polytopes failed — check DB or pipeline")
     return results
+
 
 @pytest.fixture(scope="module")
 def bulk_tvs(bulk_polys):
@@ -68,7 +76,9 @@ def bulk_tvs(bulk_polys):
             t = r.polytope.triangulate()
             results.append(t.get_toric_variety())
         except Exception as e:
-            import warnings; warnings.warn(f"bulk_tvs: skipped polytope ({e})")
+            import warnings
+
+            warnings.warn(f"bulk_tvs: skipped polytope ({e})")
     if not results:
         raise RuntimeError("bulk_tvs: all polytopes failed — check DB or pipeline")
     return results
@@ -77,6 +87,7 @@ def bulk_tvs(bulk_polys):
 # ---------------------------------------------------------------------------
 # 1. Metadata / pipeline accessors
 # ---------------------------------------------------------------------------
+
 
 class TestMetadata:
     def test_is_compact_5v(self, benchmark, tv_5v):
@@ -94,18 +105,21 @@ class TestMetadata:
     def test_is_compact_tiny(self, benchmark, tiny_tvs):
         def go():
             return [tv.is_compact() for tv in tiny_tvs]
+
         benchmark.pedantic(go, rounds=1, iterations=1)
 
     @pytest.mark.slow
     def test_is_compact_bulk(self, benchmark, bulk_tvs):
         def go():
             return [tv.is_compact() for tv in bulk_tvs]
+
         benchmark.pedantic(go, rounds=1, iterations=1)
 
 
 # ---------------------------------------------------------------------------
 # 2. SR ideal
 # ---------------------------------------------------------------------------
+
 
 class TestSRIdeal:
     def test_sr_ideal_5v(self, benchmark, tv_5v):
@@ -114,23 +128,27 @@ class TestSRIdeal:
     def test_sr_ideal_tiny(self, benchmark, tiny_tvs):
         def go():
             return [tv.sr_ideal() for tv in tiny_tvs]
+
         benchmark.pedantic(go, rounds=1, iterations=1)
 
     def test_sr_ideal_small(self, benchmark, small_tvs):
         def go():
             return [tv.sr_ideal() for tv in small_tvs]
+
         benchmark.pedantic(go, rounds=1, iterations=1)
 
     @pytest.mark.slow
     def test_sr_ideal_bulk(self, benchmark, bulk_tvs):
         def go():
             return [tv.sr_ideal() for tv in bulk_tvs]
+
         benchmark.pedantic(go, rounds=1, iterations=1)
 
 
 # ---------------------------------------------------------------------------
 # 3. GLSM / basis
 # ---------------------------------------------------------------------------
+
 
 class TestGLSMBasis:
     def test_glsm_charge_matrix_5v(self, benchmark, tv_5v):
@@ -157,6 +175,7 @@ class TestGLSMBasis:
     def test_set_divisor_basis(self, benchmark):
         """Benchmark installing a divisor basis on a toric variety."""
         from benchmarks._data import POLY_5V as _P
+
         tv = _P.triangulate().get_toric_variety()
         basis = tv.divisor_basis()
         benchmark(lambda: tv.set_divisor_basis(basis))
@@ -164,23 +183,27 @@ class TestGLSMBasis:
     def test_glsm_tiny(self, benchmark, tiny_tvs):
         def go():
             return [tv.glsm_charge_matrix() for tv in tiny_tvs]
+
         benchmark.pedantic(go, rounds=1, iterations=1)
 
     def test_glsm_small(self, benchmark, small_tvs):
         def go():
             return [tv.glsm_charge_matrix() for tv in small_tvs]
+
         benchmark.pedantic(go, rounds=1, iterations=1)
 
     @pytest.mark.slow
     def test_glsm_bulk(self, benchmark, bulk_tvs):
         def go():
             return [tv.glsm_charge_matrix() for tv in bulk_tvs]
+
         benchmark.pedantic(go, rounds=1, iterations=1)
 
 
 # ---------------------------------------------------------------------------
 # 4. Intersection numbers
 # ---------------------------------------------------------------------------
+
 
 class TestIntersectionNumbers:
     def test_intersection_numbers_dok_5v(self, benchmark, tv_5v):
@@ -198,7 +221,9 @@ class TestIntersectionNumbers:
     def test_intersection_numbers_zero_as_anticanon_5v(self, benchmark):
         # zero_as_anticanonical=True only makes sense for non-favorable polytopes
         # Use a polytope where h11 != h21 to exercise this code path
-        p = Polytope([[1,0,0,0],[0,1,0,0],[0,0,1,0],[0,0,0,1],[-1,-1,-3,-6]])
+        p = Polytope(
+            [[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1], [-1, -1, -3, -6]]
+        )
         t = p.triangulate()
         tv = t.get_toric_variety()
         benchmark(lambda: tv.intersection_numbers(zero_as_anticanonical=True))
@@ -206,24 +231,28 @@ class TestIntersectionNumbers:
     def test_intersection_numbers_tiny(self, benchmark, tiny_tvs):
         def go():
             return [tv.intersection_numbers() for tv in tiny_tvs]
+
         benchmark.pedantic(go, rounds=1, iterations=1)
 
     @pytest.mark.slow
     def test_intersection_numbers_small(self, benchmark, small_tvs):
         def go():
             return [tv.intersection_numbers() for tv in small_tvs]
+
         benchmark.pedantic(go, rounds=1, iterations=1)
 
     @pytest.mark.slow
     def test_intersection_numbers_bulk(self, benchmark, bulk_tvs):
         def go():
             return [tv.intersection_numbers() for tv in bulk_tvs]
+
         benchmark.pedantic(go, rounds=1, iterations=1)
 
 
 # ---------------------------------------------------------------------------
 # 5. Cones
 # ---------------------------------------------------------------------------
+
 
 class TestCones:
     def test_kahler_cone_5v(self, benchmark, tv_5v):
@@ -252,30 +281,34 @@ class TestCones:
     def test_kahler_cone_tiny(self, benchmark, tiny_tvs):
         def go():
             return [tv.kahler_cone() for tv in tiny_tvs]
+
         benchmark.pedantic(go, rounds=1, iterations=1)
 
     def test_mori_cone_tiny(self, benchmark, tiny_tvs):
         def go():
             return [tv.mori_cone() for tv in tiny_tvs]
+
         benchmark.pedantic(go, rounds=1, iterations=1)
 
     @pytest.mark.slow
     def test_kahler_cone_bulk(self, benchmark, bulk_tvs):
         def go():
             return [tv.kahler_cone() for tv in bulk_tvs]
+
         benchmark.pedantic(go, rounds=1, iterations=1)
 
     @pytest.mark.slow
     def test_mori_cone_bulk(self, benchmark, bulk_tvs):
         def go():
             return [tv.mori_cone() for tv in bulk_tvs]
-        benchmark.pedantic(go, rounds=1, iterations=1)
 
+        benchmark.pedantic(go, rounds=1, iterations=1)
 
 
 # ---------------------------------------------------------------------------
 # 6. Smoothness
 # ---------------------------------------------------------------------------
+
 
 class TestSmoothness:
     def test_is_smooth_5v(self, benchmark, tv_5v):
@@ -287,18 +320,21 @@ class TestSmoothness:
     def test_is_smooth_tiny(self, benchmark, tiny_tvs):
         def go():
             return [tv.is_smooth() for tv in tiny_tvs]
+
         benchmark.pedantic(go, rounds=1, iterations=1)
 
     @pytest.mark.slow
     def test_is_smooth_bulk(self, benchmark, bulk_tvs):
         def go():
             return [tv.is_smooth() for tv in bulk_tvs]
+
         benchmark.pedantic(go, rounds=1, iterations=1)
 
 
 # ---------------------------------------------------------------------------
 # 7. CY construction
 # ---------------------------------------------------------------------------
+
 
 class TestGetCY:
     def test_get_cy_5v(self, benchmark, tv_5v):
@@ -313,6 +349,7 @@ class TestGetCY:
                 except Exception:
                     pass
             return results
+
         benchmark.pedantic(go, rounds=1, iterations=1)
 
     def test_get_cy_small(self, benchmark, small_tvs):
@@ -324,6 +361,7 @@ class TestGetCY:
                 except Exception:
                     pass
             return results
+
         benchmark.pedantic(go, rounds=1, iterations=1)
 
     @pytest.mark.slow
@@ -336,4 +374,5 @@ class TestGetCY:
                 except Exception:
                     pass
             return results
+
         benchmark.pedantic(go, rounds=1, iterations=1)

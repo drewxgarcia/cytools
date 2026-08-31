@@ -30,10 +30,10 @@ Run full suite:
 
 import pytest
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _collect_faces(polys, dims=None):
     """Collect PolytopeFace objects from a list of Polytope objects.
@@ -57,6 +57,7 @@ def _collect_faces(polys, dims=None):
 # ---------------------------------------------------------------------------
 # Module-scope fixtures
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture(scope="module")
 def tiny_faces(tiny_poly_objects):
@@ -100,38 +101,45 @@ def bulk_codim1_faces(bulk_poly_objects):
 # 1. Trivial properties (O(1) cache hits after first construction)
 # ---------------------------------------------------------------------------
 
+
 class TestTrivialProperties:
     """Properties that are set at construction time or are O(1) lookups."""
 
     def test_ambient_poly_tiny(self, benchmark, tiny_faces):
         def go():
             return [f.ambient_poly for f in tiny_faces]
+
         benchmark.pedantic(go, rounds=5, iterations=1)
 
     def test_labels_vertices_tiny(self, benchmark, tiny_faces):
         def go():
             return [f.labels_vertices for f in tiny_faces]
+
         benchmark.pedantic(go, rounds=5, iterations=1)
 
     def test_dimension_tiny(self, benchmark, tiny_faces):
         def go():
             return [f.dimension() for f in tiny_faces]
+
         benchmark.pedantic(go, rounds=5, iterations=1)
 
     def test_ambient_dimension_tiny(self, benchmark, tiny_faces):
         def go():
             return [f.ambient_dimension() for f in tiny_faces]
+
         benchmark.pedantic(go, rounds=5, iterations=1)
 
     def test_ambient_poly_bulk(self, benchmark, bulk_faces):
         def go():
             return [f.ambient_poly for f in bulk_faces]
+
         benchmark.pedantic(go, rounds=3, iterations=1)
 
 
 # ---------------------------------------------------------------------------
 # 2. Point labels (trigger _process_points on first call)
 # ---------------------------------------------------------------------------
+
 
 class TestPointLabels:
     """Label access triggers _process_points() on first call.
@@ -144,37 +152,44 @@ class TestPointLabels:
     def test_labels_tiny(self, benchmark, tiny_faces):
         def go():
             return [f.labels for f in tiny_faces]
+
         benchmark.pedantic(go, rounds=5, iterations=1)
 
     def test_labels_bdry_tiny(self, benchmark, tiny_faces):
         def go():
             return [f.labels_bdry for f in tiny_faces]
+
         benchmark.pedantic(go, rounds=5, iterations=1)
 
     def test_labels_int_tiny(self, benchmark, tiny_faces):
         def go():
             return [f.labels_int for f in tiny_faces]
+
         benchmark.pedantic(go, rounds=5, iterations=1)
 
     def test_labels_bulk(self, benchmark, bulk_faces):
         def go():
             return [f.labels for f in bulk_faces]
+
         benchmark.pedantic(go, rounds=3, iterations=1)
 
     def test_labels_bdry_bulk(self, benchmark, bulk_faces):
         def go():
             return [f.labels_bdry for f in bulk_faces]
+
         benchmark.pedantic(go, rounds=3, iterations=1)
 
     def test_labels_int_bulk(self, benchmark, bulk_faces):
         def go():
             return [f.labels_int for f in bulk_faces]
+
         benchmark.pedantic(go, rounds=3, iterations=1)
 
 
 # ---------------------------------------------------------------------------
 # 3. Point coordinate access
 # ---------------------------------------------------------------------------
+
 
 class TestPointCoordinates:
     """points(), interior_points(), boundary_points(), vertices().
@@ -185,49 +200,60 @@ class TestPointCoordinates:
     def test_points_default_tiny(self, benchmark, tiny_faces):
         def go():
             return [f.points() for f in tiny_faces]
+
         benchmark.pedantic(go, rounds=5, iterations=1)
 
     def test_points_optimal_tiny(self, benchmark, tiny_faces):
         """points(optimal=True) applies LLL reduction — O(n³) per face."""
+
         def go():
             return [f.points(optimal=True) for f in tiny_faces]
+
         benchmark.pedantic(go, rounds=3, iterations=1)
 
     def test_vertices_tiny(self, benchmark, tiny_faces):
         def go():
             return [f.vertices() for f in tiny_faces]
+
         benchmark.pedantic(go, rounds=5, iterations=1)
 
     def test_interior_points_tiny(self, benchmark, tiny_faces):
         def go():
             return [f.interior_points() for f in tiny_faces]
+
         benchmark.pedantic(go, rounds=5, iterations=1)
 
     def test_boundary_points_tiny(self, benchmark, tiny_faces):
         def go():
             return [f.boundary_points() for f in tiny_faces]
+
         benchmark.pedantic(go, rounds=5, iterations=1)
 
     def test_points_default_bulk(self, benchmark, bulk_faces):
         def go():
             return [f.points() for f in bulk_faces]
+
         benchmark.pedantic(go, rounds=3, iterations=1)
 
     def test_points_optimal_bulk(self, benchmark, bulk_faces):
         """LLL reduction on faces of bulk polytopes — higher point counts."""
+
         def go():
             return [f.points(optimal=True) for f in bulk_faces]
+
         benchmark.pedantic(go, rounds=1, iterations=1)
 
     def test_vertices_bulk(self, benchmark, bulk_faces):
         def go():
             return [f.vertices() for f in bulk_faces]
+
         benchmark.pedantic(go, rounds=3, iterations=1)
 
 
 # ---------------------------------------------------------------------------
 # 4. as_polytope — constructs a new Polytope object per face
 # ---------------------------------------------------------------------------
+
 
 class TestAsPolytope:
     """as_polytope() creates a new Polytope from the face's points.
@@ -240,18 +266,22 @@ class TestAsPolytope:
     def test_as_polytope_tiny(self, benchmark, tiny_faces):
         def go():
             return [f.as_polytope() for f in tiny_faces]
+
         benchmark.pedantic(go, rounds=3, iterations=1)
 
     def test_as_polytope_bulk_facets(self, benchmark, bulk_codim1_faces):
         """Facets of bulk polytopes — most points per face, most expensive."""
+
         def go():
             return [f.as_polytope() for f in bulk_codim1_faces]
+
         benchmark.pedantic(go, rounds=1, iterations=1)
 
 
 # ---------------------------------------------------------------------------
 # 5. dual_face — reflexive polytopes only
 # ---------------------------------------------------------------------------
+
 
 class TestDualFace:
     """dual_face() requires a reflexive ambient polytope.
@@ -269,12 +299,14 @@ class TestDualFace:
                 except Exception:
                     pass
             return results
+
         benchmark.pedantic(go, rounds=3, iterations=1)
 
 
 # ---------------------------------------------------------------------------
 # 6. sub-faces of a face
 # ---------------------------------------------------------------------------
+
 
 class TestSubFaces:
     """faces() recursively enumerates sub-faces of a PolytopeFace.
@@ -294,18 +326,22 @@ class TestSubFaces:
 
         def go():
             return [f.faces() for f in facets]
+
         benchmark.pedantic(go, rounds=3, iterations=1)
 
     def test_faces_of_faces_bulk(self, benchmark, bulk_codim1_faces):
         """Sub-faces of codim-1 faces of bulk polytopes."""
+
         def go():
             return [f.faces() for f in bulk_codim1_faces]
+
         benchmark.pedantic(go, rounds=1, iterations=1)
 
 
 # ---------------------------------------------------------------------------
 # 7. triangulate — triangulation of a face
 # ---------------------------------------------------------------------------
+
 
 class TestTriangulate:
     """triangulate() runs an external triangulation solver on the face's points.
@@ -325,6 +361,7 @@ class TestTriangulate:
 
         def go():
             return [f.triangulate() for f in faces_2d]
+
         benchmark.pedantic(go, rounds=3, iterations=1)
 
     def test_triangulate_2d_faces_bulk(self, benchmark, bulk_poly_objects):
@@ -338,6 +375,7 @@ class TestTriangulate:
 
         def go():
             return [f.triangulate() for f in faces_2d]
+
         benchmark.pedantic(go, rounds=1, iterations=1)
 
     @pytest.mark.slow
@@ -352,4 +390,5 @@ class TestTriangulate:
 
         def go():
             return [f.triangulate() for f in faces_3d]
+
         benchmark.pedantic(go, rounds=1, iterations=1)

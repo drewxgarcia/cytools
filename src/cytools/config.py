@@ -20,8 +20,8 @@
 # -----------------------------------------------------------------------------
 
 # 'standard' imports
-import warnings
 import os
+import warnings
 
 # The number of CPU threads to use in some computations, such as finding the
 # extremal rays of a cone. When set to None, then it uses all available threads.
@@ -69,9 +69,7 @@ def check_mosek_license(silent=False):
         if not silent:
             print("Mosek was successfully activated.")
     except ImportError:
-        _mosek_error = (
-            "Info: Mosek is not installed."
-        )
+        _mosek_error = "Info: Mosek is not installed."
         _mosek_is_activated = False
     except mosek.Error as e:
         _mosek_error = (

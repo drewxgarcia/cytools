@@ -1,10 +1,8 @@
-import pytest
 import numpy as np
-
-from cytools import Polytope
+import pytest
 
 # To compute nef partitions
-from cytools import config
+from cytools import Polytope, config
 
 config._exp_features_enabled = True
 
@@ -412,9 +410,9 @@ def test_is_reflexive_without_translations_nonsolid():
     # null vectors, so this always returned False for non-solid polytopes
     assert Polytope([[-1, 0], [1, 0]]).is_reflexive(allow_translations=False)
     assert Polytope([[-1, 0, 0], [1, 0, 0]]).is_reflexive(allow_translations=False)
-    assert Polytope(
-        [[-1, 0, 0], [1, 0, 0], [0, -1, 0], [0, 1, 0]]
-    ).is_reflexive(allow_translations=False)
+    assert Polytope([[-1, 0, 0], [1, 0, 0], [0, -1, 0], [0, 1, 0]]).is_reflexive(
+        allow_translations=False
+    )
 
     # a non-reflexive, non-solid polytope must still come out False
     assert not Polytope([[-2, 0], [1, 0]]).is_reflexive(allow_translations=False)
@@ -468,7 +466,7 @@ def test_all_triangulations_simplex():
     # points(as_indices=True) with a tuple, raising a TypeError
     p = Polytope([[0, 0], [1, 0], [0, 1]])
 
-    raw = list(p.all_triangulations(raw_output=True))
+    raw = list(p.all_triangulation_simplices())
     assert len(raw) == 1
     assert np.array(raw[0]).shape == (1, 3)
     assert sorted(np.array(raw[0])[0].tolist()) == [0, 1, 2]
@@ -478,7 +476,7 @@ def test_all_triangulations_simplex():
     assert len(triangs) == 1
 
     # and the generator form
-    assert len(list(p.all_triangulations(raw_output=True))) == 1
+    assert len(list(p.all_triangulation_simplices())) == 1
 
 
 def test_glsm_index_validation_off_by_one():

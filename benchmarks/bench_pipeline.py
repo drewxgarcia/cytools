@@ -45,10 +45,10 @@ Run full suite:
 
 import pytest
 
-
 # ---------------------------------------------------------------------------
 # Stage 1: Polytope → Triangulation
 # ---------------------------------------------------------------------------
+
 
 class TestStage1Triangulate:
     """How fast can we triangulate polytopes across the complexity range?"""
@@ -56,23 +56,29 @@ class TestStage1Triangulate:
     def test_triangulate_tiny(self, benchmark, tiny_polys):
         """Calibration: 20 × 5v polytopes."""
         polys = [r.polytope for r in tiny_polys]
+
         def go():
             return [p.triangulate() for p in polys]
+
         benchmark.pedantic(go, rounds=5, iterations=1)
 
     def test_triangulate_bulk(self, benchmark, bulk_polys):
         """Primary: 20 polytopes drawn from the DB bulk (13-17v)."""
         polys = [r.polytope for r in bulk_polys]
+
         def go():
             return [p.triangulate() for p in polys]
+
         benchmark.pedantic(go, rounds=3, iterations=1)
 
     @pytest.mark.slow
     def test_triangulate_full(self, benchmark, full_polys):
         """Full distribution: ~2900 polytopes across all vertex-count files."""
         polys = [r.polytope for r in full_polys]
+
         def go():
             return [p.triangulate() for p in polys]
+
         benchmark.pedantic(go, rounds=1, iterations=1)
 
 
@@ -80,12 +86,14 @@ class TestStage1Triangulate:
 # Stage 2: Polytope → Triangulation → ToricVariety
 # ---------------------------------------------------------------------------
 
+
 class TestStage2ToricVariety:
     """Full pipeline up to toric variety construction."""
 
     def test_toric_variety_tiny(self, benchmark, tiny_polys):
         """Calibration: 20 × 5v polytopes."""
         polys = [r.polytope for r in tiny_polys]
+
         def go():
             results = []
             for p in polys:
@@ -94,11 +102,13 @@ class TestStage2ToricVariety:
                 except Exception:
                     pass
             return results
+
         benchmark.pedantic(go, rounds=5, iterations=1)
 
     def test_toric_variety_bulk(self, benchmark, bulk_polys):
         """Primary: 20 polytopes from the DB bulk (13-17v)."""
         polys = [r.polytope for r in bulk_polys]
+
         def go():
             results = []
             for p in polys:
@@ -107,12 +117,14 @@ class TestStage2ToricVariety:
                 except Exception:
                     pass
             return results
+
         benchmark.pedantic(go, rounds=3, iterations=1)
 
     @pytest.mark.slow
     def test_toric_variety_full(self, benchmark, full_polys):
         """Full distribution: ~2900 polytopes across all vertex-count files."""
         polys = [r.polytope for r in full_polys]
+
         def go():
             results = []
             for p in polys:
@@ -121,12 +133,14 @@ class TestStage2ToricVariety:
                 except Exception:
                     pass
             return results
+
         benchmark.pedantic(go, rounds=1, iterations=1)
 
 
 # ---------------------------------------------------------------------------
 # Stage 3: Polytope → ToricVariety → intersection_numbers
 # ---------------------------------------------------------------------------
+
 
 class TestStage3IntersectionNumbers:
     """Full pipeline through intersection numbers.
@@ -138,16 +152,19 @@ class TestStage3IntersectionNumbers:
 
     def test_intnum_calibration(self, benchmark, cy_polys):
         """Calibration: 20 polytopes with h11<=4 (extreme low tail, ~5ms each)."""
+
         def go():
             results = []
             for r in cy_polys:
                 tv = r.polytope.triangulate().get_toric_variety()
                 results.append(tv.intersection_numbers())
             return results
+
         benchmark.pedantic(go, rounds=3, iterations=1)
 
     def test_intnum_bulk(self, benchmark, bulk_polys):
         """Primary: 20 polytopes from the DB bulk (13-17v, h11 ~25-40)."""
+
         def go():
             results = []
             for r in bulk_polys:
@@ -157,10 +174,12 @@ class TestStage3IntersectionNumbers:
                 except Exception:
                     pass
             return results
+
         benchmark.pedantic(go, rounds=1, iterations=1)
 
     def test_intnum_median_h11(self, benchmark, cy_polys_median):
         """Realistic: 20 polytopes with h11 in [20,35] — the DB median range."""
+
         def go():
             results = []
             for r in cy_polys_median:
@@ -170,11 +189,13 @@ class TestStage3IntersectionNumbers:
                 except Exception:
                     pass
             return results
+
         benchmark.pedantic(go, rounds=1, iterations=1)
 
     @pytest.mark.slow
     def test_intnum_full(self, benchmark, full_polys):
         """Full distribution: ~2900 polytopes across all vertex-count files."""
+
         def go():
             results = []
             for r in full_polys:
@@ -184,12 +205,14 @@ class TestStage3IntersectionNumbers:
                 except Exception:
                     pass
             return results
+
         benchmark.pedantic(go, rounds=1, iterations=1)
 
 
 # ---------------------------------------------------------------------------
 # Stage 4: Full CY pipeline — Polytope → CalabiYau → geometry
 # ---------------------------------------------------------------------------
+
 
 class TestStage4CYPipeline:
     """End-to-end: from raw polytope to CY geometric data.
@@ -200,15 +223,18 @@ class TestStage4CYPipeline:
 
     def test_cy_pipeline_calibration(self, benchmark, cy_polys):
         """Calibration: 20 polytopes with h11<=4 (extreme low tail)."""
+
         def go():
             return [
                 r.polytope.triangulate().get_cy().intersection_numbers()
                 for r in cy_polys
             ]
+
         benchmark.pedantic(go, rounds=3, iterations=1)
 
     def test_cy_pipeline_median_h11(self, benchmark, cy_polys_median):
         """Primary: 20 polytopes with h11 in [20,35] — the realistic CY workload."""
+
         def go():
             results = []
             for r in cy_polys_median:
@@ -219,16 +245,19 @@ class TestStage4CYPipeline:
                 except Exception:
                     pass
             return results
+
         benchmark.pedantic(go, rounds=1, iterations=1)
 
     @pytest.mark.slow
     def test_cy_pipeline_large(self, benchmark, cy_polys_large):
         """100 polytopes with h11 <= 8 — broader Hodge range."""
+
         def go():
             return [
                 r.polytope.triangulate().get_cy().intersection_numbers()
                 for r in cy_polys_large
             ]
+
         benchmark.pedantic(go, rounds=1, iterations=1)
 
 
@@ -240,17 +269,20 @@ class TestStage4CYPipeline:
 # throughput number that matters for KS scan workloads.
 # ---------------------------------------------------------------------------
 
+
 class TestHodgeThroughput:
     """h11/h12 extraction throughput across the complexity spectrum."""
 
     def test_hodge_calibration(self, benchmark, cy_polys):
         """Calibration: 20 polytopes with h11<=4."""
+
         def go():
             out = []
             for r in cy_polys:
                 cy = r.polytope.triangulate().get_cy()
                 out.append((cy.h11(), cy.h12()))
             return out
+
         benchmark.pedantic(go, rounds=5, iterations=1)
 
     def test_hodge_bulk(self, benchmark, bulk_polys):
@@ -259,6 +291,7 @@ class TestHodgeThroughput:
         This number reflects the actual throughput a user sees when scanning
         the KS database for phenomenologically interesting models.
         """
+
         def go():
             out = []
             for r in bulk_polys:
@@ -268,22 +301,26 @@ class TestHodgeThroughput:
                 except Exception:
                     pass
             return out
+
         benchmark.pedantic(go, rounds=3, iterations=1)
 
     @pytest.mark.slow
     def test_hodge_large(self, benchmark, cy_polys_large):
         """100 polytopes with h11 <= 8."""
+
         def go():
             out = []
             for r in cy_polys_large:
                 cy = r.polytope.triangulate().get_cy()
                 out.append((cy.h11(), cy.h12()))
             return out
+
         benchmark.pedantic(go, rounds=1, iterations=1)
 
     @pytest.mark.slow
     def test_hodge_full(self, benchmark, full_polys):
         """Full distribution: ~2900 polytopes across all vertex-count files."""
+
         def go():
             out = []
             for r in full_polys:
@@ -293,4 +330,5 @@ class TestHodgeThroughput:
                 except Exception:
                     pass
             return out
+
         benchmark.pedantic(go, rounds=1, iterations=1)

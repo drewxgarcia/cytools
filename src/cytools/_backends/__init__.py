@@ -12,4 +12,3 @@ Backend modules accept and return plain Python or NumPy values. They do not
 import CYTools domain classes, so optional dependencies and engine-specific
 APIs cannot leak into the core object model.
 """
-

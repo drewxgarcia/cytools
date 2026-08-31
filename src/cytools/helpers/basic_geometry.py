@@ -19,10 +19,9 @@
 # -----------------------------------------------------------------------------
 
 # CYTools imports
-from cytools.helpers import matrix
-
 # typing
 from cytools._typing import Matrix
+from cytools.helpers import matrix
 
 
 def get_bdry(self) -> set:

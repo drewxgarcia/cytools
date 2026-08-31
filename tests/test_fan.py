@@ -49,3 +49,46 @@ def test_mori_rays_after_low_precision_intersection_numbers():
     fresh = sorted(map(tuple, fan_fresh.mori_rays().tolist()))
 
     assert after == fresh
+
+
+# ---------------------------------------------------------------------------
+# restricted_simps
+# ---------------------------------------------------------------------------
+
+
+def test_restricted_simps_pads_label_simplices():
+    """`padded=True` must work on the label path, not just on face indices.
+
+    Regression test: the reduction step yields frozensets, but the padding step
+    indexed and concatenated them (`simp + [simp[-1]]`), which raised
+    `TypeError: 'frozenset' object is not subscriptable`. It only fired when a
+    restricted simplex actually had two points -- i.e. exactly when `padded`
+    has work to do -- so `to_dim=1` is the trigger, and `to_dim=2` (triangles)
+    is not.
+    """
+    fan = fan_fixture()
+
+    unpadded = fan.restricted_simps(to_dim=1, padded=False, as_face_inds=False)
+    assert any(len(simp) == 2 for face in unpadded for simp in face), (
+        "fixture no longer produces 2-point restricted simplices, "
+        "so this test would pass vacuously"
+    )
+
+    padded = fan.restricted_simps(to_dim=1, padded=True, as_face_inds=False)
+    assert all(len(simp) >= 3 for face in padded for simp in face)
+
+    # padding duplicates the last entry rather than inventing a new point
+    for face in padded:
+        for simp in face:
+            assert len(set(simp)) <= 2
+
+
+def test_restricted_simps_label_and_index_paths_agree():
+    """Both output spaces must describe the same simplices."""
+    fan = fan_fixture()
+    by_label = fan.restricted_simps(to_dim=2, padded=False, as_face_inds=False)
+    by_index = fan.restricted_simps(to_dim=2, padded=False, as_face_inds=True)
+
+    assert len(by_label) == len(by_index)
+    for labels, inds in zip(by_label, by_index):
+        assert [len(s) for s in labels] == [len(s) for s in inds]

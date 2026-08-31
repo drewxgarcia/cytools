@@ -74,7 +74,38 @@ test = ["pytest"]
 dev = [
   "pytest",
   "pytest-benchmark",
+  "ruff",
+  "ty",
 ]
+
+[tool.ruff]
+# 88 is the de-facto standard already in this tree: outside `f_theory/`, only
+# 122 of 30k lines exceed it.
+line-length = 88
+target-version = "py310"
+src = ["src", "tests", "benchmarks"]
+
+[tool.ruff.lint]
+select = [
+  "E9",   # syntax and indentation failures
+  "F",    # undefined, unused, and shadowed names
+]
+ignore = [
+  # Docstrings in this project are the published API reference (rendered by
+  # docs/documentation/produce_doc.py), and contain long example lines and URLs
+  # that must not be wrapped. The formatter enforces code line length.
+  "E501",
+  # `l` is conventional for a lattice/linear-relation index throughout the
+  # geometry code; renaming would obscure the mathematics.
+  "E741",
+]
+
+[tool.ruff.lint.per-file-ignores]
+# These compatibility namespaces intentionally mirror their implementation
+# modules. Replace the wildcard exports when their public APIs are stabilized.
+"src/cytools/f_theory/__init__.py" = ["F403"]
+"src/cytools/ntfe/__init__.py" = ["F403"]
+"src/cytools/vector_config/__init__.py" = ["F403"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

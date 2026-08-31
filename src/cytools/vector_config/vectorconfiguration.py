@@ -21,20 +21,20 @@
 
 # external imports
 from collections.abc import Iterable
+from typing import Union, overload
+
 import numpy as np
 import regfans
-
 from numpy.typing import ArrayLike
 
 from cytools._typing import Matrix, Vector
-from typing import overload, Union
-
-# vector configuration imports
-from .fan import Fan
 
 # core CYTools imports
 from cytools.cone import Cone
 from cytools.polytope import Polytope
+
+# vector configuration imports
+from .fan import Fan
 
 
 class VectorConfiguration(regfans.VectorConfiguration):
@@ -60,6 +60,7 @@ class VectorConfiguration(regfans.VectorConfiguration):
     **Returns:**
     Nothing.
     """
+
     def __init__(self, *args, **kwargs):
         """
         **Description:**
@@ -83,12 +84,12 @@ class VectorConfiguration(regfans.VectorConfiguration):
         # some Polytope info
         p = Polytope(np.asarray(self.vectors()), labels=self.labels)
         self._is_reflexive = p.is_reflexive(allow_translations=False)
-        self._poly = {self.labels: p}
+        self._poly: dict[tuple[int, ...], Polytope] = {tuple(self.labels): p}
 
         # some toric info
         if self._is_reflexive and (self._gale_basis is None):
             self._gale_basis = p.glsm_basis(include_points_interior_to_facets=False)
-    
+
     # hulls
     # -----
     def conical_hull(self, which: Union[int, Iterable[int]] | None = None) -> Cone:
@@ -275,10 +276,8 @@ class VectorConfiguration(regfans.VectorConfiguration):
         """
         # reflexivity decides the basis, regardless of what was passed in
         return np.asarray(super().gale(set_basis=self.is_reflexive))
-        
-    def moving_cone(self, 
-                    pushed_down: bool = False,
-                    verbosity: int = 0) -> Cone:
+
+    def moving_cone(self, pushed_down: bool = False, verbosity: int = 0) -> Cone:
         """
         **Description:**
         Compute the moving cone of the vector configuration.
@@ -298,7 +297,7 @@ class VectorConfiguration(regfans.VectorConfiguration):
         hyps = []
         for i in range(glsm.shape[1]):
             if verbosity >= 1:
-                msg  =  "Computing the cone corresponding to deleting "
+                msg = "Computing the cone corresponding to deleting "
                 msg += f"i={i}/{glsm.shape[1]}..."
                 print(msg)
             hyps.append(Cone(rays=np.delete(glsm, i, axis=1).T).hyperplanes())
@@ -330,15 +329,15 @@ class VectorConfiguration(regfans.VectorConfiguration):
         The resultant subdivision.
         """
         fan = super().subdivide(*args, **kwargs)
-        fan = Fan.from_regfans(fan) # cast to CYTools type
+        fan = Fan.from_regfans(fan)  # cast to CYTools type
         return fan
 
     subdivide = triangulate
 
+
 # Domain feature methods
 # ----------------------
-def vc(self,
-    include_points_interior_to_facets: bool = False) -> "VectorConfiguration":
+def vc(self, include_points_interior_to_facets: bool = False) -> "VectorConfiguration":
     """
     **Description:**
     Construct the VectorConfiguration associated to the polytope.
@@ -352,10 +351,10 @@ def vc(self,
     """
     # see if we already know the answer
     if include_points_interior_to_facets:
-        if hasattr(self, '_vc_yesfacet'):
+        if hasattr(self, "_vc_yesfacet"):
             return self._vc_yesfacet
     else:
-        if hasattr(self, '_vc_nofacet'):
+        if hasattr(self, "_vc_nofacet"):
             return self._vc_nofacet
 
     # determine which points set to use
@@ -366,14 +365,13 @@ def vc(self,
 
     # get the associated lattice points
     label_origin = self.label_origin
-    vc_labels = tuple(sorted(
-        [label for label in poly_labels if label != label_origin]
-    ))
+    vc_labels = tuple(sorted([label for label in poly_labels if label != label_origin]))
 
     # save the VC (for caching purposes)
     vc = VectorConfiguration(
-        self.points(which=vc_labels), labels=vc_labels,
-        gale_basis = self.glsm_basis(include_points_interior_to_facets=False)
+        self.points(which=vc_labels),
+        labels=vc_labels,
+        gale_basis=self.glsm_basis(include_points_interior_to_facets=False),
     )
 
     vc._poly = {vc.labels: self}

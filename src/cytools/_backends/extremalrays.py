@@ -24,11 +24,8 @@ def exhaustive_indices(rays: Matrix, *, verbose: bool = False) -> np.ndarray:
     """Return sorted indices of the extremal rows in *rays*."""
     import extremalrays
 
-    indices = extremalrays.exhaustive(
-        np.asarray(rays), verbosity=1 if verbose else 0
-    )
+    indices = extremalrays.exhaustive(np.asarray(rays), verbosity=1 if verbose else 0)
     return np.sort(np.asarray(indices, dtype=int))
 
 
 __all__ = ["exhaustive_indices", "is_available"]
-

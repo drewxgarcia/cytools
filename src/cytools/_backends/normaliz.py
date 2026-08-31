@@ -23,7 +23,7 @@ def hilbert_basis(rays: Matrix) -> np.ndarray:
         raise ImportError(
             "Hilbert basis computation requires the optional PyNormaliz "
             "binding. Install it with "
-            "`python -m pip install \"cytools[normaliz]\"`."
+            '`python -m pip install "cytools[normaliz]"`.'
         ) from exc
 
     cone = NormalizCone(cone=np.asarray(rays, dtype=int).tolist())
@@ -34,4 +34,3 @@ def hilbert_basis(rays: Matrix) -> np.ndarray:
 
 
 __all__ = ["hilbert_basis"]
-

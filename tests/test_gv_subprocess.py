@@ -56,7 +56,10 @@ def test_in_process_kernel_call_is_not_viable():
     the same interpreter panics with MultipleHandlers, which is exactly what the
     subprocess wrapper works around.
     """
-    from cygv.cygv import _compute_gvgw  # noqa: F401  # ty: ignore[unresolved-import]  # compiled extension, no stubs
+    # ty: ignore[unresolved-import] -- compiled extension, ships no stubs
+    from cygv.cygv import (
+        _compute_gvgw,  # noqa: F401
+    )
 
     # Only the existence of the raw entry point is asserted. Calling it twice
     # here would poison the interpreter for the rest of the session, which is

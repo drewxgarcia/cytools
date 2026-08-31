@@ -20,40 +20,48 @@
 # -----------------------------------------------------------------------------
 from __future__ import annotations
 
-# 'standard' imports
-from collections.abc import Callable, Iterable, Mapping, Sequence
-from typing import overload, TYPE_CHECKING
-from copy import deepcopy
-from fractions import Fraction
+import ctypes
 import itertools
-import joblib
-from multiprocessing import cpu_count
 import warnings
 
-# 3rd party imports
-from flint import fmpz_mat, fmpz, fmpq
+# 'standard' imports
+from collections.abc import Callable, Iterable, Mapping, Sequence
+from copy import deepcopy
+from fractions import Fraction
+from multiprocessing import cpu_count
+from typing import TYPE_CHECKING, overload
+
+import highspy
+import joblib
 import numpy as np
+import ppl
+
+# 3rd party imports
+from flint import fmpq, fmpz, fmpz_mat
 from ortools.linear_solver import pywraplp
 from ortools.sat.python import cp_model
-import highspy
-import ppl
-import ctypes; ctypes.CDLL(None).fesetround(0)  # ppl changes FPU rounding mode; reset to FE_TONEAREST
 
+ctypes.CDLL(None).fesetround(0)  # ppl changes FPU rounding mode; reset to FE_TONEAREST
+
+import latticepts
 import qpsolvers
 from scipy import sparse
 from scipy.optimize import linprog, nnls
-import latticepts
 
-# CYTools imports
-from cytools._extensions import lazy_method
+import cytools.config as config
+import cytools.utils as utils
 from cytools._backends.extremalrays import (
     exhaustive_indices as _extremal_indices,
+)
+from cytools._backends.extremalrays import (
     is_available as _extremalrays_available,
 )
 from cytools._backends.normaliz import hilbert_basis as _normaliz_hilbert_basis
-import cytools.config as config
+
+# CYTools imports
+from cytools._extensions import lazy_method
 from cytools._typing import Matrix, Vector
-import cytools.utils as utils
+from cytools.helpers.arithmetic import gcd_reduce
 
 
 class Cone:
@@ -157,7 +165,7 @@ class Cone:
         # check whether rays or hyperplanes were input
         if not ((rays is None) ^ (hyperplanes is None)):
             raise ValueError(
-                'Exactly one of "rays" and "hyperplanes" ' "must be specified."
+                'Exactly one of "rays" and "hyperplanes" must be specified.'
             )
 
         # parse empty hyperplanes
@@ -165,10 +173,12 @@ class Cone:
             hyperplanes = np.asarray(hyperplanes)
 
             # check if ambient dim is inferrable from hyperplanes
-            if (len(hyperplanes.shape)>1) and (hyperplanes.shape[1]!=0):
+            if (len(hyperplanes.shape) > 1) and (hyperplanes.shape[1] != 0):
                 # yes inferrable - ensure no conflicts in specification
                 if (ambient_dim is not None) and (ambient_dim != hyperplanes.shape[1]):
-                    raise ValueError(f"Specified ambient dim = {ambient_dim} doesn't match inferrable shape from hyperplanes = {hyperplanes.shape[1]}...")
+                    raise ValueError(
+                        f"Specified ambient dim = {ambient_dim} doesn't match inferrable shape from hyperplanes = {hyperplanes.shape[1]}..."
+                    )
 
                 ambient_dim = hyperplanes.shape[1]
             else:
@@ -182,9 +192,8 @@ class Cone:
             rays = []
             for i in range(ambient_dim):
                 # add e_i and -e_i
-                rays.append([int(i==j) for j in range(ambient_dim)])
-                rays.append([-int(i==j) for j in range(ambient_dim)])
-
+                rays.append([int(i == j) for j in range(ambient_dim)])
+                rays.append([-int(i == j) for j in range(ambient_dim)])
 
         # minimal work if we don't parse the data
         if not parse_inputs:
@@ -195,7 +204,7 @@ class Cone:
                 data = np.asarray(hyperplanes)
             else:
                 raise NotImplementedError(
-                    "Currently, parse_inputs is required " "if rays are input..."
+                    "Currently, parse_inputs is required if rays are input..."
                 )
 
             # initialize other variables
@@ -277,7 +286,7 @@ class Cone:
             if check or t in (fmpz, np.float64):
                 # get GCDs
                 if t == np.int64:
-                    gcds = np.gcd.reduce(data, axis=1)  # ty: ignore[no-matching-overload]
+                    gcds = gcd_reduce(data, axis=1)
                 else:
                     gcds = np.asarray([utils.gcd_list(v) for v in data])
 
@@ -285,7 +294,7 @@ class Cone:
                 if t == np.int64:
                     mask = gcds > 0
                     if False in mask:
-                        warnings.warn("0 gcd found (row of zeros)... " "Skipping it!")
+                        warnings.warn("0 gcd found (row of zeros)... Skipping it!")
                     data = data[mask] // gcds[mask].reshape(-1, 1).astype(int)
                 else:
                     mask = gcds >= 1e-5
@@ -593,7 +602,7 @@ class Cone:
     # aliases
     dim = dimension
 
-    def rays(self, use_extremal_hyperplanes: bool=False, verbosity: int=0):
+    def rays(self, use_extremal_hyperplanes: bool = False, verbosity: int = 0):
         """
         **Description:**
         Returns the (not necessarily extremal) rays that generate the cone.
@@ -643,7 +652,7 @@ class Cone:
         self._dim = None  # lazy; see the note in __init__
         return np.array(self._rays)
 
-    def hyperplanes(self, use_extremal_rays: bool=False, verbosity: int=0):
+    def hyperplanes(self, use_extremal_rays: bool = False, verbosity: int = 0):
         """
         **Description:**
         Returns the inward-pointing normals to the hyperplanes that define the
@@ -737,8 +746,7 @@ class Cone:
         # return
         if return_list:
             return tuple(contained)
-        else:
-            return contained[0]
+        return contained[0]
 
     def dual_cone(self):
         """
@@ -776,11 +784,13 @@ class Cone:
     # aliases
     dual = dual_cone
 
-    def extremal_rays(self,
-        tol: float=1e-4,
-        minimal: bool=True,
-        method: str="extremalrays",
-        verbose: bool=False) -> np.ndarray:
+    def extremal_rays(
+        self,
+        tol: float = 1e-4,
+        minimal: bool = True,
+        method: str = "extremalrays",
+        verbose: bool = False,
+    ) -> np.ndarray:
         """
         **Description:**
         Returns the extremal rays of the cone.
@@ -836,10 +846,12 @@ class Cone:
         # matrices by analyzing the lineality space and the pointed bit of the
         # cone separately
         if minimal and (not self.is_pointed()):
-            ext_rays = np.vstack([
-                self.lineality_space().extremal_rays(),
-                self.pointed_space().extremal_rays()
-            ])
+            ext_rays = np.vstack(
+                [
+                    self.lineality_space().extremal_rays(),
+                    self.pointed_space().extremal_rays(),
+                ]
+            )
             self._ext_rays[minimal] = ext_rays
 
             return ext_rays
@@ -866,8 +878,10 @@ class Cone:
         if method == "lp":
             method = "legacy"
         if method not in ("extremalrays", "legacy", "nnls"):
-            raise ValueError(f"Unknown method '{method}'; expected "
-                             "'extremalrays', 'legacy' or 'nnls'.")
+            raise ValueError(
+                f"Unknown method '{method}'; expected "
+                "'extremalrays', 'legacy' or 'nnls'."
+            )
 
         if method == "extremalrays":
             if not _extremalrays_available():
@@ -885,8 +899,10 @@ class Cone:
 
         if method == "extremalrays":
             if verbose:
-                print(f"Computing extremal rays for a cone with {len(rays)} "
-                      "rays using extremalrays...")
+                print(
+                    f"Computing extremal rays for a cone with {len(rays)} "
+                    "rays using extremalrays..."
+                )
             # Its own tolerance is a separation tolerance, unrelated to the
             # nnls tolerance above.
             keep = _extremal_indices(rays, verbose=verbose)
@@ -920,7 +936,9 @@ class Cone:
         to_check = list(range(len(rays)))
 
         if verbose:
-            print(f"Computing extremal rays for a cone with {len(rays)} using {n_threads} threads...")
+            print(
+                f"Computing extremal rays for a cone with {len(rays)} using {n_threads} threads..."
+            )
 
         # bound the retries; unbounded ones spin forever on a ray that
         # deterministically fails
@@ -948,7 +966,7 @@ class Cone:
                 if verbose:
                     print(f"Failed to check whether ray #{i} was extremal")
                     print(f"(Error was: {err})")
-                    print( "(Putting it at the end and retrying later...)")
+                    print("(Putting it at the end and retrying later...)")
 
         if n_threads == 1:
             # skip the pool; with one worker the serialization is pure
@@ -956,9 +974,13 @@ class Cone:
             while len(to_check):
                 checking = to_check[:batch_size]
                 to_check = to_check[batch_size:]
-                learn([is_extremal(rays, i, ext_rays, method=check_method,
-                                   tol=tol)
-                       for i in checking], checking)
+                learn(
+                    [
+                        is_extremal(rays, i, ext_rays, method=check_method, tol=tol)
+                        for i in checking
+                    ],
+                    checking,
+                )
         else:
             # one context for the whole loop: joblib auto-memmaps args
             # over 1 MB, so a new context per round re-dumped the rays each
@@ -967,11 +989,15 @@ class Cone:
                 while len(to_check):
                     checking = to_check[:batch_size]
                     to_check = to_check[batch_size:]
-                    learn(parallel(
-                        joblib.delayed(is_extremal)(
-                            rays, i, ext_rays, method=check_method, tol=tol)
-                        for i in checking
-                    ), checking)
+                    learn(
+                        parallel(
+                            joblib.delayed(is_extremal)(
+                                rays, i, ext_rays, method=check_method, tol=tol
+                            )
+                            for i in checking
+                        ),
+                        checking,
+                    )
 
         # save the answer
         ext_rays = rays[list(ext_rays)]
@@ -981,11 +1007,13 @@ class Cone:
 
         return ext_rays
 
-    def extremal_hyperplanes(self,
-        tol: float=1e-4,
+    def extremal_hyperplanes(
+        self,
+        tol: float = 1e-4,
         minimal=True,
         method="extremalrays",
-        verbose: bool=False) -> np.ndarray:
+        verbose: bool = False,
+    ) -> np.ndarray:
         """
         **Description:**
         Returns the extremal hyperplanes of the cone.
@@ -1007,25 +1035,22 @@ class Cone:
         The list of extremal hyperplanes of the cone.
         """
         return self.dual().extremal_rays(
-            tol=tol,
-            minimal=minimal,
-            method=method,
-            verbose=verbose
+            tol=tol, minimal=minimal, method=method, verbose=verbose
         )
 
     @overload
     def face_lattice(
         self, codim: int, include_self: bool = False, verbosity: int = 0
-    ) -> tuple["Cone", ...]: ...
+    ) -> tuple[Cone, ...]: ...
 
     @overload
     def face_lattice(
         self, codim: None = None, include_self: bool = False, verbosity: int = 0
-    ) -> tuple[tuple["Cone", ...], ...]: ...
+    ) -> tuple[tuple[Cone, ...], ...]: ...
 
     def face_lattice(
         self, codim: int | None = None, include_self: bool = False, verbosity: int = 0
-    ) -> tuple["Cone", ...] | tuple[tuple["Cone", ...], ...]:
+    ) -> tuple[Cone, ...] | tuple[tuple[Cone, ...], ...]:
         """
         **Description:**
         Computes the positive-dimensional face lattice of a pointed cone.
@@ -1061,15 +1086,16 @@ class Cone:
             if self.is_pointed():
                 # return cone spanned by 0 rays
                 I = np.eye(self.ambient_dim(), dtype=int)
-                return ( Cone(hyperplanes=np.vstack([I,-I])), )
-            else:
-                # return empty list... no 0D faces here
-                return tuple()
+                return (Cone(hyperplanes=np.vstack([I, -I])),)
+            # return empty list... no 0D faces here
+            return tuple()
 
         # fast track if cached
         if self._face_lattice is not None:
-            return self._face_lattice[codim] if codim is not None else (
-                self._face_lattice if include_self else self._face_lattice[1:]
+            return (
+                self._face_lattice[codim]
+                if codim is not None
+                else (self._face_lattice if include_self else self._face_lattice[1:])
             )
 
         if not self.is_pointed():
@@ -1078,7 +1104,9 @@ class Cone:
             )
 
         if verbosity >= 1:
-            print("Computing cone face lattice via extremal ray/hyperplane incidence...")
+            print(
+                "Computing cone face lattice via extremal ray/hyperplane incidence..."
+            )
 
         # expensive work vvv
         R = self.extremal_rays()
@@ -1142,12 +1170,14 @@ class Cone:
         # add the 0D cone if this is pointed
         if self.is_pointed():
             I = np.eye(self.ambient_dim(), dtype=int)
-            face_lattice.append( (Cone(hyperplanes=np.vstack([I,-I])),) )
+            face_lattice.append((Cone(hyperplanes=np.vstack([I, -I])),))
 
         # cache and return
         self._face_lattice = tuple(face_lattice)
-        return self._face_lattice[codim] if codim is not None else (
-            self._face_lattice if include_self else self._face_lattice[1:]
+        return (
+            self._face_lattice[codim]
+            if codim is not None
+            else (self._face_lattice if include_self else self._face_lattice[1:])
         )
 
     def facets(self, verbosity: int = 0):
@@ -1177,15 +1207,19 @@ class Cone:
 
             if dim == 1:
                 I = np.eye(self.ambient_dim(), dtype=int)
-                return [ Cone(hyperplanes=np.vstack([I,-I])), ]
-            elif dim == 0:
+                return [
+                    Cone(hyperplanes=np.vstack([I, -I])),
+                ]
+            if dim == 0:
                 return []
 
             ray_inds = list(range(dim))
 
             # facets are defined by collections of #(dim-1) rays
-            return [Cone(rays=R[list(inds)]) for inds in\
-                                        itertools.combinations(ray_inds,dim-1)]
+            return [
+                Cone(rays=R[list(inds)])
+                for inds in itertools.combinations(ray_inds, dim - 1)
+            ]
 
         # hyperplane based-computation
         if verbosity >= 1:
@@ -1201,8 +1235,7 @@ class Cone:
             # need to skip these when looking to saturate hyperplanes
             can_saturate = [h for h in H if not self.dual().contains(-h)]
 
-        return [Cone(hyperplanes=np.vstack((H, -h)), check=False) for h in\
-                                                                can_saturate]
+        return [Cone(hyperplanes=np.vstack((H, -h)), check=False) for h in can_saturate]
 
     def tip_of_stretched_cone(
         self,
@@ -1274,7 +1307,7 @@ class Cone:
         # set the backend
         backends = (None, "mosek", "osqp", "cvxopt", "highs", "glop")
         if backend not in backends:
-            raise ValueError("Invalid backend. " f"The options are: {backends}.")
+            raise ValueError(f"Invalid backend. The options are: {backends}.")
 
         if backend is None:
             if self.ambient_dim() < 25:
@@ -1315,7 +1348,10 @@ class Cone:
             G = -1 * sparse.csc_matrix(hp, dtype=float)
             if backend == "osqp":
                 solution = qpsolvers.solve_qp(
-                    P, q, G, h,
+                    P,
+                    q,
+                    G,
+                    h,
                     solver=backend,
                     max_iter=max_iter,
                     verbose=verbose,
@@ -1326,7 +1362,10 @@ class Cone:
                 )
             else:
                 solution = qpsolvers.solve_qp(
-                    P, q, G, h,
+                    P,
+                    q,
+                    G,
+                    h,
                     solver=backend,
                     max_iter=max_iter,
                     verbose=verbose,
@@ -1364,14 +1403,14 @@ class Cone:
                 )
 
                 print("For more info, re-run with verbose=True")
-            return
+            return None
         if check:
             res = max(G.dot(solution)) + c
             if res > constraint_error_tol:
                 warnings.warn(
                     f"The solution that was found is invalid: {res} > {constraint_error_tol}"
                 )
-                return
+                return None
         return solution
 
     def find_grading_vector(self, backend=None):
@@ -1401,18 +1440,18 @@ class Cone:
         ```
         """
         if not self.is_pointed():
-            raise Exception("Grading vectors are only defined for pointed " "cones.")
+            raise Exception("Grading vectors are only defined for pointed cones.")
         return self.dual().find_interior_point(backend=backend, integral=True)
 
     def find_interior_point(
         self,
-        c: float=1,
-        lower: float | None=None,
-        integral: bool=False,
-        backend: str | None=None,
-        check: bool=True,
-        show_hints: bool=False,
-        verbose: bool=False,
+        c: float = 1,
+        lower: float | None = None,
+        integral: bool = False,
+        backend: str | None = None,
+        check: bool = True,
+        show_hints: bool = False,
+        verbose: bool = False,
     ) -> np.ndarray | None:
         r"""
         **Description:**
@@ -1451,7 +1490,7 @@ class Cone:
         """
         backends = (None, "highs", "glop", "scip", "cpsat", "mosek", "osqp", "cvxopt")
         if backend not in backends:
-            raise ValueError("Invalid backend. " f"The options are: {backends}.")
+            raise ValueError(f"Invalid backend. The options are: {backends}.")
 
         # If the rays are already computed then this is a simple task
         if (self._rays is not None) and (backend is None) and (lower is None):
@@ -1469,10 +1508,9 @@ class Cone:
                     point = [0 for _ in range(self._ambient_dim)]
                     point[0] = 1
                     return np.asarray(point)
-                else:
-                    raise Exception(
-                        f"Unexpected error in finding point in cone with rays = {self._rays}"
-                    )
+                raise Exception(
+                    f"Unexpected error in finding point in cone with rays = {self._rays}"
+                )
 
             if not integral:
                 point = point / len(self._rays)
@@ -1499,21 +1537,31 @@ class Cone:
             )
         else:
             if lower is not None:
-                raise ValueError(f"Cannot set custom lower bound for backend = {backend}")
+                raise ValueError(
+                    f"Cannot set custom lower bound for backend = {backend}"
+                )
             solution = self.tip_of_stretched_cone(
                 c, backend=backend, show_hints=show_hints, verbose=verbose
             )
         if solution is None:
             return None
 
-        # function to take dot products
+        # Containment test for every hyperplane at once. Iterating the rows in
+        # Python cost one tiny numpy call each -- ~1500 of them per cone at
+        # h11 ~ 200, and up to 1000x that inside the rounding retry below.
         if isinstance(H, (list, np.ndarray)):
-            dot = lambda hp, x: hp.dot(x)
+            H_arr = np.asarray(H)
+
+            def all_positive(x):
+                return bool(np.all(H_arr.dot(x) > 0))
+
         else:
-            dot = lambda hp, x: sum([val * x[ind] for ind, val in hp.items()])
+            # Sparse rows (dicts of index -> value); no dense array to build.
+            def all_positive(x):
+                return all(sum(val * x[ind] for ind, val in hp.items()) > 0 for hp in H)
 
         # Make sure that the solution is valid
-        if check and any(dot(v, solution) <= 0 for v in H):
+        if check and not all_positive(solution):
             warnings.warn("The solution that was found is invalid.")
             return None
 
@@ -1521,8 +1569,8 @@ class Cone:
         if integral:
             n_tries = 1000
             for i in range(1, n_tries):
-                int_sol = np.array([int(round(x)) for x in i * solution])
-                if all(dot(v, int_sol) > 0 for v in H):
+                int_sol = np.rint(i * np.asarray(solution)).astype(int)
+                if all_positive(int_sol):
                     break
                 if i == n_tries - 1:
                     return None
@@ -1633,19 +1681,21 @@ class Cone:
 
         # shortcut if min_points is set and dim is low
         if fast_mode and (min_points is not None) and (self.ambient_dim() <= 10):
-            return np.array(latticepts.enum_lattice_points(
-                H = self.hyperplanes(),
-                rhs = c,
-                min_N_pts=min_points,
-                max_B=max_B,
-            ))
+            return np.array(
+                latticepts.enum_lattice_points(
+                    H=self.hyperplanes(),
+                    rhs=c,
+                    min_N_pts=min_points,
+                    max_B=max_B,
+                )
+            )
 
         if not self.is_pointed():
             raise Exception("Only pointed cones are currently supported.")
 
         if process_function is not None and filter_function is not None:
             raise Exception(
-                "Only one of filter_function or process_function " "can be specified."
+                "Only one of filter_function or process_function can be specified."
             )
         if grading_vector is None:
             grading_vector = self.find_grading_vector()
@@ -1723,8 +1773,8 @@ class Cone:
 
             # define constraints
             for v in hp:
-                model.add(sum(ii * var[i] for i, ii in enumerate(v)) >= 0)
-            model.add(sum(ii * var[i] for i, ii in enumerate(grading_vector)) <= 0)
+                model.add(sum(int(ii) * var[i] for i, ii in enumerate(v)) >= 0)
+            model.add(sum(int(ii) * var[i] for i, ii in enumerate(grading_vector)) <= 0)
 
             solution_storage = SolutionStorage(var, on_soln_single_pt)
 
@@ -1737,7 +1787,7 @@ class Cone:
                 )
 
         if not isinstance(c, Iterable):
-            c_vals = [c]*len(hp)
+            c_vals = [c] * len(hp)
         else:
             c_vals = list(c)
 
@@ -1753,7 +1803,7 @@ class Cone:
             ]
 
             # define constraints
-            for h,cc in zip(hp,c_vals):
+            for h, cc in zip(hp, c_vals):
                 # clear the denominator
                 cc_rat = Fraction(cc).limit_denominator()
                 denom = cc_rat.denominator
@@ -1761,10 +1811,10 @@ class Cone:
 
                 # add the constraint
                 model.add(
-                    sum(ii * var[i] * denom for i, ii in enumerate(h)) >= numer
+                    sum(int(ii) * var[i] * denom for i, ii in enumerate(h)) >= numer
                 )
 
-            soln_deg = sum(ii * var[i] for i, ii in enumerate(grading_vector))
+            soln_deg = sum(int(ii) * var[i] for i, ii in enumerate(grading_vector))
             return solver, model, var, soln_deg
 
         solver, model, var, soln_deg = make_lattice_model()
@@ -1797,7 +1847,7 @@ class Cone:
                     "There was a problem finding the points. Status code: "
                     f"{solver.status_name(status)}"
                 )
-                return
+                return None
         elif min_points is not None:
             # Else, add points until the minimum number is reached
             deg = 0
@@ -1813,16 +1863,16 @@ class Cone:
                     )
 
                 # define model with windowed degree constraints
-                window_model   = deepcopy(model)
-                deg_constr_low = window_model.add(deg <= soln_deg)
-                deg_constr_up  = window_model.add(soln_deg <= deg + deg_window)
+                window_model = deepcopy(model)
+                window_model.add(deg <= soln_deg)
+                window_model.add(soln_deg <= deg + deg_window)
 
                 # solve and check status
                 status = solver.SearchForAllSolutions(window_model, solution_storage)
                 if verbose and status != cp_model.OPTIMAL:
                     print(
                         "There was a problem finding the points b/t degrees "
-                        f"{deg} and {deg+deg_window}. "
+                        f"{deg} and {deg + deg_window}. "
                         f"Status code: {solver.status_name(status)}"
                     )
 
@@ -1830,15 +1880,15 @@ class Cone:
 
         # parse solutions
         if process_function is not None:
-            return
-        pts  = np.array(list(solution_storage._solutions), dtype=int)
+            return None
+        pts = np.array(list(solution_storage._solutions), dtype=int)
 
         # provide uniform sorting of points
-        degs = pts@grading_vector
+        degs = pts @ grading_vector
 
         out = []
         for deg in sorted(set(degs)):
-            out.append(sorted(pts[degs==deg].tolist()))
+            out.append(sorted(pts[degs == deg].tolist()))
 
         return np.vstack(out)
 
@@ -1902,7 +1952,7 @@ class Cone:
             "cvxopt",
         )
         if backend not in backends:
-            raise ValueError("Invalid backend. " f"The options are: {backends}.")
+            raise ValueError(f"Invalid backend. The options are: {backends}.")
 
         # solve according to backend
         if backend == "ppl":
@@ -1924,7 +1974,7 @@ class Cone:
     # aliases
     is_full_dimensional = is_solid
 
-    def is_pointed(self, backend: str="dual", tol: float=1e-7) -> bool:
+    def is_pointed(self, backend: str = "dual", tol: float = 1e-7) -> bool:
         """
         **Description:**
         Returns True if the cone is pointed (i.e. strongly convex). A cone is
@@ -1938,7 +1988,7 @@ class Cone:
             1) finding some psi such that psi.r > 0 for all rays r
             2) checking if some lmbda!=0 exist such that R.T@lmbda = 0
 
-        
+
         The backends are, in order of preference,
             1) (backend='dual') check if dual is solid
             2) (backend='null') hyperplane rank
@@ -1981,11 +2031,8 @@ class Cone:
             # N.B.: this is equiv to [R; 1]@lmbda=[0; 1] for any lmbda>=0
             #       (akin to homogenization...)
             R = self.rays().T
-            R = np.vstack((
-                R,
-                np.ones((1,R.shape[1]), dtype=int)
-            ))
-            b = [0] * (R.shape[0]-1) + [1]
+            R = np.vstack((R, np.ones((1, R.shape[1]), dtype=int)))
+            b = [0] * (R.shape[0] - 1) + [1]
 
             # allow different backends
             if backend.lower() == "nnls":
@@ -1993,9 +2040,10 @@ class Cone:
             elif backend.lower() == "lp":
                 res = linprog(
                     c=np.zeros(R.shape[0], dtype=int),  # no objective
-                    A_eq=R, b_eq=b,                     # [R; 1] lmbda = [0;1]
-                    bounds=[(0, None)],                 # lmbda >= 0
-                    method="highs"
+                    A_eq=R,
+                    b_eq=b,  # [R; 1] lmbda = [0;1]
+                    bounds=[(0, None)],  # lmbda >= 0
+                    method="highs",
                 )
                 self._is_pointed = not res.success
             else:
@@ -2008,7 +2056,7 @@ class Cone:
                 self._is_pointed = bool(H_rank == self.ambient_dim())
             else:
                 raise ValueError(f"backend '{backend.lower()}' not known for H-cones")
-        
+
         return self._is_pointed
 
     # aliases
@@ -2052,11 +2100,13 @@ class Cone:
 
         return self._is_simplicial
 
-    def is_degenerate(self,
+    def is_degenerate(
+        self,
         use_extremal_hyperplanes: bool = True,
         M: int | None = None,
-        certificate: bool=False,
-        verbosity: int = 0,):
+        certificate: bool = False,
+        verbosity: int = 0,
+    ):
         """
         **Description:**
         Checks if a cone {x : H@x>=0} is degenerate. I.e., does any x in this
@@ -2093,23 +2143,18 @@ class Cone:
 
         # try a common representative of degeneracy
         xtest = np.ones(self.ambient_dim(), dtype=int)
-        dists = H@xtest
-        z = dists==0
-        if sum(z) >= self.ambient_dim()+1:
+        dists = H @ xtest
+        z = dists == 0
+        if sum(z) >= self.ambient_dim() + 1:
             degen, x, z = True, xtest, z
         else:
             # _is_degenerate is an minimal, non-Cone method doing the check
-            degen, (x, z) = _is_degenerate(
-                H=H,
-                M=M,
-                verbosity=verbosity
-            )
+            degen, (x, z) = _is_degenerate(H=H, M=M, verbosity=verbosity)
 
         # return
         if certificate:
-            return degen, (x,z)
-        else:
-            return degen
+            return degen, (x, z)
+        return degen
 
     def is_smooth(self):
         """
@@ -2170,15 +2215,15 @@ class Cone:
         #  for pedagogical purposes. It's better to define the cone via rays
         #  and then compute the hyperplanes via DDM since there will only be 6
         #  rays, since lineality space should typically be 5D)
-        #lin = Cone(hyperplanes = np.vstack([H,-H]))
+        # lin = Cone(hyperplanes = np.vstack([H,-H]))
 
         # linearly spanning vectors are given by null(H)
         R = utils.integral_nullspace(H).T
 
         # to map to positively spanning rays, add in the ray r=np.sum(axis=0)
-        r = -np.sum(R,axis=0)
-        r = r//utils.gcd_list(r)
-        R = np.vstack( [R,[r]] )
+        r = -np.sum(R, axis=0)
+        r = r // utils.gcd_list(r)
+        R = np.vstack([R, [r]])
 
         lin = Cone(rays=R)
 
@@ -2219,7 +2264,7 @@ class Cone:
         #        <=> r.x==0   (for all r in the rowspan of R... lineality space)
 
         # the pointed part is just the intersection with these hyperplanes
-        pointed = Cone(hyperplanes=np.vstack( [H, R, -R] ))
+        pointed = Cone(hyperplanes=np.vstack([H, R, -R]))
         return pointed
 
     def hilbert_basis(self):
@@ -2286,9 +2331,10 @@ class Cone:
             if not isinstance(c, Cone):
                 raise ValueError("Elements of the list must be Cone objects.")
             if c.ambient_dim() != self.ambient_dim():
-                raise ValueError("Ambient lattices must have the same" "dimension.")
+                raise ValueError("Ambient lattices must have the samedimension.")
             hyperplanes.extend(c.hyperplanes().tolist())
         return Cone(hyperplanes=hyperplanes)
+
 
 def dualize(M, verbosity=0):
     """
@@ -2328,7 +2374,7 @@ def dualize(M, verbosity=0):
     rays = []
     for gen_i, gen in enumerate(cone.minimized_generators()):
         if verbosity >= 2:
-            print(f"ray #{gen_i}...", end='\r')
+            print(f"ray #{gen_i}...", end="\r")
 
         if gen.is_ray():
             rays.append(tuple(int(c) for c in gen.coefficients()))
@@ -2340,12 +2386,14 @@ def dualize(M, verbosity=0):
     # return
     return np.array(rays, dtype=int)
 
+
 def is_extremal(
     R: Matrix,
     i: int,
     extFlags: list[bool] | None = None,
     method: str = "lp",
-    tol: float=1e-4) -> tuple[int, bool | None, Exception | None]:
+    tol: float = 1e-4,
+) -> tuple[int, bool | None, Exception | None]:
     """
     **Description:**
     Auxiliary function that is used to find the extremal rays of cones. Returns
@@ -2389,20 +2437,21 @@ def is_extremal(
         if method.lower() == "lp":
             res = linprog(
                 c=np.zeros(R.shape[0], dtype=int),  # no objective
-                A_eq=R.T, b_eq=r,                   # (R\r) lmbda = r
-                bounds=[(0, None)],                 # lmbda >= 0
-                method="highs"
+                A_eq=R.T,
+                b_eq=r,  # (R\r) lmbda = r
+                bounds=[(0, None)],  # lmbda >= 0
+                method="highs",
             )
             return (i, not res.success, None)
 
-        elif method.lower() == "nnls":
+        if method.lower() == "nnls":
             v = nnls(R.T, r)
             return (i, abs(v[1]) > tol, None)
 
-        else:
-            raise ValueError(f"Unknown method '{method}'; expected 'lp' or 'nnls'.")
+        raise ValueError(f"Unknown method '{method}'; expected 'lp' or 'nnls'.")
     except Exception as e:
         return (i, None, e)
+
 
 def feasibility(
     hyperplanes: Matrix | Sequence[Mapping[int, float]],
@@ -2445,9 +2494,9 @@ def feasibility(
             # double loop over every (row, column) entry
             m = len(hyperplanes)
             grading = hyperplanes.sum(axis=0) / m
-            starts  = np.arange(m, dtype=np.int32) * n
-            index   = np.tile(np.arange(n, dtype=np.int32), m)
-            value   = hyperplanes.ravel().astype(float)
+            starts = np.arange(m, dtype=np.int32) * n
+            index = np.tile(np.arange(n, dtype=np.int32), m)
+            value = hyperplanes.ravel().astype(float)
         else:
             # sparse rows (e.g. LIL): iterate only the stored entries
             starts, index, value = [], [], []
@@ -2461,8 +2510,8 @@ def feasibility(
 
             grading /= len(starts)
             starts = np.asarray(starts, dtype=np.int32)
-            index  = np.asarray(index, dtype=np.int32)
-            value  = np.asarray(value, dtype=float)
+            index = np.asarray(index, dtype=np.int32)
+            value = np.asarray(value, dtype=float)
 
         inf = highspy.kHighsInf
         lb = -inf if lower_bound is None else float(lower_bound)
@@ -2471,9 +2520,15 @@ def feasibility(
             h.silent()
         h.addVars(n, np.full(n, lb), np.full(n, inf))
         h.changeColsCost(n, np.arange(n, dtype=np.int32), grading)
-        h.addRows(len(starts), np.full(len(starts), float(c)),
-                  np.full(len(starts), inf), len(index),
-                  starts, index, value)
+        h.addRows(
+            len(starts),
+            np.full(len(starts), float(c)),
+            np.full(len(starts), inf),
+            len(index),
+            starts,
+            index,
+            value,
+        )
         h.run()
         status = h.getModelStatus()
         if status == highspy.HighsModelStatus.kOptimal:
@@ -2495,8 +2550,9 @@ def feasibility(
             lower = -solver.infinity()
         else:
             lower = lower_bound
-        var = [(var_type)(lower, solver.infinity(), f"x_{i}")
-               for i in range(ambient_dim)]
+        var = [
+            (var_type)(lower, solver.infinity(), f"x_{i}") for i in range(ambient_dim)
+        ]
 
         # define constraints
         cons_list = []
@@ -2551,7 +2607,7 @@ def feasibility(
 
         # define constraints
         for v in hyperplanes:
-            model.add(sum(ii * var[i] for i, ii in enumerate(v)) >= c)
+            model.add(sum(int(ii) * var[i] for i, ii in enumerate(v)) >= c)
 
         # define objective
         obj_vec = np.asarray(hyperplanes).sum(axis=0)
@@ -2570,9 +2626,10 @@ def feasibility(
         elif status == cp_model.INFEASIBLE:
             return None
         else:
-            warnings.warn("Solver returned status " f"{solver.status_name(status)}.")
+            warnings.warn(f"Solver returned status {solver.status_name(status)}.")
 
     return solution
+
 
 # cone degeneracy
 # ---------------
@@ -2586,6 +2643,7 @@ class EarlyStopCallback(cp_model.CpSolverSolutionCallback):
         current_value = int(self.objective_value)
         if current_value >= self._threshold:
             self.StopSearch()
+
 
 def _is_degenerate(
     H: Matrix,
@@ -2630,7 +2688,7 @@ def _is_degenerate(
 
     if verbosity >= 2:
         solver.parameters.log_search_progress = True
-        solver.parameters.num_search_workers = 1 
+        solver.parameters.num_search_workers = 1
 
     # define variables
     # ----------------
@@ -2640,20 +2698,12 @@ def _is_degenerate(
         upper = cp_model.INT32_MAX
     else:
         lower, upper = -int(M), int(M)
-    
-    # actual variables
-    x   = [
-        model.new_int_var(lower, upper, f"x_{j}")
-        for j in range(H.shape[1])]
-    xnz = [
-        model.new_bool_var(f"nz_{j}")
-        for j in range(H.shape[1])
-    ]
 
-    satd = [
-        model.new_bool_var(f"z_{i}")
-        for i in range(H.shape[0])
-    ]
+    # actual variables
+    x = [model.new_int_var(lower, upper, f"x_{j}") for j in range(H.shape[1])]
+    xnz = [model.new_bool_var(f"nz_{j}") for j in range(H.shape[1])]
+
+    satd = [model.new_bool_var(f"z_{i}") for i in range(H.shape[0])]
 
     # define constraints
     # ------------------
@@ -2666,8 +2716,8 @@ def _is_degenerate(
     model.add(sum(xnz) >= 1)
 
     # enforce cone constraints
-    for i,v in enumerate(H):
-        dist = sum(_x*_v for _x, _v in zip(x,v))
+    for i, v in enumerate(H):
+        dist = sum(_x * _v for _x, _v in zip(x, v))
 
         # enforce that dists are non-negative (cone hyperplane constraint)
         model.add(dist >= 0)
@@ -2682,15 +2732,15 @@ def _is_degenerate(
 
     # implement early-stop callback
     # -----------------------------
-    cb = EarlyStopCallback(H.shape[1]+1, solver)
+    cb = EarlyStopCallback(H.shape[1] + 1, solver)
 
     # solve and parse solution
     status = solver.solve(model, cb)
     if status in (cp_model.FEASIBLE, cp_model.OPTIMAL):
         x = np.array([solver.value(_x) for _x in x])
-        z = np.array([solver.value( z) for  z in satd])
-        degen = sum(z)>=H.shape[1]+(1-1e-4)
-        
+        z = np.array([solver.value(z) for z in satd])
+        degen = sum(z) >= H.shape[1] + (1 - 1e-4)
+
         if verbosity >= 1:
             print(f"Found x={x} saturating the indicated hyperplanes={z}...")
     elif status == cp_model.INFEASIBLE:

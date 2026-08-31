@@ -1,10 +1,9 @@
 """Mechanical checks for the package boundaries in ARCHITECTURE.md."""
 
 import ast
-from pathlib import Path
 import subprocess
 import sys
-
+from pathlib import Path
 
 PACKAGE = Path(__file__).parents[1] / "src" / "cytools"
 PUBLIC_FACADE = PACKAGE / "__init__.py"
@@ -25,8 +24,8 @@ def test_internal_modules_do_not_import_from_public_facade():
             elif isinstance(node, ast.Import):
                 if any(alias.name == "cytools" for alias in node.names):
                     violations.append(f"{path.relative_to(PACKAGE)}:{node.lineno}")
-    assert not violations, (
-        "internal imports through public facade: " + ", ".join(violations)
+    assert not violations, "internal imports through public facade: " + ", ".join(
+        violations
     )
 
 
@@ -77,9 +76,7 @@ def test_feature_modules_do_not_mutate_domain_classes():
                     and isinstance(target.value, ast.Name)
                     and target.value.id in domain_classes
                 ):
-                    violations.append(
-                        f"{path.relative_to(PACKAGE)}:{target.lineno}"
-                    )
+                    violations.append(f"{path.relative_to(PACKAGE)}:{target.lineno}")
 
             if (
                 isinstance(node, ast.Call)
@@ -94,22 +91,68 @@ def test_feature_modules_do_not_mutate_domain_classes():
     assert not violations, "runtime domain-class mutation: " + ", ".join(violations)
 
 
-def test_package_import_keeps_feature_modules_lazy():
+def test_package_import_keeps_numerical_and_domain_modules_lazy():
     code = """
 import sys
 import cytools
+
+heavy_roots = {
+    "cvxopt", "cygv", "flint", "highspy", "latticepts", "numba",
+    "numpy", "ortools", "pandas", "ppl", "pyarrow", "pypalp",
+    "qpsolvers", "regfans", "requests", "scipy", "sympy",
+    "triangulumancer",
+}
+assert heavy_roots.isdisjoint(sys.modules)
+assert {
+    name for name in sys.modules
+    if name == "cytools" or name.startswith("cytools.")
+} <= {"cytools", "cytools._version"}
 
 assert "cytools.ntfe" not in sys.modules
 assert "cytools.ntfe.face_triangulations" not in sys.modules
 assert "cytools.vector_config" not in sys.modules
 
+Polytope = cytools.Polytope
+assert "cytools.triangulation" not in sys.modules
+assert "cytools.polytopeface" not in sys.modules
+assert "cytools.cone" not in sys.modules
+assert "cytools.toricvariety" not in sys.modules
+assert "cytools.calabiyau" not in sys.modules
+
 assert "ntfe_frts" in cytools.Polytope.__dict__
 assert "vc" in cytools.Polytope.__dict__
 
-poly = cytools.Polytope([[1, 0], [0, 1], [-1, -1]])
+poly = Polytope([[1, 0], [0, 1], [-1, -1]])
 assert callable(poly.face_triangs)
 assert "cytools.ntfe.face_triangulations" in sys.modules
 assert "cytools.vector_config" not in sys.modules
+"""
+    result = subprocess.run(
+        [sys.executable, "-c", code],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr
+
+
+def test_domain_modules_do_not_eagerly_import_their_peers():
+    code = """
+import sys
+
+from cytools.triangulation import Triangulation
+
+assert Triangulation.__name__ == "Triangulation"
+assert "cytools.cone" not in sys.modules
+assert "cytools.polytopeface" not in sys.modules
+assert "cytools.toricvariety" not in sys.modules
+assert "cytools.calabiyau" not in sys.modules
+
+from cytools.toricvariety import ToricVariety
+
+assert ToricVariety.__name__ == "ToricVariety"
+assert "cytools.cone" not in sys.modules
+assert "cytools.calabiyau" not in sys.modules
 """
     result = subprocess.run(
         [sys.executable, "-c", code],

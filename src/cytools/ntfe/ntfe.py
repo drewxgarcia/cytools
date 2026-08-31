@@ -24,14 +24,16 @@
 import atexit
 import collections
 import itertools
-import joblib
 import math
 import os
 import random
 import time
+from collections.abc import Generator, Iterator, Sequence
+from typing import Any, Literal, Union, overload
 
 # 3rd party imports
 import flint
+import joblib
 import numba
 import numpy as np
 import scipy.sparse as sp
@@ -40,17 +42,11 @@ from tqdm import tqdm
 
 # CYTools imports
 from cytools.cone import Cone
-from cytools.polytope import Polytope
-from cytools.polytopeface import PolytopeFace
-from cytools.triangulation import Triangulation
 from cytools.helpers import matrix, misc
+from cytools.helpers.arithmetic import primitive
+from cytools.polytope import Polytope
+from cytools.triangulation import Triangulation
 from cytools.utils import adjugate, integral_nullspace
-
-# typing
-from cytools._typing import Matrix
-from collections.abc import Iterable, Iterator, Sequence
-from typing import Any, Generator, Literal, overload, Union
-
 
 # fast HiGHS feasibility helper for NTFE cones
 # --------------------------------------------
@@ -83,7 +79,8 @@ def _find_interior_point_highs(
     if sp.issparse(hyperplanes):
         H = hyperplanes.toarray().astype(np.float64)
     elif hasattr(hyperplanes, "tolist") and not isinstance(
-            hyperplanes, (list, np.ndarray)):
+        hyperplanes, (list, np.ndarray)
+    ):
         H = np.asarray(hyperplanes.tolist(), dtype=np.float64)
     else:
         H = np.asarray(hyperplanes, dtype=np.float64)
@@ -115,8 +112,7 @@ class _IncrementalLP:
             import highspy
         except ImportError as e:
             raise ImportError(
-                "NTFE enumeration needs the `highspy` LP solver: "
-                "pip install highspy"
+                "NTFE enumeration needs the `highspy` LP solver: pip install highspy"
             ) from e
         self._highspy = highspy
         self.npts = npts
@@ -133,12 +129,17 @@ class _IncrementalLP:
             ncols = rows.shape[1]
             starts = np.arange(n, dtype=np.int32) * ncols
             index = np.tile(np.arange(ncols, dtype=np.int32), n)
-            self.h.addRows(n, np.ones(n),
-                           np.full(n, self._highspy.kHighsInf),
-                           n * ncols, starts, index, rows.ravel())
+            self.h.addRows(
+                n,
+                np.ones(n),
+                np.full(n, self._highspy.kHighsInf),
+                n * ncols,
+                starts,
+                index,
+                rows.ravel(),
+            )
             self.h.run()
-            ok = (self.h.getModelStatus()
-                  == self._highspy.HighsModelStatus.kOptimal)
+            ok = self.h.getModelStatus() == self._highspy.HighsModelStatus.kOptimal
         else:  # e.g. an elementary 2-face: no inequalities
             ok = True
         self.depth_rows.append(n)
@@ -151,8 +152,7 @@ class _IncrementalLP:
         n = self.depth_rows.pop()
         if n:
             total = self.h.getNumRow()
-            self.h.deleteRows(
-                n, np.arange(total - n, total, dtype=np.int32))
+            self.h.deleteRows(n, np.arange(total - n, total, dtype=np.int32))
 
     def witness(self) -> np.ndarray:
         """The current solve's interior point."""
@@ -165,8 +165,7 @@ def _adjacency_order(poly):
     """Order the 2-faces so ones sharing points are checked early."""
     face_pts = [set(int(v) for v in f.labels) for f in poly.faces(2)]
     facet_pts = [set(int(v) for v in f.labels) for f in poly.facets()]
-    facet_faces = [[j for j, fp in enumerate(face_pts) if fp <= fl]
-                   for fl in facet_pts]
+    facet_faces = [[j for j, fp in enumerate(face_pts) if fp <= fl] for fl in facet_pts]
 
     # greedy facet walk: hop to an unvisited facet sharing a 2-face with
     # the current one; fall back to any unvisited facet
@@ -175,8 +174,11 @@ def _adjacency_order(poly):
     cur, facet_walk = 0, [0]
     visited[0] = True
     while len(facet_walk) < n_facets:
-        shared = [i for i in range(n_facets) if not visited[i]
-                  and set(facet_faces[i]) & set(facet_faces[cur])]
+        shared = [
+            i
+            for i in range(n_facets)
+            if not visited[i] and set(facet_faces[i]) & set(facet_faces[cur])
+        ]
         cur = shared[0] if shared else visited.index(False)
         visited[cur] = True
         facet_walk.append(cur)
@@ -191,13 +193,11 @@ def _adjacency_order(poly):
     return order
 
 
-def _enumerate_ntfes_dfs(poly, face_ineqs, make_star, heights_only,
-                         verbosity):
+def _enumerate_ntfes_dfs(poly, face_ineqs, make_star, heights_only, verbosity):
     """Generate all NTFEs by DFS over the per-2-face FRT choices."""
     # convert each FRT's sparse inequality block to the dense float
     # rows highspy takes, once up front (each is pushed many times)
-    dense = [[np.asarray(t.toarray(), dtype=np.float64) for t in f]
-             for f in face_ineqs]
+    dense = [[np.asarray(t.toarray(), dtype=np.float64) for t in f] for f in face_ineqs]
     # 2-faces conflict only through shared points, so checking adjacent
     # ones early surfaces infeasibility at shallower depth
     dense = [dense[j] for j in _adjacency_order(poly)]
@@ -228,8 +228,7 @@ def _enumerate_ntfes_dfs(poly, face_ineqs, make_star, heights_only,
         n_out += 1
         if verbosity >= 1 and n_out % 500_000 == 0:
             dt = time.perf_counter() - t0
-            print(f"  {n_out:,} NTFEs at {dt:.0f}s "
-                  f"({n_out / dt:.0f}/s)", flush=True)
+            print(f"  {n_out:,} NTFEs at {dt:.0f}s ({n_out / dt:.0f}/s)", flush=True)
         if heights_only:
             yield h
         else:
@@ -260,11 +259,11 @@ def _save_cache():
     if _ineq_cache_dirty and _ineq_cached is not None:
         misc.save_zipped_pickle(_ineq_cached, cache_path)
 
+
 atexit.register(_save_cache)
 
 
-def _2d_frt_cone_ineqs(self, ambient_dim: int,
-                       verbosity: int=0) -> "sp.csr_matrix":
+def _2d_frt_cone_ineqs(self, ambient_dim: int, verbosity: int = 0) -> "sp.csr_matrix":
     """
     (Very analogous to Triangulation.secondary_cone(on_faces_dim=2)...
     main difference is that this treats point labels as column indices, while
@@ -319,13 +318,14 @@ def _2d_frt_cone_ineqs(self, ambient_dim: int,
     N_pairs = len(pair_to_shared)
     for i, (shared_simps, s) in enumerate(pair_to_shared.items()):
         if verbosity >= 1:
-            print(f"Constructing inequalities associated to simplex pair {i+1}/{N_pairs}")
+            print(
+                f"Constructing inequalities associated to simplex pair {i + 1}/{N_pairs}"
+            )
 
         # s are the shared points
         if len(s) <= 1:
             continue
-        else:
-            s = list(s)
+        s = list(s)
 
         # get the simplices
         simp1 = simps[shared_simps[0]]
@@ -357,18 +357,14 @@ def _2d_frt_cone_ineqs(self, ambient_dim: int,
             _ineq_cache_dirty = True
 
         # define the associated hyperplane normal
-        rows.append({lab: c for lab, c in
-                     zip((n_s[0], n_s[1], s[0], s[1]), ineq) if c})
+        rows.append({lab: c for lab, c in zip((n_s[0], n_s[1], s[0], s[1]), ineq) if c})
 
     return matrix.csr_dicts(rows, ambient_dim)
 
 
-
-
-def _2d_s_cone_ineqs(self,
-    poly,
-    ambient_dim: int,
-    verbosity: int=0) -> "sp.csr_matrix":
+def _2d_s_cone_ineqs(
+    self, poly, ambient_dim: int, verbosity: int = 0
+) -> "sp.csr_matrix":
     """
     **Description:**
     Compute the CPL-inequalities necessary to enforce that each simplex in each
@@ -404,7 +400,7 @@ def _2d_s_cone_ineqs(self,
     If the resultant cone (that respecting the 2-face+star structure) is solid,
     then such heights exist: h+eps*lambda works for
         -) h on the wall defined by lambda (i.e., h.lambda=0)
-        -) eps sufficiently small. 
+        -) eps sufficiently small.
     If h is on a wall of codim-1, then h+eps*lambda will define T and hence the
     hyperplane lambda must be included. If h is on a wall of higher codim, then
     this circuit defines a flip to an irregular triangulation, but the
@@ -428,7 +424,8 @@ def _2d_s_cone_ineqs(self,
     pts = np.asarray(poly.points(), dtype=np.int64)
     pts_ext = np.zeros((max(poly.labels) + 1, pts.shape[1] + 1), dtype=np.int64)
     pts_ext[list(poly.labels)] = np.hstack(
-        [pts, np.ones((len(pts), 1), dtype=np.int64)])
+        [pts, np.ones((len(pts), 1), dtype=np.int64)]
+    )
     pmax = int(np.abs(pts_ext).max())
 
     # find each facet containing each 2d simplex
@@ -441,14 +438,20 @@ def _2d_s_cone_ineqs(self,
     simps = self.simplices(2)
     for i, s in enumerate(simps):
         if verbosity >= 1:
-            print(f"Constructing inequalities associated to 2-simplex "
-                  f"{i+1}/{len(simps)}")
+            print(
+                f"Constructing inequalities associated to 2-simplex "
+                f"{i + 1}/{len(simps)}"
+            )
         s = sorted(s.tolist())
         for f1, f2 in itertools.combinations(containing_facets[tuple(s)], 2):
-            i1 = np.fromiter(sorted(set(f1.labels_bdry) - set(f2.labels_bdry)
-                                    - set(s)), dtype=np.int64)
-            i2 = np.fromiter(sorted(set(f2.labels_bdry) - set(f1.labels_bdry)
-                                    - set(s)), dtype=np.int64)
+            i1 = np.fromiter(
+                sorted(set(f1.labels_bdry) - set(f2.labels_bdry) - set(s)),
+                dtype=np.int64,
+            )
+            i2 = np.fromiter(
+                sorted(set(f2.labels_bdry) - set(f1.labels_bdry) - set(s)),
+                dtype=np.int64,
+            )
             if not (len(i1) and len(i2)):
                 continue
 
@@ -476,33 +479,30 @@ def _2d_s_cone_ineqs(self,
 
             # fall back to one solve per pair where int64 could overflow
             amax = max(int(np.abs(a1).max()), int(np.abs(a2).max()))
-            bound = max(amax * abs(det),
-                        8 * amax * pmax * int(np.abs(adj).max()))
+            bound = max(amax * abs(det), 8 * amax * pmax * int(np.abs(adj).max()))
             if bound > _INT64_HEADROOM:
                 for p1, p2 in itertools.product(i1.tolist(), i2.tolist()):
                     M = poly.points(which=[p1, p2] + comm, optimal=True).T
-                    null = flint.fmpz_mat(
-                        M.tolist() + [[1] * M.shape[1]]).nullspace()
+                    null = flint.fmpz_mat(M.tolist() + [[1] * M.shape[1]]).nullspace()
                     if null[1] != 1:
                         continue
                     lam = [int(x) for x in null[0].transpose().tolist()[0]]
                     if lam[0] < 0:
                         lam = [-x for x in lam]
-                    rows.append({lab: c for lab, c
-                                 in zip([p1, p2] + comm, lam) if c})
+                    rows.append({lab: c for lab, c in zip([p1, p2] + comm, lam) if c})
                 continue
 
             # primitive circuit coefficients, all apex pairs at once
             g = np.gcd.outer(np.abs(a1), np.abs(a2))
             A = a2[None, :] // g
             B = -a1[:, None] // g
-            combo = (A[:, :, None] * P1[:, None, :]
-                     + B[:, :, None] * P2[None, :, :])
+            combo = A[:, :, None] * P1[:, None, :] + B[:, :, None] * P2[None, :, :]
             c = -(combo[:, :, cols] @ adj)
-            V = np.concatenate([(A * det)[..., None], (B * det)[..., None], c],
-                               axis=2).reshape(-1, 2 + len(comm))
-            V //= np.gcd.reduce(np.abs(V), axis=1)[:, None]  # ty: ignore[no-matching-overload]
-            V *= np.sign(V[:, [0]])          # orient coeff(p1) > 0
+            V = np.concatenate(
+                [(A * det)[..., None], (B * det)[..., None], c], axis=2
+            ).reshape(-1, 2 + len(comm))
+            V = primitive(V, axis=1)
+            V *= np.sign(V[:, [0]])  # orient coeff(p1) > 0
 
             labs = np.empty(V.shape, dtype=np.int64)
             labs[:, 0] = np.repeat(i1, len(i2))
@@ -512,8 +512,6 @@ def _2d_s_cone_ineqs(self,
 
     blocks.append(matrix.csr_dicts(rows, ambient_dim))
     return matrix.csr_stack(blocks, ambient_dim)
-
-
 
 
 @numba.njit(cache=True)
@@ -677,8 +675,6 @@ def _2d_frt_subfan_ineqs(self, ambient_dim: int) -> "sp.csr_matrix":
     return matrix.csr_dicts(rows, ambient_dim)
 
 
-
-
 # generate secondary cone/fan
 # ---------------------------
 def cone_of_permissible_heights(
@@ -726,7 +722,7 @@ def cone_of_permissible_heights(
     blocks = []
 
     # iterate over face triangulations
-    for i,face_triang in enumerate(triangs):
+    for i, face_triang in enumerate(triangs):
         if verbosity >= 1:
             print(f"Studying 2-face {i}/{len(triangs)}...")
         # skip triangulation in case it is None
@@ -738,13 +734,13 @@ def cone_of_permissible_heights(
         # need to be... you can decide to pass a subset of faces)
         if (verbosity >= 2) and require_star:
             print("The 2-face inequalities...")
-        blocks.append(_2d_frt_cone_ineqs(face_triang, npts,
-                                         verbosity=verbosity-1))
+        blocks.append(_2d_frt_cone_ineqs(face_triang, npts, verbosity=verbosity - 1))
         if require_star:
-            if (verbosity >= 2):
+            if verbosity >= 2:
                 print("The star inequalities...")
-            blocks.append(_2d_s_cone_ineqs(face_triang, poly, npts,
-                                           verbosity=verbosity-1))
+            blocks.append(
+                _2d_s_cone_ineqs(face_triang, poly, npts, verbosity=verbosity - 1)
+            )
 
     # delete duplicate rows
     ineqs = matrix.csr_unique_rows(matrix.csr_stack(blocks, npts))
@@ -757,10 +753,8 @@ def cone_of_permissible_heights(
 
     # return
     if as_cone:
-        return Cone(hyperplanes=ineqs, ambient_dim=npts,
-                    parse_inputs=(len(ineqs)==0))
-    else:
-        return ineqs
+        return Cone(hyperplanes=ineqs, ambient_dim=npts, parse_inputs=(len(ineqs) == 0))
+    return ineqs
 
 
 def expanded_secondary_fan(
@@ -792,19 +786,19 @@ def expanded_secondary_fan(
     ambient_dim = len(self.labels)
 
     # iterate over face triangulations
-    ineqs = matrix.csr_stack([f._2d_frt_subfan_ineqs(ambient_dim)
-                        for f in self.faces(2)], ambient_dim)
+    ineqs = matrix.csr_stack(
+        [f._2d_frt_subfan_ineqs(ambient_dim) for f in self.faces(2)], ambient_dim
+    )
 
     if dense or as_cone:
         ineqs = ineqs.toarray()
         if big_ints or as_cone:
             ineqs = ineqs.astype(int)
     if as_cone:
-        return Cone(hyperplanes=ineqs, ambient_dim=ambient_dim, parse_inputs=(len(ineqs)==0))
-    else:
-        return ineqs
-
-
+        return Cone(
+            hyperplanes=ineqs, ambient_dim=ambient_dim, parse_inputs=(len(ineqs) == 0)
+        )
+    return ineqs
 
 
 # extend face-triangulations to FR(S)T
@@ -841,7 +835,10 @@ def triangfaces_to_frt(
     npts = len(self.labels)
 
     ineqs = cone_of_permissible_heights(
-        triangs, poly=self, npts=npts, as_cone=False,
+        triangs,
+        poly=self,
+        npts=npts,
+        as_cone=False,
     )
     h = _find_interior_point_highs(ineqs, npts)
 
@@ -856,8 +853,6 @@ def triangfaces_to_frt(
         check_heights=check_heights,
     )
     return t
-
-
 
 
 def triangfaces_to_frst(
@@ -893,8 +888,6 @@ def triangfaces_to_frst(
         check_heights=check_heights,
         verbosity=verbosity,
     )
-
-
 
 
 # generate ALL 2-face inequivalent hyperplanes/cones/FRSTs
@@ -981,9 +974,7 @@ def triangface_ineqs(
     if verbosity > 1:
         print("Calculating the hyperplane inequalities...")
     ineqs = []
-    iter_wrapper = (
-        tqdm if verbosity >= 1 else lambda x: x
-    )  # (for progress bars)
+    iter_wrapper = tqdm if verbosity >= 1 else lambda x: x  # (for progress bars)
     for f_triangs in iter_wrapper(face_triangs):
         ineqs.append([])
 
@@ -1000,10 +991,7 @@ def triangface_ineqs(
 
     if not return_triangs:
         return ineqs
-    else:
-        return ineqs, face_triangs
-
-
+    return ineqs, face_triangs
 
 
 @overload
@@ -1155,10 +1143,7 @@ def ntfe_hypers(
 
     if (N is None) or (N >= math.prod(choices_counts)):
         if verbosity >= 1:
-            print(
-                f"Calculating all N={math.prod(choices_counts)} "
-                "intersections..."
-            )
+            print(f"Calculating all N={math.prod(choices_counts)} intersections...")
         # due to the integer encoding that we use, we can specify our choices
         # simply by the numbers 0, 1, ..., math.prod(choices_counts)-1. Each
         # number corresponds to a choice
@@ -1189,21 +1174,17 @@ def ntfe_hypers(
 
         return gen()
 
+    if verbosity >= 1:
+        hypers = [
+            matrix.CSR_stack(ineqs_array, choice, choices_counts)
+            for choice in tqdm(chosen)
+        ]
     else:
-        if verbosity >= 1:
-            hypers = [
-                matrix.CSR_stack(ineqs_array, choice, choices_counts)
-                for choice in tqdm(chosen)
-            ]
-        else:
-            hypers = [
-                matrix.CSR_stack(ineqs_array, choice, choices_counts)
-                for choice in chosen
-            ]
+        hypers = [
+            matrix.CSR_stack(ineqs_array, choice, choices_counts) for choice in chosen
+        ]
 
-        return hypers
-
-
+    return hypers
 
 
 @overload
@@ -1311,8 +1292,7 @@ def ntfe_cones(
     if hypers is None:
         if verbosity >= 1:
             print(
-                "Computing hyperplane inequalities associated to 2face "
-                "triangulations"
+                "Computing hyperplane inequalities associated to 2face triangulations"
             )
 
         # generate the hyperplanes
@@ -1350,6 +1330,9 @@ def ntfe_cones(
             elif len(first):
                 dim = len(first[0])
         except (TypeError, IndexError, KeyError):
+            # `hypers` is caller-supplied and may be empty or a container that
+            # does not support this probe; `dim` stays unset and is inferred
+            # downstream instead.
             pass
 
         if dim is None:
@@ -1366,7 +1349,7 @@ def ntfe_cones(
         def gen():
             for hyper in hypers:
                 yield Cone(
-                    hyperplanes=hyper, ambient_dim=dim, parse_inputs=(len(hyper)==0)
+                    hyperplanes=hyper, ambient_dim=dim, parse_inputs=(len(hyper) == 0)
                 )
 
         return gen()
@@ -1391,13 +1374,11 @@ def ntfe_cones(
     if verbosity >= 1:
         print("Constructing the formal cones...")
 
-    iter_wrapper = (
-        tqdm if verbosity >= 1 else lambda x: x
-    )  # (for progress bars)
-    return [Cone(hyperplanes=hyper, ambient_dim=dim, parse_inputs=(len(hyper)==0))
-            for hyper in iter_wrapper(iterator)]
-
-
+    iter_wrapper = tqdm if verbosity >= 1 else lambda x: x  # (for progress bars)
+    return [
+        Cone(hyperplanes=hyper, ambient_dim=dim, parse_inputs=(len(hyper) == 0))
+        for hyper in iter_wrapper(iterator)
+    ]
 
 
 def ntfe_frts(
@@ -1481,8 +1462,7 @@ def ntfe_frts(
                 require_star=False,
                 verbosity=verbosity - 1,
             )
-        gen = _enumerate_ntfes_dfs(self, face_ineqs, make_star,
-                                   heights_only, verbosity)
+        gen = _enumerate_ntfes_dfs(self, face_ineqs, make_star, heights_only, verbosity)
         return gen if as_generator else list(gen)
 
     # random seed stuff
@@ -1525,6 +1505,7 @@ def ntfe_frts(
     # if returning a generator, just do so here
     npts_amb = len(self.labels)
     if as_generator:
+
         def gen():
             for datum in data:
                 h = _find_interior_point_highs(datum, npts_amb)
@@ -1563,8 +1544,7 @@ def ntfe_frts(
     # check the selected rays
     # (joblib.Parallel() with no n_jobs runs sequentially, so pass it through)
     results = joblib.Parallel(n_jobs=(1 if n_jobs is None else n_jobs))(
-        joblib.delayed(func)(datum)
-        for datum in data
+        joblib.delayed(func)(datum) for datum in data
     )
 
     for frst in results:
@@ -1572,8 +1552,6 @@ def ntfe_frts(
             frsts.append(frst)
 
     return frsts
-
-
 
 
 def ntfe_frsts(

@@ -129,6 +129,4 @@ def test_randomized_agreement_between_paths():
         assert exact == pytest.approx(floaty), f"{v.tolist()}"
 
         # and the integers each implies must match
-        assert [int(round(x / exact)) for x in v] == [
-            int(round(x / floaty)) for x in v
-        ]
+        assert [int(round(x / exact)) for x in v] == [int(round(x / floaty)) for x in v]

@@ -12,7 +12,6 @@ from cytools import Geometry, quantities, quantity, scan, sweep
 from cytools.landscape import _QUANTITIES, _scan_kwargs, _store_key
 from cytools.store import Unsupported
 
-
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
@@ -29,9 +28,7 @@ def _vertices(n=4, n_vertices=None):
     """Real KS vertices, or skip."""
     ds = pytest.importorskip("cytools.dataset")
     try:
-        batches = ds.scan_batches(
-            n_vertices=n_vertices or [13, 14], n=n, batch_size=n
-        )
+        batches = ds.scan_batches(n_vertices=n_vertices or [13, 14], n=n, batch_size=n)
         out = []
         for b in batches:
             out += [b.vertices(i) for i in range(len(b))]
@@ -49,8 +46,16 @@ def _vertices(n=4, n_vertices=None):
 
 def test_builtin_quantities_are_registered():
     names = set(_QUANTITIES)
-    for expected in ("h11", "h21", "chi", "is_favorable", "n_intnums",
-                     "divisor_volumes", "tip", "tip_backend"):
+    for expected in (
+        "h11",
+        "h21",
+        "chi",
+        "is_favorable",
+        "n_intnums",
+        "divisor_volumes",
+        "tip",
+        "tip_backend",
+    ):
         assert expected in names
 
 
@@ -103,16 +108,21 @@ def test_store_key_stays_bounded_for_many_columns():
 
 
 def test_n_lattice_filters_map_onto_the_m_lattice_columns():
-    kw = _scan_kwargs(n=5, batch_size=8, db_dir=None,
-                      filters={"h11": 50, "h21": 3, "chi": -100})
-    assert kw["h12"] == 50     # N-lattice h11 is the database's h12
-    assert kw["h11"] == 3      # N-lattice h21 is the database's h11
-    assert kw["chi"] == 100    # N-lattice chi is the negated database chi
+    kw = _scan_kwargs(
+        n=5, batch_size=8, db_dir=None, filters={"h11": 50, "h21": 3, "chi": -100}
+    )
+    assert kw["h12"] == 50  # N-lattice h11 is the database's h12
+    assert kw["h11"] == 3  # N-lattice h21 is the database's h11
+    assert kw["chi"] == 100  # N-lattice chi is the negated database chi
 
 
 def test_iterable_filters_are_translated_elementwise():
-    kw = _scan_kwargs(n=None, batch_size=8, db_dir=None,
-                      filters={"h11": range(50, 53), "chi": [-4, -6]})
+    kw = _scan_kwargs(
+        n=None,
+        batch_size=8,
+        db_dir=None,
+        filters={"h11": range(50, 53), "chi": [-4, -6]},
+    )
     assert list(kw["h12"]) == [50, 51, 52]
     assert kw["chi"] == [4, 6]
 
@@ -202,8 +212,13 @@ def test_scan_computes_and_matches_direct_cytools_calls(derived):
     verts = _vertices(40, n_vertices=[14])
     from cytools import Polytope
 
-    df = scan(["is_favorable", "n_points", "n_simplices"],
-              n=40, n_vertices=[14], workers=1, progress=False)
+    df = scan(
+        ["is_favorable", "n_points", "n_simplices"],
+        n=40,
+        n_vertices=[14],
+        workers=1,
+        progress=False,
+    )
     assert len(df) == 40
 
     # Recompute a few rows by hand and compare.
@@ -221,8 +236,13 @@ def test_scan_computes_and_matches_direct_cytools_calls(derived):
 
 def test_unsupported_rows_keep_the_columns_that_did_not_need_a_cy(derived):
     _vertices(1)
-    df = scan(["is_favorable", "n_points", "n_intnums", "n_cy_intnums"],
-              n=120, n_vertices=[13], workers=1, progress=False)
+    df = scan(
+        ["is_favorable", "n_points", "n_intnums", "n_cy_intnums"],
+        n=120,
+        n_vertices=[13],
+        workers=1,
+        progress=False,
+    )
     if "unsupported" not in df:
         pytest.skip("no non-favorable geometry in the sample")
 
@@ -241,8 +261,13 @@ def test_unsupported_rows_keep_the_columns_that_did_not_need_a_cy(derived):
 def test_ambient_and_cy_intersection_numbers_are_different_quantities(derived):
     """A conflation that has already bitten once, pinned."""
     _vertices(1)
-    df = scan(["is_favorable", "n_intnums", "n_cy_intnums"],
-              n=120, n_vertices=[13], workers=1, progress=False)
+    df = scan(
+        ["is_favorable", "n_intnums", "n_cy_intnums"],
+        n=120,
+        n_vertices=[13],
+        workers=1,
+        progress=False,
+    )
     both = df[df["n_cy_intnums"].notna()]
     if both.empty:
         pytest.skip("no favorable geometry in the sample")
@@ -275,8 +300,9 @@ def test_scan_is_resumable_and_returns_the_same_rows(derived):
 
 def test_sweep_returns_counts_and_does_not_collect(derived):
     _vertices(1)
-    out = sweep(["is_favorable", "n_points"], n=40, n_vertices=[13],
-                workers=1, progress=False)
+    out = sweep(
+        ["is_favorable", "n_points"], n=40, n_vertices=[13], workers=1, progress=False
+    )
     assert isinstance(out, dict)
     assert set(out) == {"requested", "computed", "skipped", "unsupported", "failed"}
     assert out["requested"] == 40
@@ -404,9 +430,7 @@ def test_database_only_scan_maps_filters_and_preserves_order(monkeypatch):
     assert df.attrs["cytools"]["requested"] == 2
 
 
-def test_notebook_quantity_is_cached_versioned_and_ordered(
-    derived, monkeypatch
-):
+def test_notebook_quantity_is_cached_versioned_and_ordered(derived, monkeypatch):
     import cytools.landscape as lm
 
     scan_calls, quantity_calls = [], []
@@ -425,9 +449,7 @@ def test_notebook_quantity_is_cached_versioned_and_ordered(
             workers=1,
             progress=False,
         )
-        cached = scan(
-            ["_test_notebook_marker"], n=2, workers=1, progress=False
-        )
+        cached = scan(["_test_notebook_marker"], n=2, workers=1, progress=False)
         new_version = scan(
             ["_test_notebook_marker"],
             n=2,
@@ -465,9 +487,7 @@ def test_sweep_does_not_build_result_frames(derived, monkeypatch):
         return int(g._vertices[0, 0])
 
     try:
-        summary = sweep(
-            ["_test_sweep_marker"], n=2, workers=1, progress=False
-        )
+        summary = sweep(["_test_sweep_marker"], n=2, workers=1, progress=False)
         assert summary["requested"] == 2
         assert summary["computed"] == 2
     finally:
@@ -567,8 +587,14 @@ def test_geometry_ids_are_identity_at_index_zero_and_distinct_after():
 
 def test_scan_returns_one_row_per_triangulation_with_provenance(derived):
     _vertices(1, n_vertices=[15])  # skip early if there is no database
-    df = scan(["is_favorable", "n_simplices", "triangulation_hash"],
-              n=8, n_vertices=[15], triangulations=3, workers=1, progress=False)
+    df = scan(
+        ["is_favorable", "n_simplices", "triangulation_hash"],
+        n=8,
+        n_vertices=[15],
+        triangulations=3,
+        workers=1,
+        progress=False,
+    )
 
     assert len(df) == 24, "expected 8 polytopes x 3 triangulations"
     assert {"polytope_id", "triangulation_index"} <= set(df.columns)
@@ -584,8 +610,14 @@ def test_scan_returns_one_row_per_triangulation_with_provenance(derived):
 def test_triangulations_of_one_polytope_are_different_geometries(derived):
     """If the simplices differ, the derived quantities must differ too."""
     _vertices(1, n_vertices=[15])  # skip early if there is no database
-    df = scan(["is_favorable", "n_simplices", "triangulation_hash"],
-              n=10, n_vertices=[15], triangulations=4, workers=1, progress=False)
+    df = scan(
+        ["is_favorable", "n_simplices", "triangulation_hash"],
+        n=10,
+        n_vertices=[15],
+        triangulations=4,
+        workers=1,
+        progress=False,
+    )
     per = df.groupby("polytope_id")["triangulation_hash"].nunique()
     assert per.max() > 1, "every triangulation of every polytope was identical"
 

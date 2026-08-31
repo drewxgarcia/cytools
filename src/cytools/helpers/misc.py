@@ -24,15 +24,17 @@ import os
 
 # 3rd party imports
 import pickle
-from platformdirs import user_cache_dir
 
 # typing
+from collections.abc import Sequence
 from typing import Any
+
+from platformdirs import user_cache_dir
 
 
 # numbers
 # -------
-def to_base10(c: list[int], B: list[int]) -> int:
+def to_base10(c: Sequence[int], B: Sequence[int]) -> int:
     """
     **Description:**
     Converts a number given in components w.r.t. some bases to an integer base

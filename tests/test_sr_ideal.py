@@ -20,11 +20,19 @@ POLYTOPES = [
     [[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1], [-1, -1, -6, -9]],
     [[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1], [-1, -1, -1, -1]],
     [
-        [1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1],
-        [-1, -1, -3, -6], [-1, -1, -1, -1],
+        [1, 0, 0, 0],
+        [0, 1, 0, 0],
+        [0, 0, 1, 0],
+        [0, 0, 0, 1],
+        [-1, -1, -3, -6],
+        [-1, -1, -1, -1],
     ],
     [
-        [-6, -8, -5, -5], [0, 1, 0, 0], [1, 0, 0, 0], [2, 4, 5, 0], [3, 3, 0, 5],
+        [-6, -8, -5, -5],
+        [0, 1, 0, 0],
+        [1, 0, 0, 0],
+        [2, 4, 5, 0],
+        [3, 3, 0, 5],
     ],
 ]
 
@@ -127,9 +135,7 @@ def test_non_fine_triangulations_include_unused_points():
 
         used = {ll for s in t.simplices() for ll in s}
         unused = [
-            ll
-            for ll in t.labels
-            if ll != t.poly._label_origin and ll not in used
+            ll for ll in t.labels if ll != t.poly._label_origin and ll not in used
         ]
         if not unused:
             continue

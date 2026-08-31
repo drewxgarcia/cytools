@@ -18,22 +18,22 @@
 # Description:  This module contains tools designed to perform polytope face
 #               computations.
 # -----------------------------------------------------------------------------
+from __future__ import annotations
 
 # 'standard' imports
 from collections.abc import Iterable
-from typing import Literal, overload, TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal, overload
 
 # 3rd party imports
 import numpy as np
-from cytools._typing import Matrix
 
 # CYTools imports
 from cytools._extensions import lazy_method
-from cytools.triangulation import Triangulation
 from cytools.utils import lll_reduce
 
 if TYPE_CHECKING:
     from cytools.polytope import Polytope
+    from cytools.triangulation import Triangulation
 
 
 class PolytopeFace:
@@ -83,7 +83,7 @@ class PolytopeFace:
 
     def __init__(
         self,
-        ambient_poly: "Polytope",
+        ambient_poly: Polytope,
         vert_labels: list,
         saturated_ineqs: frozenset,
         dim: int | None = None,
@@ -194,7 +194,7 @@ class PolytopeFace:
     # =======
     # (all methods here should be @property)
     @property
-    def ambient_poly(self) -> "Polytope":
+    def ambient_poly(self) -> Polytope:
         """
         **Description:**
         Returns the ambient polytope.
@@ -526,7 +526,7 @@ class PolytopeFace:
 
     # polytope
     # ========
-    def as_polytope(self) -> "Polytope":
+    def as_polytope(self) -> Polytope:
         """
         **Description:**
         Returns the face as a Polytope object.
@@ -563,7 +563,7 @@ class PolytopeFace:
 
     # dual
     # ====
-    def dual_face(self) -> "PolytopeFace":
+    def dual_face(self) -> PolytopeFace:
         """
         **Description:**
         Returns the dual face of the dual polytope.
@@ -663,9 +663,14 @@ class PolytopeFace:
             return self._faces[d] if d is not None else self._faces
 
         # calculate the answer
-        faces = [tuple(f for f in self.ambient_poly.faces(dd)
-                       if self._saturated_ineqs.issubset(f._saturated_ineqs))
-                 for dd in range(self._dim + 1)]
+        faces = [
+            tuple(
+                f
+                for f in self.ambient_poly.faces(dd)
+                if self._saturated_ineqs.issubset(f._saturated_ineqs)
+            )
+            for dd in range(self._dim + 1)
+        ]
         self._faces = tuple(faces)
 
         # return
@@ -680,7 +685,7 @@ class PolytopeFace:
         check_input_simplices: bool = True,
         backend: str = "cgal",
         verbosity=0,
-    ) -> "Triangulation":
+    ) -> Triangulation:
         """
         **Description:**
         Returns a single regular triangulation of the face.
@@ -711,6 +716,8 @@ class PolytopeFace:
         A [`Triangulation`](./triangulation) object describing a triangulation
         of the polytope.
         """
+        from cytools.triangulation import Triangulation
+
         return Triangulation(
             self.ambient_poly,
             self.labels,

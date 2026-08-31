@@ -39,6 +39,18 @@ From the repository root:
 uv run pytest
 ```
 
+Run the same source-quality checks as CI before submitting a change:
+
+```bash
+uv run ruff check src
+uv run ruff format --check src
+uv run ty check
+```
+
+Ruff currently enforces syntax and Pyflakes correctness across the source tree;
+additional modernization rules are being enabled incrementally. Use
+`uv run ruff format src` to format source changes.
+
 Some tests are skipped when an optional dependency is missing:
 
 - `tests/test_gnn_sampler.py` skips unless the `dualgnn` package is importable.
@@ -54,11 +66,11 @@ uv run pytest benchmarks --benchmark-only -m "not slow"
 
 ## Continuous integration
 
-`.github/workflows/build-test.yml` runs the correctness suite on every pull
-request and on pushes to `main`. The matrix covers Linux (x86-64 and arm64) and
-macOS on Apple Silicon across the supported Python versions, using the locked
-`uv` environment. Please make sure the test suite passes locally before opening
-a pull request.
+`.github/workflows/build-test.yml` runs linting, formatting, type checking, and
+the correctness suite on every pull request and on pushes to `main`. The test
+matrix covers Linux (x86-64 and arm64) and macOS on Apple Silicon across the
+supported Python versions, using the locked `uv` environment. Please make sure
+the checks pass locally before opening a pull request.
 
 The other workflows are `website.yml`, which regenerates the documentation site
 from the source docstrings, and `deploy.yml`, which builds the sdist and wheel
@@ -66,8 +78,8 @@ and publishes them to PyPI when a GitHub release is published.
 
 ## Code style and documentation
 
-There is no automated formatter or linter configured in this repository, so
-please match the style of the surrounding code.
+Ruff is the formatter and linter, and ty is the static type checker. Both are
+installed by the default development dependency group.
 
 Public functions and methods are documented with docstrings in the CYTools
 convention (`**Description:**`, `**Arguments:**`, `**Returns:**`, and an

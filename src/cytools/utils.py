@@ -20,24 +20,27 @@
 # -----------------------------------------------------------------------------
 
 # 'standard' imports
+import copy
 import fractions
 import functools
 import io
 import itertools
 import math
 import re
-import requests
-from typing import Generator, Literal, overload, TYPE_CHECKING
+from collections.abc import Generator
+from typing import TYPE_CHECKING, Literal, overload
 
 # 3rd party imports
 import flint
 import numpy as np
-from cytools._typing import Matrix, Vector, VectorOrMatrix
 import pypalp
+import requests
 import scipy.sparse as sp
 
 # CYTools imports
 import cytools.config as config
+from cytools._typing import Matrix, VectorOrMatrix
+from cytools.helpers.arithmetic import gcd_reduce, primitive
 
 if TYPE_CHECKING:
     from cytools.calabiyau import CalabiYau
@@ -171,22 +174,9 @@ def gcd_list(arr):
     # costing about a microsecond, which is most of a float caller's budget
     if type(arr) is np.ndarray:
         if arr.dtype.kind in "iu":
-            return int(np.gcd.reduce(np.abs(arr.ravel())))  # ty: ignore[no-matching-overload]
+            return int(gcd_reduce(arr))
     elif type(arr) in (list, tuple) and arr and all(type(x) is int for x in arr):
         return math.gcd(*[abs(x) for x in arr])
-
-    return functools.reduce(gcd_float, arr)
-
-    # exact path: everything is an integer, so no tolerance is involved
-    if np.issubdtype(flat.dtype, np.integer) or (
-        np.issubdtype(flat.dtype, np.floating)
-        and np.all(flat == np.rint(flat))
-        and np.all(np.isfinite(flat))
-    ):
-        as_int = np.rint(flat).astype(np.int64, copy=False)
-        result = int(np.gcd.reduce(np.abs(as_int)))
-        # preserve the float path's return type for float input
-        return float(result) if np.issubdtype(flat.dtype, np.floating) else result
 
     return functools.reduce(gcd_float, arr)
 
@@ -222,9 +212,9 @@ def integral_nullspace(M, reduce_by_gcd=True):
     if reduce_by_gcd:
         if null.dtype == object:
             gcds = np.array([math.gcd(*c) for c in null.T], dtype=object)
+            null = null // gcds
         else:
-            gcds = np.gcd.reduce(np.abs(null), axis=0)  # ty: ignore[no-matching-overload]
-        null = null // gcds
+            null = primitive(null, axis=0)
 
     return null
 
@@ -249,15 +239,12 @@ def adjugate(mat: Matrix) -> "tuple[np.ndarray, int]":
     S = [[int(x) for x in row] for row in np.asarray(mat)]
     n = len(S)
     if any(len(row) != n for row in S):
-        raise ValueError(f"expected a square matrix, got shape "
-                         f"{np.shape(mat)}")
+        raise ValueError(f"expected a square matrix, got shape {np.shape(mat)}")
 
     def minor(i, j):
-        return [[S[r][c] for c in range(n) if c != j]
-                for r in range(n) if r != i]
+        return [[S[r][c] for c in range(n) if c != j] for r in range(n) if r != i]
 
-    cof = [[(-1)**(i + j) * _det(minor(i, j)) for j in range(n)]
-           for i in range(n)]
+    cof = [[(-1) ** (i + j) * _det(minor(i, j)) for j in range(n)] for i in range(n)]
     det = sum(S[0][j] * cof[0][j] for j in range(n))
 
     adj = [[cof[j][i] for j in range(n)] for i in range(n)]
@@ -284,20 +271,24 @@ def _det(m: list) -> int:
     """
     n = len(m)
     if n == 0:
-        return 1        # the empty product; makes adjugate of a 1x1 be [[1]]
+        return 1  # the empty product; makes adjugate of a 1x1 be [[1]]
     if n == 1:
         return m[0][0]
     if n == 2:
-        return m[0][0]*m[1][1] - m[0][1]*m[1][0]
+        return m[0][0] * m[1][1] - m[0][1] * m[1][0]
     if n == 3:
-        return (m[0][0]*(m[1][1]*m[2][2] - m[1][2]*m[2][1])
-              - m[0][1]*(m[1][0]*m[2][2] - m[1][2]*m[2][0])
-              + m[0][2]*(m[1][0]*m[2][1] - m[1][1]*m[2][0]))
+        return (
+            m[0][0] * (m[1][1] * m[2][2] - m[1][2] * m[2][1])
+            - m[0][1] * (m[1][0] * m[2][2] - m[1][2] * m[2][0])
+            + m[0][2] * (m[1][0] * m[2][1] - m[1][1] * m[2][0])
+        )
     if n >= 5:
         return int(flint.fmpz_mat(m).det())
-    return sum((-1)**j * m[0][j]
-               * _det([[r[c] for c in range(n) if c != j] for r in m[1:]])
-               for j in range(n) if m[0][j])
+    return sum(
+        (-1) ** j * m[0][j] * _det([[r[c] for c in range(n) if c != j] for r in m[1:]])
+        for j in range(n)
+        if m[0][j]
+    )
 
 
 def lattice_index(mat: Matrix) -> int:
@@ -434,6 +425,7 @@ def array_to_flint(arr: np.ndarray, t: "type | np.dtype | None" = None) -> np.nd
         t = arr.dtype
 
     if t is int:
+
         def f(n):
             return flint.fmpz(int(n))
     else:
@@ -466,12 +458,11 @@ def array_from_flint(arr: np.ndarray, t=None) -> np.ndarray:
     # convert
     if t == flint.fmpz:
         return np.array(arr, dtype=int)
-    elif t == flint.fmpq:
+    if t == flint.fmpq:
         return np.vectorize(fmpq_to_float)(arr).astype(float)
-    else:
-        raise ValueError(
-            f"Input array had element of type {t}!" + "This is not a flint type!"
-        )
+    raise ValueError(
+        f"Input array had element of type {t}!" + "This is not a flint type!"
+    )
 
 
 # some type-specific aliases
@@ -533,11 +524,12 @@ def to_sparse(
     # return in appropriate format
     if sparse_type == "dok":
         return sp_mat
-    else:
-        return sp.csr_matrix(sp_mat)
+    return sp.csr_matrix(sp_mat)
 
 
-def symmetric_sparse_to_dense(tensor: dict, basis: VectorOrMatrix | None = None) -> np.ndarray:
+def symmetric_sparse_to_dense(
+    tensor: dict, basis: VectorOrMatrix | None = None
+) -> np.ndarray:
     """
     **Description:**
     Converts a symmetric sparse tensor of the form {(a,b,...,c): M_ab...c, ...}
@@ -589,7 +581,9 @@ def symmetric_sparse_to_dense(tensor: dict, basis: VectorOrMatrix | None = None)
     return out
 
 
-def symmetric_dense_to_sparse(tensor: np.ndarray, basis: VectorOrMatrix | None = None) -> dict:
+def symmetric_dense_to_sparse(
+    tensor: np.ndarray, basis: VectorOrMatrix | None = None
+) -> dict:
     """
     **Description:**
     Converts a dense symmetric tensor to a sparse tensor of the form
@@ -693,6 +687,89 @@ def filter_tensor_indices(tensor: dict, indices: list[int]) -> dict:
     }
 
 
+def finalize_intersection_numbers(
+    obj,
+    args_id: tuple,
+    zero_as_anticanonical: bool,
+    in_basis: bool,
+    exact_arithmetic: bool,
+    format: str,
+) -> "dict | np.ndarray":
+    """
+    **Description:**
+    Derive the requested intersection-number variant from the cached base
+    entry, populating `obj._intersection_numbers` along the way.
+
+    Shared by [`ToricVariety.intersection_numbers`](./toricvariety) and
+    [`CalabiYau.intersection_numbers`](./calabiyau), which held identical
+    copies of this post-processing. It assumes the caller has already computed
+    the base `(False, False, exact_arithmetic, "dok")` entry, and only reads
+    `obj._intersection_numbers` and `obj.divisor_basis()`.
+
+    **Arguments:**
+    - `obj`: The `ToricVariety` or `CalabiYau` whose cache is being filled.
+    - `args_id`: The cache key for the requested variant.
+    - `zero_as_anticanonical`: Treat divisor 0 as the anticanonical class.
+    - `in_basis`: Express the result in the current divisor basis.
+    - `exact_arithmetic`: Whether the base entry holds exact rationals.
+    - `format`: One of "dok", "coo", "dense".
+
+    **Returns:**
+    A copy of the cached entry for `args_id`.
+    """
+    # apply the anticanonical sign convention
+    if zero_as_anticanonical and not in_basis:
+        base_intnums = obj._intersection_numbers[
+            (False, False, exact_arithmetic, "dok")
+        ]
+        obj._intersection_numbers[(True, False, exact_arithmetic, "dok")] = {
+            ii: (
+                val * (-1 if sum(jj == 0 for jj in ii) % 2 == 1 else 1)
+                if 0 in ii
+                else val
+            )
+            for ii, val in base_intnums.items()
+        }
+    elif in_basis:
+        basis = obj.divisor_basis()
+        if len(basis.shape) == 2:  # If basis is matrix
+            obj._intersection_numbers[(False, True, exact_arithmetic, "dense")] = (
+                symmetric_sparse_to_dense(
+                    obj._intersection_numbers[(False, False, exact_arithmetic, "dok")],
+                    basis,
+                )
+            )
+            obj._intersection_numbers[(False, True, exact_arithmetic, "dok")] = (
+                symmetric_dense_to_sparse(
+                    obj._intersection_numbers[(False, True, exact_arithmetic, "dense")]
+                )
+            )
+        else:
+            obj._intersection_numbers[(False, True, exact_arithmetic, "dok")] = (
+                filter_tensor_indices(
+                    obj._intersection_numbers[(False, False, exact_arithmetic, "dok")],
+                    basis,
+                )
+            )
+
+    # convert into the requested format
+    if format == "coo":
+        tmpintnums = obj._intersection_numbers[
+            (zero_as_anticanonical, in_basis, exact_arithmetic, "dok")
+        ]
+        obj._intersection_numbers[args_id] = np.array(
+            [list(ii) + [tmpintnums[ii]] for ii in tmpintnums]
+        )
+    elif format == "dense":
+        obj._intersection_numbers[args_id] = symmetric_sparse_to_dense(
+            obj._intersection_numbers[
+                (zero_as_anticanonical, in_basis, exact_arithmetic, "dok")
+            ]
+        )
+
+    return copy.copy(obj._intersection_numbers[args_id])
+
+
 # solve systems
 # -------------
 def solve_linear_system(
@@ -775,7 +852,10 @@ def solve_linear_system(
         # explicitly. The automatic waterfall above catches only this case and
         # continues to SciPy.
         try:
-            from sksparse.cholmod import CholmodError, cho_factor  # ty: ignore[unresolved-import]  # compiled extension, no stubs
+            from sksparse.cholmod import (  # ty: ignore[unresolved-import]  # compiled extension, no stubs
+                CholmodError,
+                cho_factor,
+            )
         except ImportError as e:
             raise ImportError(
                 "The 'sksparse' backend requires scikit-sparse and SuiteSparse; "
@@ -889,7 +969,7 @@ def set_divisor_basis(
 
     if len(b.shape) == 1:
         # input is a vector
-        b = np.array(sorted(basis)) + (not include_origin)
+        b = np.sort(b) + (not include_origin)
 
         # check that it is valid
         if (min(b) < 0) or (max(b) >= glsm_cm.shape[1]):
@@ -914,14 +994,14 @@ def set_divisor_basis(
 
         linrels_tmp = np.empty(linrels.shape, dtype=int)
         linrels_tmp[:, : len(nobasis)] = linrels[:, nobasis]
-        linrels_tmp[:, len(nobasis):] = linrels[:, b]
+        linrels_tmp[:, len(nobasis) :] = linrels[:, b]
 
         linrels_tmp = flint.fmpz_mat(linrels_tmp.tolist()).hnf()
         linrels_tmp = np.array(linrels_tmp.tolist(), dtype=int)
 
         linrels_new = np.empty(linrels.shape, dtype=int)
         linrels_new[:, nobasis] = linrels_tmp[:, : len(nobasis)]
-        linrels_new[:, b] = linrels_tmp[:, len(nobasis):]
+        linrels_new[:, b] = linrels_tmp[:, len(nobasis) :]
 
         self._curve_basis_mat = np.zeros(glsm_cm.shape, dtype=int)
         self._curve_basis_mat[:, b] = np.eye(len(b), dtype=int)
@@ -948,7 +1028,7 @@ def set_divisor_basis(
         # input is a matrix
         if not config._exp_features_enabled:
             raise Exception(
-                "The experimental features must be enabled to " "use generic bases."
+                "The experimental features must be enabled to use generic bases."
             )
 
         # We start by checking if the input matrix looks right
@@ -1128,7 +1208,7 @@ def set_curve_basis(
     # Else input is a matrix
     if not config._exp_features_enabled:
         raise Exception(
-            "The experimental features must be enabled to " "use generic bases."
+            "The experimental features must be enabled to use generic bases."
         )
 
     # grab GLSM information
@@ -1298,7 +1378,9 @@ def polytope_generator(
                 vert = vert.T
 
             # build the Polytope
-            p = Polytope(vert, backend=backend, deterministic_glsm_basis=deterministic_glsm_basis)
+            p = Polytope(
+                vert, backend=backend, deterministic_glsm_basis=deterministic_glsm_basis
+            )
 
             if (favorable_lattice is None) or (
                 p.is_favorable(lattice=favorable_lattice) == favorable
@@ -1348,7 +1430,9 @@ def polytope_generator(
                 vert = vert.T
 
             # build the Polytope
-            p = Polytope(vert, backend=backend, deterministic_glsm_basis=deterministic_glsm_basis)
+            p = Polytope(
+                vert, backend=backend, deterministic_glsm_basis=deterministic_glsm_basis
+            )
             if (favorable_lattice is None) or (
                 p.is_favorable(lattice=favorable_lattice) == favorable
             ):
@@ -1451,8 +1535,7 @@ def read_polytopes(
 
     if as_list:
         return list(g)
-    else:
-        return g
+    return g
 
 
 def fetch_polytopes(
@@ -1569,7 +1652,7 @@ def fetch_polytopes(
 
     if favorable is not None:
         if lattice is None:
-            raise ValueError("Must specify lattice when checking " "favorability.")
+            raise ValueError("Must specify lattice when checking favorability.")
 
         fetch_limit = (5 if favorable else 10) * limit + 100
     else:
@@ -1642,7 +1725,7 @@ def fetch_polytopes(
     else:
         # further input checking...
         if (lattice is None) and ((h11 is not None) or (h13 is not None)):
-            raise ValueError("Lattice must be specified when h11 or h13 " "are given.")
+            raise ValueError("Lattice must be specified when h11 or h13 are given.")
 
         if lattice == "N":
             h11, h13 = h13, h11
@@ -1688,8 +1771,8 @@ def fetch_polytopes(
     # sample
     if samples is not None:
         if dim == 4:
-            result_text = re.split(r'<b>Result:</b>\n', data_str, maxsplit=1)[1]
-            items = re.split(r'\n(?=\d+ \d+\s+M:)', result_text)
+            result_text = re.split(r"<b>Result:</b>\n", data_str, maxsplit=1)[1]
+            items = re.split(r"\n(?=\d+ \d+\s+M:)", result_text)
             items = [item.strip() for item in items if item.strip()]
         else:
             items = data_str.split("\n")
@@ -1716,7 +1799,7 @@ def fetch_polytopes(
         dualize=dualize,
         favorable=favorable,
         lattice=lattice,
-        limit=limit
+        limit=limit,
     )
 
 
@@ -1781,8 +1864,7 @@ def lll_reduce(
             raise RuntimeError("Problem finding inverse matrix")
 
         return pts_red, (A, Ainv)
-    else:
-        return pts_red
+    return pts_red
 
 
 def find_new_affinely_independent_points(pts: Matrix) -> np.ndarray:
@@ -1861,16 +1943,23 @@ def project_heights_to_kahler(poly, heights_in, prime_divisors=None):
     """
     basis = [i - 1 for i in poly.glsm_basis(include_origin=True)]
     if prime_divisors is None:
-        prime_divisors = np.array([rr
-                                   for r, rr in enumerate(poly.triangulate(verbosity=0).get_cy().toric_effective_cone().rays())
-                                   if r not in basis], dtype=float)
-    extra_divs = [i for i in range(poly.h11(lattice='N') + 4) if i not in basis]
+        prime_divisors = np.array(
+            [
+                rr
+                for r, rr in enumerate(
+                    poly.triangulate(verbosity=0).get_cy().toric_effective_cone().rays()
+                )
+                if r not in basis
+            ],
+            dtype=float,
+        )
+    extra_divs = [i for i in range(poly.h11(lattice="N") + 4) if i not in basis]
     origin_height = heights_in[0]
     kahler_parameters = np.array([i - origin_height for i in heights_in[1:]])
     for e, ee in enumerate(prime_divisors):
         prime_ind = extra_divs[e]
         prime_height = kahler_parameters[prime_ind]
-        lin_rel = np.zeros(poly.h11(lattice='N') + 4)
+        lin_rel = np.zeros(poly.h11(lattice="N") + 4)
         lin_rel[basis] = ee
         lin_rel[prime_ind] = -1
         corr = prime_height * lin_rel
@@ -1894,5 +1983,9 @@ def kahler_to_heights(poly, kahler_in):
     """
     basis = list(poly.glsm_basis(include_origin=True))
     kahler_gen = iter(kahler_in)
-    return np.array([next(kahler_gen) if i in basis else 0
-                     for i in range(poly.h11(lattice='N') + 5)])
+    return np.array(
+        [
+            next(kahler_gen) if i in basis else 0
+            for i in range(poly.h11(lattice="N") + 5)
+        ]
+    )

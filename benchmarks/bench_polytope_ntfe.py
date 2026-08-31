@@ -47,11 +47,12 @@ import pytest
 
 from cytools import Polytope
 
-
 # A 5-vertex 4D polytope with multiple FRSTs — reliable for random_triangulations_fair.
 # POLY_5V has only 1 FRST so MCMC can't find neighbors; use this instead.
 # Verified: random_triangulations_fast(N=2) returns 2 distinct FRSTs in <0.1s.
-_P2T = Polytope([[-6, -8, -5, -5], [0, 1, 0, 0], [1, 0, 0, 0], [2, 4, 5, 0], [3, 3, 0, 5]])
+_P2T = Polytope(
+    [[-6, -8, -5, -5], [0, 1, 0, 0], [1, 0, 0, 0], [2, 4, 5, 0], [3, 3, 0, 5]]
+)
 
 
 # ---------------------------------------------------------------------------
@@ -61,6 +62,7 @@ _P2T = Polytope([[-6, -8, -5, -5], [0, 1, 0, 0], [1, 0, 0, 0], [2, 4, 5, 0], [3,
 # ---------------------------------------------------------------------------
 # 1. grow_ft / grow_frt — 2D triangulation growth
 # ---------------------------------------------------------------------------
+
 
 class TestGrow2D:
     """grow_ft: grow a single fine 2D triangulation by random insertion.
@@ -87,6 +89,7 @@ class TestGrow2D:
 
         def go():
             return [fp.grow_ft(seed=42) for fp in face_polys]
+
         benchmark.pedantic(go, rounds=3, iterations=1)
 
     def test_grow_frt_tiny(self, benchmark, tiny_poly_objects):
@@ -112,6 +115,7 @@ class TestGrow2D:
                 except Exception:
                     pass
             return results
+
         benchmark.pedantic(go, rounds=3, iterations=1)
 
     def test_grow_ft_small(self, benchmark, small_poly_objects):
@@ -131,12 +135,14 @@ class TestGrow2D:
 
         def go():
             return [fp.grow_ft(seed=42) for fp in face_polys]
+
         benchmark.pedantic(go, rounds=1, iterations=1)
 
 
 # ---------------------------------------------------------------------------
 # 2. expanded_secondary_fan
 # ---------------------------------------------------------------------------
+
 
 class TestExpandedSecondaryFan:
     """expanded_secondary_fan: hyperplane system for the expanded secondary fan.
@@ -154,6 +160,7 @@ class TestExpandedSecondaryFan:
                 except Exception:
                     pass
             return results
+
         benchmark.pedantic(go, rounds=3, iterations=1)
 
     def test_expanded_secondary_fan_small(self, benchmark, small_poly_objects):
@@ -165,12 +172,14 @@ class TestExpandedSecondaryFan:
                 except Exception:
                     pass
             return results
+
         benchmark.pedantic(go, rounds=1, iterations=1)
 
 
 # ---------------------------------------------------------------------------
 # 3. triangface_ineqs
 # ---------------------------------------------------------------------------
+
 
 class TestTriangfaceIneqs:
     """triangface_ineqs: CPL inequality generation for all 2-face triangulations.
@@ -189,6 +198,7 @@ class TestTriangfaceIneqs:
 
     def test_triangface_ineqs_N10_tiny(self, benchmark, tiny_poly_objects):
         """Fast path: sample ≤10 FRTs per face, skip TOPCOM enumerate-all."""
+
         def go():
             results = []
             for p in tiny_poly_objects:
@@ -197,6 +207,7 @@ class TestTriangfaceIneqs:
                 except Exception:
                     pass
             return results
+
         benchmark.pedantic(go, rounds=3, iterations=1)
 
     def test_triangface_ineqs_N10_small(self, benchmark, small_poly_objects):
@@ -208,11 +219,13 @@ class TestTriangfaceIneqs:
                 except Exception:
                     pass
             return results
+
         benchmark.pedantic(go, rounds=1, iterations=1)
 
     @pytest.mark.slow
     def test_triangface_ineqs_all_tiny(self, benchmark, tiny_poly_objects):
         """Full TOPCOM enumeration — all FRTs per face.  Can take minutes."""
+
         def go():
             results = []
             for p in tiny_poly_objects:
@@ -221,12 +234,14 @@ class TestTriangfaceIneqs:
                 except Exception:
                     pass
             return results
+
         benchmark.pedantic(go, rounds=1, iterations=1)
 
 
 # ---------------------------------------------------------------------------
 # 4. ntfe_hypers / ntfe_cones
 # ---------------------------------------------------------------------------
+
 
 class TestNTFEHypersCones:
     """ntfe_hypers: combine 2-face CPL ineqs into NTFE hyperplane systems.
@@ -239,6 +254,7 @@ class TestNTFEHypersCones:
 
     def test_ntfe_hypers_N1_tiny(self, benchmark, tiny_poly_objects):
         """N=1: one random NTFE hyperplane system per polytope."""
+
         def go():
             results = []
             for p in tiny_poly_objects:
@@ -247,10 +263,12 @@ class TestNTFEHypersCones:
                 except Exception:
                     pass
             return results
+
         benchmark.pedantic(go, rounds=3, iterations=1)
 
     def test_ntfe_cones_N1_tiny(self, benchmark, tiny_poly_objects):
         """N=1: one NTFE Cone object per polytope."""
+
         def go():
             results = []
             for p in tiny_poly_objects:
@@ -259,6 +277,7 @@ class TestNTFEHypersCones:
                 except Exception:
                     pass
             return results
+
         benchmark.pedantic(go, rounds=3, iterations=1)
 
     def test_ntfe_hypers_N1_small(self, benchmark, small_poly_objects):
@@ -270,11 +289,13 @@ class TestNTFEHypersCones:
                 except Exception:
                     pass
             return results
+
         benchmark.pedantic(go, rounds=1, iterations=1)
 
     @pytest.mark.slow
     def test_ntfe_hypers_all_tiny(self, benchmark, tiny_poly_objects):
         """All NTFE hyperplane systems (N=None) — full enumeration."""
+
         def go():
             results = []
             for p in tiny_poly_objects:
@@ -283,12 +304,14 @@ class TestNTFEHypersCones:
                 except Exception:
                     pass
             return results
+
         benchmark.pedantic(go, rounds=1, iterations=1)
 
 
 # ---------------------------------------------------------------------------
 # 5. ntfe_frts / ntfe_frsts — full NTFE pipeline to triangulations
 # ---------------------------------------------------------------------------
+
 
 class TestNTFETriangulations:
     """ntfe_frts/frsts: full NTFE pipeline — from polytope to triangulations.
@@ -300,6 +323,7 @@ class TestNTFETriangulations:
 
     def test_ntfe_frts_N1_tiny(self, benchmark, tiny_poly_objects):
         """One NTFE FRT per polytope (N=1) — tiny tier calibration."""
+
         def go():
             results = []
             for p in tiny_poly_objects:
@@ -308,10 +332,12 @@ class TestNTFETriangulations:
                 except Exception:
                     pass
             return results
+
         benchmark.pedantic(go, rounds=3, iterations=1)
 
     def test_ntfe_frsts_N1_tiny(self, benchmark, tiny_poly_objects):
         """One NTFE FRST per polytope (N=1) — star constraint added."""
+
         def go():
             results = []
             for p in tiny_poly_objects:
@@ -320,10 +346,12 @@ class TestNTFETriangulations:
                 except Exception:
                     pass
             return results
+
         benchmark.pedantic(go, rounds=3, iterations=1)
 
     def test_ntfe_frts_N1_small(self, benchmark, small_poly_objects):
         """One NTFE FRT per polytope — primary non-slow workload."""
+
         def go():
             results = []
             for p in small_poly_objects:
@@ -332,10 +360,12 @@ class TestNTFETriangulations:
                 except Exception:
                     pass
             return results
+
         benchmark.pedantic(go, rounds=1, iterations=1)
 
     def test_ntfe_frsts_N1_small(self, benchmark, small_poly_objects):
         """One NTFE FRST per polytope — star constraint, primary workload."""
+
         def go():
             results = []
             for p in small_poly_objects:
@@ -344,11 +374,13 @@ class TestNTFETriangulations:
                 except Exception:
                     pass
             return results
+
         benchmark.pedantic(go, rounds=1, iterations=1)
 
     @pytest.mark.slow
     def test_ntfe_frts_all_tiny(self, benchmark, tiny_poly_objects):
         """All NTFE FRTs (N=None) — full enumeration, tiny tier."""
+
         def go():
             results = []
             for p in tiny_poly_objects:
@@ -357,12 +389,14 @@ class TestNTFETriangulations:
                 except Exception:
                     pass
             return results
+
         benchmark.pedantic(go, rounds=1, iterations=1)
 
 
 # ---------------------------------------------------------------------------
 # 6. triangfaces_to_frt / triangfaces_to_frst
 # ---------------------------------------------------------------------------
+
 
 class TestTriangfacesTo:
     """triangfaces_to_frt/frst: lift a set of 2-face triangulations to an
@@ -388,6 +422,7 @@ class TestTriangfacesTo:
                 except Exception:
                     pass
             return results
+
         benchmark.pedantic(go, rounds=3, iterations=1)
 
     def test_triangfaces_to_frst_tiny(self, benchmark, tiny_poly_objects):
@@ -402,6 +437,7 @@ class TestTriangfacesTo:
                 except Exception:
                     pass
             return results
+
         benchmark.pedantic(go, rounds=3, iterations=1)
 
     def test_triangfaces_to_frt_small(self, benchmark, small_poly_objects):
@@ -416,12 +452,14 @@ class TestTriangfacesTo:
                 except Exception:
                     pass
             return results
+
         benchmark.pedantic(go, rounds=1, iterations=1)
 
 
 # ---------------------------------------------------------------------------
 # 7. random_triangulations_fair — MCMC hit-and-run sampling
 # ---------------------------------------------------------------------------
+
 
 class TestRandomTriangulationsFair:
     """random_triangulations_fair: Algorithm #3 from arXiv:2008.01730.
@@ -434,14 +472,18 @@ class TestRandomTriangulationsFair:
 
     def test_random_triangulations_fair_N1(self, benchmark):
         """Single fair triangulation of _P2T (5-vertex poly with multiple FRSTs)."""
+
         def go():
             return list(_P2T.random_triangulations_fair(N=1, seed=42))
+
         benchmark(go)
 
     def test_random_triangulations_fair_N5(self, benchmark):
         """5 independent fair triangulations of _P2T."""
+
         def go():
             return list(_P2T.random_triangulations_fair(N=5, seed=42))
+
         benchmark(go)
 
     @pytest.mark.slow
@@ -452,6 +494,7 @@ class TestRandomTriangulationsFair:
         a neighbor to flip to and hangs.  This is expected algorithmic behavior,
         not a bug — the MCMC sampler requires ≥2 FRSTs to make progress.
         """
+
         def go():
             results = []
             for p in tiny_poly_objects:
@@ -460,11 +503,13 @@ class TestRandomTriangulationsFair:
                 except Exception:
                     pass
             return results
+
         benchmark.pedantic(go, rounds=1, iterations=1)
 
     @pytest.mark.slow
     def test_random_triangulations_fair_N1_small(self, benchmark, small_poly_objects):
         """N=1 fair triangulation across 20 small (6-7v) polytopes."""
+
         def go():
             results = []
             for p in small_poly_objects:
@@ -473,12 +518,14 @@ class TestRandomTriangulationsFair:
                 except Exception:
                     pass
             return results
+
         benchmark.pedantic(go, rounds=1, iterations=1)
 
 
 # ---------------------------------------------------------------------------
 # 8. nef_partitions — external PALP call, reflexive polytopes only
 # ---------------------------------------------------------------------------
+
 
 class TestNefPartitions:
     """nef_partitions: compute nef partitions via PALP.
@@ -496,12 +543,14 @@ class TestNefPartitions:
                 except Exception:
                     pass
             return results
+
         benchmark.pedantic(go, rounds=3, iterations=1)
 
 
 # ---------------------------------------------------------------------------
 # 9. is_trilayer
 # ---------------------------------------------------------------------------
+
 
 class TestIsTrilayer:
     """is_trilayer: checks GLSM kernel + anticanonical divisor condition.
@@ -513,9 +562,11 @@ class TestIsTrilayer:
     def test_is_trilayer_tiny(self, benchmark, tiny_poly_objects):
         def go():
             return [p.is_trilayer() for p in tiny_poly_objects]
+
         benchmark.pedantic(go, rounds=5, iterations=1)
 
     def test_is_trilayer_small(self, benchmark, small_poly_objects):
         def go():
             return [p.is_trilayer() for p in small_poly_objects]
+
         benchmark.pedantic(go, rounds=3, iterations=1)

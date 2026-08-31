@@ -187,7 +187,9 @@ def test_batch_agrees_with_load_polytopes():
         assert r.h11 == int(b.h11[i])
         assert r.h12 == int(b.h12[i])
         assert r.euler_characteristic == int(b.euler_characteristic[i])
-        assert r.polytope.vertices().tolist() == b.record(i).polytope.vertices().tolist()
+        assert (
+            r.polytope.vertices().tolist() == b.record(i).polytope.vertices().tolist()
+        )
 
 
 def test_ks_ids_are_stable_and_content_derived():
@@ -280,7 +282,7 @@ def test_streaming_memory_does_not_grow_with_n():
         pytest.skip(f"no local KS database configured: {e}")
 
     assert large < small * 4, (
-        f"Arrow allocation grew from {small/1e6:.0f}MB to {large/1e6:.0f}MB "
+        f"Arrow allocation grew from {small / 1e6:.0f}MB to {large / 1e6:.0f}MB "
         "for 50x the rows; the scan is not streaming"
     )
 
@@ -336,12 +338,11 @@ def test_row_set_is_invariant_to_batch_size():
     interleaves differently -- but the set of selected rows must not move, or
     the same query returns different data run to run.
     """
+
     def id_set(batch_size):
         return {
             int(i)
-            for b in _batches(
-                n_vertices=[13, 14, 15], n=600, batch_size=batch_size
-            )
+            for b in _batches(n_vertices=[13, 14, 15], n=600, batch_size=batch_size)
             for i in b.ks_ids
         }
 
@@ -376,6 +377,7 @@ def test_capped_scans_are_nested_in_n():
     earlier read-everything-then-sample implementation did not have this
     property.
     """
+
     def id_set(n):
         return {
             int(i)

@@ -14,7 +14,6 @@
 # CYTools. If not, see <https://www.gnu.org/licenses/>.
 # =============================================================================
 
-from cytools.ntfe.ntfe import *
-
 # Re-export the focused face-triangulation namespace for compatibility.
 from cytools.ntfe import face_triangulations as face_triangulations
+from cytools.ntfe.ntfe import *

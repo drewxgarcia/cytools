@@ -41,8 +41,8 @@ def human_time(seconds: float) -> str:
     if seconds < 90:
         return f"{seconds:.0f}s"
     if seconds < 5400:
-        return f"{seconds/60:.1f}m"
-    return f"{seconds/3600:.1f}h"
+        return f"{seconds / 60:.1f}m"
+    return f"{seconds / 3600:.1f}h"
 
 
 def main(argv=None):
@@ -129,8 +129,8 @@ def main(argv=None):
     print(
         f"\ndone in {human_time(elapsed)}\n"
         f"  {summary}\n"
-        f"  throughput  : {done/elapsed:.1f} geoms/s over {workers} workers\n"
-        f"                {done/elapsed/workers:.1f} geoms/s/worker\n"
+        f"  throughput  : {done / elapsed:.1f} geoms/s over {workers} workers\n"
+        f"                {done / elapsed / workers:.1f} geoms/s/worker\n"
         f"  peak RSS    : {rss_mb():.0f} MB"
     )
     st = status(args.derived_dir)

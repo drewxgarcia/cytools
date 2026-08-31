@@ -32,7 +32,9 @@ ROOT = HERE.parent
 
 def build_pytest_args(args: argparse.Namespace) -> list[str]:
     cmd = [
-        sys.executable, "-m", "pytest",
+        sys.executable,
+        "-m",
+        "pytest",
         str(HERE),
         "--benchmark-only",
         "--benchmark-columns=min,mean,stddev,rounds,iterations",
@@ -55,7 +57,10 @@ def build_pytest_args(args: argparse.Namespace) -> list[str]:
     if args.save:
         save_path = Path(args.save)
         save_path.parent.mkdir(parents=True, exist_ok=True)
-        cmd += [f"--benchmark-save={save_path.stem}", f"--benchmark-storage={save_path.parent}"]
+        cmd += [
+            f"--benchmark-save={save_path.stem}",
+            f"--benchmark-storage={save_path.parent}",
+        ]
 
     if args.compare:
         compare_path = Path(args.compare)
@@ -74,10 +79,14 @@ def build_pytest_args(args: argparse.Namespace) -> list[str]:
 
 def main():
     parser = argparse.ArgumentParser(description="Run CYTools benchmarks")
-    parser.add_argument("--all", action="store_true", help="Include slow (medium/large) tiers")
+    parser.add_argument(
+        "--all", action="store_true", help="Include slow (medium/large) tiers"
+    )
     parser.add_argument("--module", metavar="NAME", help="Run only bench_<NAME>.py")
     parser.add_argument("--save", metavar="PATH", help="Save results to PATH (JSON)")
-    parser.add_argument("--compare", metavar="PATH", help="Compare against baseline at PATH")
+    parser.add_argument(
+        "--compare", metavar="PATH", help="Compare against baseline at PATH"
+    )
     parser.add_argument("--json", metavar="PATH", help="Write JSON report to PATH")
     args = parser.parse_args()
 

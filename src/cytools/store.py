@@ -147,7 +147,9 @@ class DerivedStore:
         if not self.root.exists():
             return []
         return sorted(
-            p.name for p in self.root.iterdir() if p.is_dir() and not p.name.startswith(".")
+            p.name
+            for p in self.root.iterdir()
+            if p.is_dir() and not p.name.startswith(".")
         )
 
     def versions(self, quantity: str) -> list[int]:
@@ -375,6 +377,8 @@ class DerivedStore:
             try:
                 p.unlink()
             except OSError:
+                # Best-effort cleanup: the merged table is already durable, so
+                # a leftover part is wasted space, not lost or corrupt data.
                 pass
         return final
 
@@ -405,9 +409,7 @@ class DerivedStore:
         """
         ids = np.asarray(ks_ids, dtype=np.int64)
         if len(ids) != len(results):
-            raise ValueError(
-                f"got {len(ids)} ks_ids for {len(results)} results"
-            )
+            raise ValueError(f"got {len(ids)} ks_ids for {len(results)} results")
         if not len(ids):
             return None
 
@@ -594,9 +596,7 @@ def materialize(
     # of ids interactively, use DerivedStore.missing(), which works one part at
     # a time.
     known = (
-        np.empty(0, dtype=np.int64)
-        if recompute
-        else store.known_ids(quantity, version)
+        np.empty(0, dtype=np.int64) if recompute else store.known_ids(quantity, version)
     )
 
     for batch in scan:

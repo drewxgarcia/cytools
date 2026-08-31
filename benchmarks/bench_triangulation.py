@@ -46,13 +46,13 @@ Run full suite:
 
 import pytest
 
-from cytools import Polytope
 from benchmarks._data import POLY_5V, POLY_6V
-
+from cytools import Polytope
 
 # ---------------------------------------------------------------------------
 # Module-scope fixtures
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture(scope="module")
 def triang_5v():
@@ -96,12 +96,22 @@ def small_triangs(small_polys):
 
 
 # Polytope with 2 triangulations — used for neighbor / all_triangulations tests
-_P2T = Polytope([[1,0,0,0],[0,1,0,0],[0,0,1,0],[0,0,0,1],[-1,-2,-1,-1],[-2,-1,-1,-1]])
+_P2T = Polytope(
+    [
+        [1, 0, 0, 0],
+        [0, 1, 0, 0],
+        [0, 0, 1, 0],
+        [0, 0, 0, 1],
+        [-1, -2, -1, -1],
+        [-2, -1, -1, -1],
+    ]
+)
 
 
 # ---------------------------------------------------------------------------
 # 1. Basic properties
 # ---------------------------------------------------------------------------
+
 
 class TestProperties:
     def test_dimension_5v(self, benchmark, triang_5v):
@@ -120,6 +130,7 @@ class TestProperties:
 # ---------------------------------------------------------------------------
 # 2. Validity checks
 # ---------------------------------------------------------------------------
+
 
 class TestValidityChecks:
     def test_is_fine_5v(self, benchmark, triang_5v):
@@ -148,40 +159,48 @@ class TestValidityChecks:
     def test_is_fine_batch(self, benchmark, batch_triangs):
         def go():
             return [t.is_fine() for t in batch_triangs]
+
         benchmark.pedantic(go, rounds=5, iterations=1)
 
     def test_is_star_batch(self, benchmark, batch_triangs):
         def go():
             return [t.is_star() for t in batch_triangs]
+
         benchmark.pedantic(go, rounds=5, iterations=1)
 
     def test_is_regular_batch(self, benchmark, batch_triangs):
         def go():
             return [t.is_regular() for t in batch_triangs]
+
         benchmark.pedantic(go, rounds=3, iterations=1)
 
     def test_is_valid_batch(self, benchmark, batch_triangs):
         def go():
             return [t.is_valid() for t in batch_triangs]
+
         benchmark.pedantic(go, rounds=5, iterations=1)
 
     def test_is_star_small_batch(self, benchmark, small_triangs):
         """is_star on 6-7v polytopes — exercises the vectorized
         np.all(np.any(...)) check with larger simplex arrays."""
+
         def go():
             return [t.is_star() for t in small_triangs]
+
         benchmark.pedantic(go, rounds=5, iterations=1)
 
     @pytest.mark.slow
     def test_is_regular_large(self, benchmark, small_triangs):
         def go():
             return [t.is_regular() for t in small_triangs]
+
         benchmark.pedantic(go, rounds=1, iterations=1)
 
 
 # ---------------------------------------------------------------------------
 # 3. Simplices access (all variants)
 # ---------------------------------------------------------------------------
+
 
 class TestSimplices:
     def test_simplices_default_5v(self, benchmark, triang_5v):
@@ -206,17 +225,20 @@ class TestSimplices:
     def test_simplices_batch(self, benchmark, batch_triangs):
         def go():
             return [t.simplices() for t in batch_triangs]
+
         benchmark.pedantic(go, rounds=5, iterations=1)
 
     def test_simplices_large(self, benchmark, small_triangs):
         def go():
             return [t.simplices() for t in small_triangs]
+
         benchmark.pedantic(go, rounds=3, iterations=1)
 
 
 # ---------------------------------------------------------------------------
 # 4. Points lookup
 # ---------------------------------------------------------------------------
+
 
 class TestPointsLookup:
     def test_points_5v(self, benchmark, triang_5v):
@@ -244,6 +266,7 @@ class TestPointsLookup:
 # ---------------------------------------------------------------------------
 # 5. GKZ / secondary cone
 # ---------------------------------------------------------------------------
+
 
 class TestGKZAndSecondaryCone:
     def test_gkz_phi_5v(self, benchmark, triang_5v):
@@ -273,18 +296,22 @@ class TestGKZAndSecondaryCone:
     def test_gkz_phi_batch(self, benchmark, batch_triangs):
         def go():
             return [t.gkz_phi() for t in batch_triangs]
+
         benchmark.pedantic(go, rounds=5, iterations=1)
 
     def test_secondary_cone_batch(self, benchmark, batch_triangs):
         def go():
             return [t.secondary_cone() for t in batch_triangs]
+
         benchmark.pedantic(go, rounds=3, iterations=1)
 
     def test_secondary_cone_small_batch(self, benchmark, small_triangs):
         """Secondary cone on 6-7v polytopes — exercises the O(N·dim)
         facet-adjacency loop with more simplices than the tiny tier."""
+
         def go():
             return [t.secondary_cone() for t in small_triangs]
+
         benchmark.pedantic(go, rounds=3, iterations=1)
 
 
@@ -292,25 +319,28 @@ class TestGKZAndSecondaryCone:
 # 6. SR ideal
 # ---------------------------------------------------------------------------
 
+
 class TestSRIdeal:
     def test_sr_ideal_5v(self, benchmark, triang_5v):
         benchmark(triang_5v.sr_ideal)
 
-
     def test_sr_ideal_batch(self, benchmark, batch_triangs):
         def go():
             return [t.sr_ideal() for t in batch_triangs]
+
         benchmark.pedantic(go, rounds=5, iterations=1)
 
     def test_sr_ideal_large(self, benchmark, small_triangs):
         def go():
             return [t.sr_ideal() for t in small_triangs]
+
         benchmark.pedantic(go, rounds=3, iterations=1)
 
 
 # ---------------------------------------------------------------------------
 # 7. Neighbor traversal / flips
 # ---------------------------------------------------------------------------
+
 
 class TestNeighborTraversal:
     def test_neighbors_5v_default(self, benchmark, triang_5v):
@@ -325,14 +355,26 @@ class TestNeighborTraversal:
     def test_neighbors_batch(self, benchmark, batch_triangs):
         def go():
             return [list(t.neighbor_triangulations()) for t in batch_triangs]
+
         benchmark.pedantic(go, rounds=3, iterations=1)
 
     def test_random_flips_5_2triang(self, benchmark):
         """Use a known polytope with multiple triangulations so flips always succeed."""
+
         def go():
-            p = Polytope([[1,0,0,0],[0,1,0,0],[0,0,1,0],[0,0,0,1],[-1,-2,-1,-1],[-2,-1,-1,-1]])
+            p = Polytope(
+                [
+                    [1, 0, 0, 0],
+                    [0, 1, 0, 0],
+                    [0, 0, 1, 0],
+                    [0, 0, 0, 1],
+                    [-1, -2, -1, -1],
+                    [-2, -1, -1, -1],
+                ]
+            )
             t = p.triangulate()
             return t.random_flips(5, seed=42)
+
         benchmark(go)
 
     def test_random_flips_batch(self, benchmark):
@@ -341,14 +383,17 @@ class TestNeighborTraversal:
         random_flips requires multiple triangulations; use _P2T which always
         has exactly 2 so the walk is well-defined and deterministic.
         """
+
         def go():
             return _P2T.triangulate().random_flips(5, seed=42)
+
         benchmark(go)
 
 
 # ---------------------------------------------------------------------------
 # 8. Automorphism orbit
 # ---------------------------------------------------------------------------
+
 
 class TestAutomorphismOrbit:
     def test_automorphism_orbit_5v_all(self, benchmark, triang_5v):
@@ -368,6 +413,7 @@ class TestAutomorphismOrbit:
 # 9. Restrict to faces
 # ---------------------------------------------------------------------------
 
+
 class TestRestrict:
     def test_restrict_default_5v(self, benchmark, triang_5v):
         benchmark(lambda: triang_5v.restrict())
@@ -378,12 +424,14 @@ class TestRestrict:
     def test_restrict_batch(self, benchmark, batch_triangs):
         def go():
             return [t.restrict() for t in batch_triangs]
+
         benchmark.pedantic(go, rounds=5, iterations=1)
 
 
 # ---------------------------------------------------------------------------
 # 10. Fan / VectorConfiguration
 # ---------------------------------------------------------------------------
+
 
 class TestFanAndVC:
     def test_fan_5v(self, benchmark, triang_5v):
@@ -395,6 +443,7 @@ class TestFanAndVC:
     def test_fan_batch(self, benchmark, batch_triangs):
         def go():
             return [t.fan() for t in batch_triangs]
+
         benchmark.pedantic(go, rounds=5, iterations=1)
 
 
@@ -405,34 +454,57 @@ class TestFanAndVC:
 # No try/except needed.
 # ---------------------------------------------------------------------------
 
+
 class TestFullPipeline:
     def test_get_toric_variety_5v(self, benchmark):
         def go():
-            p = Polytope([[1,0,0,0],[0,1,0,0],[0,0,1,0],[0,0,0,1],[-1,-1,-6,-9]])
+            p = Polytope(
+                [
+                    [1, 0, 0, 0],
+                    [0, 1, 0, 0],
+                    [0, 0, 1, 0],
+                    [0, 0, 0, 1],
+                    [-1, -1, -6, -9],
+                ]
+            )
             t = p.triangulate()
             return t.get_toric_variety()
+
         benchmark(go)
 
     def test_get_cy_5v(self, benchmark):
         def go():
-            p = Polytope([[1,0,0,0],[0,1,0,0],[0,0,1,0],[0,0,0,1],[-1,-1,-6,-9]])
+            p = Polytope(
+                [
+                    [1, 0, 0, 0],
+                    [0, 1, 0, 0],
+                    [0, 0, 1, 0],
+                    [0, 0, 0, 1],
+                    [-1, -1, -6, -9],
+                ]
+            )
             t = p.triangulate()
             return t.get_cy()
+
         benchmark(go)
 
     def test_get_toric_variety_batch(self, benchmark, cy_triangs):
         def go():
             return [t.get_toric_variety() for t in cy_triangs]
+
         benchmark.pedantic(go, rounds=3, iterations=1)
 
     def test_get_cy_batch(self, benchmark, cy_triangs):
         def go():
             return [t.get_cy() for t in cy_triangs]
+
         benchmark.pedantic(go, rounds=3, iterations=1)
 
     @pytest.mark.slow
     def test_get_toric_variety_large(self, benchmark, cy_polys_large):
         triangs = [r.polytope.triangulate() for r in cy_polys_large]
+
         def go():
             return [t.get_toric_variety() for t in triangs]
+
         benchmark.pedantic(go, rounds=1, iterations=1)

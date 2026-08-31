@@ -14,4 +14,6 @@
 # CYTools. If not, see <https://www.gnu.org/licenses/>.
 # =============================================================================
 
-from cytools.h_polytope.h_polytope import HPolytope
+from cytools.h_polytope.h_polytope import HPolytope as HPolytope
+
+__all__ = ["HPolytope"]

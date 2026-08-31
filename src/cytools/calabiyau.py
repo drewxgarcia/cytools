@@ -18,30 +18,28 @@
 # Description:  This module contains tools designed for Calabi-Yau hypersurface
 #               computations.
 # -----------------------------------------------------------------------------
+from __future__ import annotations
+
+import copy
+import warnings
 
 # 'standard' imports
 from collections import defaultdict
 from collections.abc import Iterable
-import copy
-import warnings
 
 # 3rd party imports
 import cygv
 import numpy as np
-from cytools._typing import Matrix, Vector, VectorOrMatrix
-from scipy.linalg import null_space
-from scipy.sparse import coo_matrix, dok_matrix
+from scipy.sparse import coo_matrix
 
 # CYTools imports
 import cytools.config as config
-from cytools.cone import Cone
+from cytools._typing import Matrix, Vector, VectorOrMatrix
 from cytools.utils import (
+    finalize_intersection_numbers,
     gcd_list,
-    filter_tensor_indices,
-    symmetric_sparse_to_dense,
-    symmetric_dense_to_sparse,
-    set_divisor_basis,
     set_curve_basis,
+    set_divisor_basis,
 )
 
 
@@ -137,7 +135,7 @@ class CalabiYau:
         if nef_partition is not None:
             if not config._exp_features_enabled:
                 raise Exception(
-                    "The experimental features must be enabled to " "construct CICYs."
+                    "The experimental features must be enabled to construct CICYs."
                 )
             # Verify that the input defines a nef-partition
             from cytools.polytope import Polytope
@@ -315,7 +313,7 @@ class CalabiYau:
             else:
                 out_str = (
                     f"A Calabi-Yau {d}-fold hypersurface in a "
-                    f"{d+1}-dimensional toric variety"
+                    f"{d + 1}-dimensional toric variety"
                 )
         else:
             dd = self.ambient_variety().dim()
@@ -741,7 +739,7 @@ class CalabiYau:
             return self.hpq(1, 1)
         if self.dim() not in (2, 3, 4):
             raise NotImplementedError(
-                "Only Calabi-Yaus of dimension 2-4 are " "currently supported."
+                "Only Calabi-Yaus of dimension 2-4 are currently supported."
             )
         return self.polytope().h11(lattice="N")
 
@@ -778,7 +776,7 @@ class CalabiYau:
             return self.hpq(1, 2)
         if self.dim() not in (2, 3, 4):
             raise NotImplementedError(
-                "Only Calabi-Yaus of dimension 2-4 are " "currently supported."
+                "Only Calabi-Yaus of dimension 2-4 are currently supported."
             )
         return self.polytope().h12(lattice="N")
 
@@ -818,7 +816,7 @@ class CalabiYau:
             return self.hpq(1, 3)
         if self.dim() not in (2, 3, 4):
             raise NotImplementedError(
-                "Only Calabi-Yaus of dimension 2-4 are " "currently supported."
+                "Only Calabi-Yaus of dimension 2-4 are currently supported."
             )
         return self.polytope().h13(lattice="N")
 
@@ -855,7 +853,7 @@ class CalabiYau:
             return self.hpq(2, 2)
         if self.dim() not in (2, 3, 4):
             raise NotImplementedError(
-                "Only Calabi-Yaus of dimension 2-4 are " "currently supported."
+                "Only Calabi-Yaus of dimension 2-4 are currently supported."
             )
         return self.polytope().h22(lattice="N")
 
@@ -908,7 +906,7 @@ class CalabiYau:
             return chi
         if self.dim() not in (2, 3, 4):
             raise NotImplementedError(
-                "Only Calabi-Yaus of dimension 2-4 are " "currently supported."
+                "Only Calabi-Yaus of dimension 2-4 are currently supported."
             )
         return self.polytope().chi(lattice="N")
 
@@ -1368,9 +1366,6 @@ class CalabiYau:
                     ii[1:]: -ambient_intnums[ii] for ii in ambient_intnums if 0 in ii
                 }
             else:
-                triang_pts = [
-                    tuple(pt) for pt in self.ambient_variety().triangulation().points()
-                ]
                 parts = self._nef_part
                 if parts is None:
                     raise RuntimeError("A CICY must have a nef partition.")
@@ -1444,62 +1439,16 @@ class CalabiYau:
             self._intersection_numbers[(False, False, exact_arithmetic, "dok")] = (
                 intnums_cy
             )
-        # Now intersection numbers have been computed
-        # We now compute the intersection numbers of the basis if necessary
-        if zero_as_anticanonical and not in_basis:
-            base_intnums = self._intersection_numbers[
-                (False, False, exact_arithmetic, "dok")
-            ]
-            self._intersection_numbers[(True, False, exact_arithmetic, "dok")] = {
-                ii: (
-                    val * (-1 if sum(jj == 0 for jj in ii) % 2 == 1 else 1)
-                    if 0 in ii
-                    else val
-                )
-                for ii, val in base_intnums.items()
-            }
-        elif in_basis:
-            basis = self.divisor_basis()
-            if len(basis.shape) == 2:  # If basis is matrix
-                self._intersection_numbers[(False, True, exact_arithmetic, "dense")] = (
-                    symmetric_sparse_to_dense(
-                        self._intersection_numbers[
-                            (False, False, exact_arithmetic, "dok")
-                        ],
-                        basis,
-                    )
-                )
-                self._intersection_numbers[(False, True, exact_arithmetic, "dok")] = (
-                    symmetric_dense_to_sparse(
-                        self._intersection_numbers[
-                            (False, True, exact_arithmetic, "dense")
-                        ]
-                    )
-                )
-            else:
-                self._intersection_numbers[(False, True, exact_arithmetic, "dok")] = (
-                    filter_tensor_indices(
-                        self._intersection_numbers[
-                            (False, False, exact_arithmetic, "dok")
-                        ],
-                        basis,
-                    )
-                )
-        # Intersection numbers of the basis are now done
-        # Finally, we convert into the desired format
-        if format == "coo":
-            tmpintnums = self._intersection_numbers[
-                (zero_as_anticanonical, in_basis, exact_arithmetic, "dok")
-            ]
-            self._intersection_numbers[args_id] = np.array(
-                [list(ii) + [tmpintnums[ii]] for ii in tmpintnums]
-            )
-        elif format == "dense":
-            self._intersection_numbers[args_id] = symmetric_sparse_to_dense(
-                self._intersection_numbers[
-                    (zero_as_anticanonical, in_basis, exact_arithmetic, "dok")
-                ]
-            )
+        # Now intersection numbers have been computed.
+        # Derive the requested variant and format from the cached base entry.
+        return finalize_intersection_numbers(
+            self,
+            args_id,
+            zero_as_anticanonical=zero_as_anticanonical,
+            in_basis=in_basis,
+            exact_arithmetic=exact_arithmetic,
+            format=format,
+        )
         return copy.copy(self._intersection_numbers[args_id])
 
     def prime_toric_divisors(self):
@@ -1583,7 +1532,7 @@ class CalabiYau:
                     continue
                 if ii[0] == ii[1] == ii[2]:
                     continue
-                elif ii[0] == ii[1]:
+                if ii[0] == ii[1]:
                     c2[ii[0]] += intnums[ii]
                 elif ii[0] == ii[2]:
                     c2[ii[0]] += intnums[ii]
@@ -1662,6 +1611,8 @@ class CalabiYau:
         # A 2-dimensional rational polyhedral cone in RR^2 generated by 3 rays
         ```
         """
+        from cytools.cone import Cone
+
         mori_cone = self._mori_cone[0]
         if mori_cone is None:
             if (
@@ -1740,6 +1691,8 @@ class CalabiYau:
         # A 2-dimensional rational polyhedral cone in RR^2 generated by 6 rays
         ```
         """
+        from cytools.cone import Cone
+
         if self._eff_cone is not None:
             return self._eff_cone
         self._eff_cone = Cone(self.curve_basis(include_origin=False, as_matrix=True).T)
@@ -1770,13 +1723,14 @@ class CalabiYau:
         ```
         """
         if self.dim() != 3:
-            raise NotImplementedError(
-                "This function only supports Calabi-Yau 3-folds."
-            )
+            raise NotImplementedError("This function only supports Calabi-Yau 3-folds.")
         if not hasattr(self, "_fan"):
             self._fan = self.triangulation().fan()
         intnums = self._fan.intersection_numbers(
-            pushed_down=True, in_basis=True, as_np_array=True, copy=False,
+            pushed_down=True,
+            in_basis=True,
+            as_np_array=True,
+            copy=False,
         )
         # the 3D x 1D first contraction goes via tensordot because `@`
         # dispatches it as a stack of 2D gemvs and is ~2x slower here
@@ -1816,13 +1770,14 @@ class CalabiYau:
         ```
         """
         if self.dim() != 3:
-            raise NotImplementedError(
-                "This function only supports Calabi-Yau 3-folds."
-            )
+            raise NotImplementedError("This function only supports Calabi-Yau 3-folds.")
         if not hasattr(self, "_fan"):
             self._fan = self.triangulation().fan()
         intnums = self._fan.intersection_numbers(
-            pushed_down=True, in_basis=True, as_np_array=True, copy=False,
+            pushed_down=True,
+            in_basis=True,
+            as_np_array=True,
+            copy=False,
         )
         # the 3D x 1D first contraction goes via tensordot because `@`
         # dispatches it as a stack of 2D gemvs and is ~2x slower here
@@ -1905,13 +1860,14 @@ class CalabiYau:
         ```
         """
         if self.dim() != 3:
-            raise NotImplementedError(
-                "This function only supports Calabi-Yau 3-folds."
-            )
+            raise NotImplementedError("This function only supports Calabi-Yau 3-folds.")
         if not hasattr(self, "_fan"):
             self._fan = self.triangulation().fan()
         intnums = self._fan.intersection_numbers(
-            pushed_down=True, in_basis=True, as_np_array=True, copy=False,
+            pushed_down=True,
+            in_basis=True,
+            as_np_array=True,
+            copy=False,
         )
         return np.tensordot(intnums, tloc, axes=([-1], [0]))
 
@@ -2164,21 +2120,23 @@ class CalabiYau:
         if (max_deg is None) and (min_points is None) and (target_points is None):
             # computing GVs by input points
             if mcap_generators is None:
-                raise ValueError("If neither max_deg, min_points, nor target_points is set, you must set mcap_generators")
+                raise ValueError(
+                    "If neither max_deg, min_points, nor target_points is set, you must set mcap_generators"
+                )
 
             # (in this case, we definitely still need the origin to be input)
             if not np.any(np.all(np.array(mcap_generators) == 0, axis=1)):
-                raise ValueError("Origin is not in mcap_generators... you should pass points like " +\
-                                 "m_cap.find_lattice_points(min_points=100)...")
+                raise ValueError(
+                    "Origin is not in mcap_generators... you should pass points like "
+                    + "m_cap.find_lattice_points(min_points=100)..."
+                )
 
         # get basics
-        kappa = self.intersection_numbers(in_basis=True, format="coo")
-        glsm = self.curve_basis(include_origin=False, as_matrix=True)
         mori = self.mori_cone_cap(in_basis=True)
         if mcap_generators is None:
             R = mori.rays()
-            lattice_pts = mori.find_lattice_points(min_points=100*self.h11())
-            mcap_generators = np.vstack([R,lattice_pts])
+            lattice_pts = mori.find_lattice_points(min_points=100 * self.h11())
+            mcap_generators = np.vstack([R, lattice_pts])
         else:
             mcap_generators = mcap_generators
 
@@ -2261,7 +2219,7 @@ class CalabiYau:
             min_points=min_points,
             target_points=target_points,
             basis=basis,
-            format=format
+            format=format,
         )
 
     compute_gv = compute_gvs
@@ -2304,23 +2262,33 @@ class CalabiYau:
             min_points=min_points,
             target_points=target_points,
             basis=basis,
-            format=format
+            format=format,
         )
 
     compute_gw = compute_gws
 
-
     # =================
     # TEMPORARY METHODS
     # =================
-    def mori_cone_cap(self, in_basis=False, exclude_origin=False, format=None, verbosity=0):
+    def mori_cone_cap(
+        self, in_basis=False, exclude_origin=False, format=None, verbosity=0
+    ):
         # will be subsumed by secondary cone (on_faces_dim=2)
-        pts_ext = np.array([tuple(pt)+(1,) for pt in self.ambient_variety().triangulation().points()])
-        facets = [frozenset(self.ambient_variety().triangulation().points_to_indices(f.boundary_points()))
-                    for f in self.polytope().facets()]
-        twofaces = [self.ambient_variety().triangulation().points_to_indices(f.points())
-                    for f in self.polytope().faces(2)]
-        n_pts = pts_ext.shape[0]
+        pts_ext = np.array(
+            [tuple(pt) + (1,) for pt in self.ambient_variety().triangulation().points()]
+        )
+        facets = [
+            frozenset(
+                self.ambient_variety()
+                .triangulation()
+                .points_to_indices(f.boundary_points())
+            )
+            for f in self.polytope().facets()
+        ]
+        twofaces = [
+            self.ambient_variety().triangulation().points_to_indices(f.points())
+            for f in self.polytope().faces(2)
+        ]
         mori_cap_rays = set()
         simp_2d_all = set()
         twoface_circuits = []
@@ -2345,12 +2313,10 @@ class CalabiYau:
             # collect the circuits first, then take all their null spaces in one
             # batched SVD rather than one scipy call per circuit
             for i in range(len(simps)):
-                for j in range(i,len(simps)):
+                for j in range(i, len(simps)):
                     comm_pts = list(simps[i] & simps[j])
                     if len(comm_pts) == 2:
-                        twoface_circuits.append(
-                            (list(simps[i] ^ simps[j]), comm_pts)
-                        )
+                        twoface_circuits.append((list(simps[i] ^ simps[j]), comm_pts))
         if twoface_circuits:
             mats = np.empty((len(twoface_circuits), 4, 5), dtype=float)
             for k, (diff_pts, comm_pts) in enumerate(twoface_circuits):
@@ -2363,8 +2329,10 @@ class CalabiYau:
                 if v[0] < 0:
                     v = -v
                 g = gcd_list(v)
-                v = [int(round(x/g)) for x in v]
-                full_v = [(diff_pts[q],v[q]) for q in range(2)] + [(comm_pts[q],v[q+2]) for q in range(2) if v[q+2]]
+                v = [int(round(x / g)) for x in v]
+                full_v = [(diff_pts[q], v[q]) for q in range(2)] + [
+                    (comm_pts[q], v[q + 2]) for q in range(2) if v[q + 2]
+                ]
                 mori_cap_rays.add(tuple(sorted(full_v)))
 
         # Now find we find the remaining rays. We do this by taking each 2-simplex
@@ -2390,10 +2358,10 @@ class CalabiYau:
                 )
             pts_f1 = f1.difference(f2)
             pts_f2 = f2.difference(f1)
-            comm_pts = list(s2d)+[0]
+            comm_pts = list(s2d) + [0]
             for p1 in pts_f1:
                 for p2 in pts_f2:
-                    origin_circuits.append(([p1,p2], comm_pts))
+                    origin_circuits.append(([p1, p2], comm_pts))
 
         if origin_circuits:
             mats = np.empty((len(origin_circuits), 6, 5), dtype=float)
@@ -2410,11 +2378,14 @@ class CalabiYau:
                 if v[0] < 0:
                     v = -v
                 g = gcd_list(v)
-                v = [int(round(x/g)) for x in v]
-                full_v = sorted([(diff_pts[q],v[q]) for q in range(2)] + [(comm_pts[q],v[q+2]) for q in range(4) if v[q+2]])
+                v = [int(round(x / g)) for x in v]
+                full_v = sorted(
+                    [(diff_pts[q], v[q]) for q in range(2)]
+                    + [(comm_pts[q], v[q + 2]) for q in range(4) if v[q + 2]]
+                )
                 if full_v[0][0] == 0 and full_v[0][1] == 0:
                     continue
-                elif full_v[0][0] == 0 and full_v[0][1] > 0:
+                if full_v[0][0] == 0 and full_v[0][1] > 0:
                     print("Warning: Positive coefficient of origin.")
                     continue
                 mori_cap_rays.add(tuple(full_v))
@@ -2438,15 +2409,17 @@ class CalabiYau:
         if not exclude_origin and not in_basis:
             new_rays = mori_cap_matrix
         elif exclude_origin and not in_basis:
-            new_rays = mori_cap_matrix[:,1:]
+            new_rays = mori_cap_matrix[:, 1:]
         else:
             basis = self.divisor_basis()
-            if len(basis.shape) == 2: # If basis is matrix
+            if len(basis.shape) == 2:  # If basis is matrix
                 new_rays = mori_cap_matrix.dot(basis.T)
             else:
-                new_rays = mori_cap_matrix[:,basis]
-        if format=="sparse":
+                new_rays = mori_cap_matrix[:, basis]
+        if format == "sparse":
             return new_rays
+        from cytools.cone import Cone
+
         return Cone(new_rays.todense(), check=False)
 
 
@@ -2523,6 +2496,9 @@ def configure_gv_subprocess(method: str = "forkserver", preload=("cygv", "numpy"
         try:
             mp.set_forkserver_preload(list(preload))
         except Exception:
+            # Preloading only warms the forkserver; if a module in `preload`
+            # cannot be imported here the children just import it themselves.
+            # Never let an optimisation break GV computation.
             pass
 
     return previous
@@ -2577,7 +2553,7 @@ class Invariants:
         charge2invariant,
         grading_vec: Vector | None = None,
         cutoff: int | None = None,
-        calabiyau: "CalabiYau | None" = None,
+        calabiyau: CalabiYau | None = None,
         basis: VectorOrMatrix | None = None,
     ):
         """
@@ -2666,8 +2642,7 @@ class Invariants:
         """
         if self._grading_vec is None:
             return None
-        else:
-            return self._grading_vec.copy()
+        return self._grading_vec.copy()
 
     @property
     def cutoff(self):
@@ -2700,8 +2675,7 @@ class Invariants:
             out = list(self._charge2invariant.keys())
             if as_np_arr:
                 return np.asarray(out)
-            else:
-                return out
+            return out
 
         # group by degree
         if self._grading_vec is None:
@@ -2727,6 +2701,8 @@ class Invariants:
         **Returns:**
         *(Cone)* The GV-cone
         """
+        from cytools.cone import Cone
+
         return Cone(self.charges(as_np_arr=True))
 
     @property
@@ -2743,8 +2719,7 @@ class Invariants:
         """
         if self._type == "gv":
             return list(self._charge2invariant.values())
-        else:
-            return []
+        return []
 
     @property
     def gws(self) -> list:
@@ -2760,8 +2735,7 @@ class Invariants:
         """
         if self._type == "gw":
             return list(self._charge2invariant.values())
-        else:
-            return []
+        return []
 
     def invariant(self, charge, check_deg=True):
         """
@@ -2788,14 +2762,12 @@ class Invariants:
     def gv(self, charge, check_deg=True):
         if self._type == "gv":
             return self.invariant(charge, check_deg)
-        else:
-            return None
+        return None
 
     def gw(self, charge, check_deg=True):
         if self._type == "gw":
             return self.invariant(charge, check_deg)
-        else:
-            return None
+        return None
 
     # old formats
     # -----------
@@ -2824,9 +2796,7 @@ class Invariants:
         return len(self._charge2invariant)
 
 
-def _group_by_deg(
-    charges: "Iterable", grading_vec: Vector, as_np_arr: bool = False
-):
+def _group_by_deg(charges: Iterable, grading_vec: Vector, as_np_arr: bool = False):
     """
     **Description:**
     Organize the charges by their degrees.

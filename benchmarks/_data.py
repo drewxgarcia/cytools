@@ -15,7 +15,6 @@ from pathlib import Path
 from cytools import Polytope
 from cytools.dataset import PolytopeRecord, load_polytopes
 
-
 POLY_5V = Polytope(
     [[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1], [-1, -1, -6, -9]]
 )

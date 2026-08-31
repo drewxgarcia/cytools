@@ -41,9 +41,16 @@ are occasionally published a day or two later.
 - NTFE and vector-configuration methods are now declared by their owning
   domain classes and resolved lazily, replacing import-time class mutation and
   eager feature imports without changing the method API.
+- The package facade and core domain graph are now lazy. A bare `import
+  cytools` loads no numerical stack, and requesting `Polytope` no longer imports
+  triangulation, face, cone, toric-variety, or Calabi–Yau implementations.
+- Source formatting, Pyflakes linting, and ty type checking are now reproducible
+  development dependencies and required CI checks.
 - Importing `cytools` no longer starts network activity; update checks run only
   when `check_for_updates()` is called explicitly, and the NTFE disk cache is
   loaded and written only after the corresponding computation is used.
+- Optional GNN support now fails with an actionable extra-install message when
+  unavailable; library code never prompts or invokes pip at runtime.
 - Benchmark datasets and sampling policy now live with the benchmark suite
   instead of in the installed library, and benchmarks are collected only when
   requested explicitly.

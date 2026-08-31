@@ -21,18 +21,18 @@
 
 # 'standard' imports
 # 3rd party imports
+from collections.abc import Iterable, Sequence
+from typing import Literal, Union, overload
+
 import numpy as np
 import scipy.sparse as sp
 
 # CYTools imports
 from cytools.helpers import misc
 
-# typing
-from cytools._typing import Matrix
-from collections.abc import Iterable
-from typing import Literal, overload, Union
-
 numeric = Union[int, float, np.number]
+
+
 # helpers
 # -------
 @overload
@@ -43,9 +43,7 @@ def flatten_top(arr: Iterable, as_list: Literal[True] = True, N: int = 1) -> lis
 def flatten_top(arr: Iterable, as_list: Literal[False], N: int = 1) -> np.ndarray: ...
 
 
-def flatten_top(
-    arr: Iterable, as_list: bool = True, N: int = 1
-) -> list | np.ndarray:
+def flatten_top(arr: Iterable, as_list: bool = True, N: int = 1) -> list | np.ndarray:
     """
     **Description:**
     Flatten the top level (axis=0) of an array.
@@ -73,20 +71,18 @@ def flatten_top(
         return flatten_top(
             flatten_top(arr, as_list=as_list, N=1), as_list=as_list, N=N - 1
         )
-    else:
-        if isinstance(arr, np.ndarray):
-            print("flatten_top: You really should use .reshape instead...")
+    if isinstance(arr, np.ndarray):
+        print("flatten_top: You really should use .reshape instead...")
 
-        # we convert elements to lists if they are np arrays
-        flattened = [
-            ele.tolist() if isinstance(ele, np.ndarray) else ele
-            for row in arr
-            for ele in row
-        ]
-        if as_list:
-            return flattened
-        else:
-            return np.asarray(flattened)
+    # we convert elements to lists if they are np arrays
+    flattened = [
+        ele.tolist() if isinstance(ele, np.ndarray) else ele
+        for row in arr
+        for ele in row
+    ]
+    if as_list:
+        return flattened
+    return np.asarray(flattened)
 
 
 # Secondary cone hyperplanes are sparse: a row has <= d+2 nonzeros over an
@@ -117,8 +113,9 @@ def csr_rows(cols, vals, width, dtype=np.int16):
     keep = vals != 0
     indptr = np.zeros(len(vals) + 1, dtype=np.int64)
     np.cumsum(keep.sum(axis=1), out=indptr[1:])
-    return sp.csr_matrix((vals[keep].astype(dtype), cols[keep], indptr),
-                         shape=(len(vals), width))
+    return sp.csr_matrix(
+        (vals[keep].astype(dtype), cols[keep], indptr), shape=(len(vals), width)
+    )
 
 
 def csr_dicts(rows, width, dtype=np.int16):
@@ -139,10 +136,12 @@ def csr_dicts(rows, width, dtype=np.int16):
 
     indptr = np.zeros(len(rows) + 1, dtype=np.int64)
     np.cumsum([len(r) for r in rows], out=indptr[1:])
-    cols = np.fromiter((c for r in rows for c in r), dtype=np.int64,
-                       count=int(indptr[-1]))
-    vals = np.fromiter((v for r in rows for v in r.values()), dtype=dtype,
-                       count=int(indptr[-1]))
+    cols = np.fromiter(
+        (c for r in rows for c in r), dtype=np.int64, count=int(indptr[-1])
+    )
+    vals = np.fromiter(
+        (v for r in rows for v in r.values()), dtype=dtype, count=int(indptr[-1])
+    )
     return sp.csr_matrix((vals, cols, indptr), shape=(len(rows), width))
 
 
@@ -180,8 +179,10 @@ def csr_unique_rows(mat):
         return mat
 
     mat.sum_duplicates()
-    keys = [(tuple(mat.indices[a:b]), tuple(mat.data[a:b]))
-            for a, b in zip(mat.indptr[:-1], mat.indptr[1:])]
+    keys = [
+        (tuple(mat.indices[a:b]), tuple(mat.data[a:b]))
+        for a, b in zip(mat.indptr[:-1], mat.indptr[1:])
+    ]
     seen, keep = set(), []
     for i, k in enumerate(keys):
         if k not in seen:
@@ -212,7 +213,7 @@ class CSR_stack:
     def __init__(
         self,
         options: "list[list[sp.csr_matrix]]",
-        choices: "list[int] | int",
+        choices: "Sequence[int] | int",
         choice_bounds: "list[int]",
         iter_densely: bool = False,
     ) -> None:
@@ -273,8 +274,9 @@ class CSR_stack:
             n = block.shape[0]
             if idx < n:
                 lo, hi = block.indptr[idx], block.indptr[idx + 1]
-                return dict(zip(block.indices[lo:hi].tolist(),
-                                block.data[lo:hi].tolist()))
+                return dict(
+                    zip(block.indices[lo:hi].tolist(), block.data[lo:hi].tolist())
+                )
             idx -= n
         raise IndexError("CSR_stack: list index out of range")
 
@@ -283,7 +285,9 @@ class CSR_stack:
             return iter(self.dense())
         return (self[i] for i in range(len(self)))
 
-    def __array__(self, dtype: np.dtype | None = None, copy: bool | None = None) -> np.ndarray:
+    def __array__(
+        self, dtype: np.dtype | None = None, copy: bool | None = None
+    ) -> np.ndarray:
         # the order and defaults are fixed by the numpy protocol, which calls
         # this as __array__(dtype, copy)
         return np.array(self.dense(), dtype=dtype, copy=copy)
