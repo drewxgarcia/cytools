@@ -12,6 +12,9 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+
 jobs:
   quality:
     name: Static quality
@@ -25,7 +28,7 @@ jobs:
           enable-cache: true
       - name: Install Python
         run: uv python install 3.14
-      - name: Install project
+      - name: Install portable development environment
         run: uv sync --frozen --python 3.14
       - name: Lint source
         run: uv run --frozen ruff check src
@@ -34,67 +37,131 @@ jobs:
       - name: Type-check
         run: uv run --frozen ty check
 
-  build-and-test:
-    name: Build and test
+  build:
+    name: Build distributions
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out repo
+        uses: actions/checkout@v7
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+      - name: Install Python
+        run: uv python install 3.14
+      - name: Build wheel and source distribution
+        run: uv build --out-dir dist-ci
+      - name: Verify package identity and wheel contents
+        run: >-
+          python -c 'import glob, zipfile;
+          wheel=glob.glob("dist-ci/cytools_workbench-*.whl")[0];
+          names=set(zipfile.ZipFile(wheel).namelist());
+          required={"cytools/__init__.py", "cytools/_version.py", "cytools/dataset.py", "cytools/landscape.py", "cytools/store.py"};
+          assert required <= names, sorted(required - names)'
+      - name: Upload distributions
+        uses: actions/upload-artifact@v7
+        with:
+          name: distributions
+          path: dist-ci/*
+
+  test:
+    name: Wheel · ${{ matrix.os }} · Python ${{ matrix.python-version }}
+    needs: build
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-24.04, ubuntu-24.04-arm, macos-14]
-        python-version: ['3.10', '3.14']
+        os: [ubuntu-24.04, ubuntu-24.04-arm, macos-15]
+        python-version: ['3.12', '3.14']
     steps:
       - name: Check out repo
         uses: actions/checkout@v7
+      - name: Download distributions
+        uses: actions/download-artifact@v8
+        with:
+          name: distributions
+          path: dist-ci
       - name: Install uv
         uses: astral-sh/setup-uv@v7
         with:
           enable-cache: true
-      - name: Install Python
-        run: uv python install "${{ matrix.python-version }}"
-      - name: Install project
-        run: uv sync --frozen --extra normaliz --python "${{ matrix.python-version }}"
-      - name: Run pytest
-        run: uv run --frozen python -m pytest -vv
-      - name: Build wheel
-        run: uv build --wheel --out-dir dist-ci
-      - name: Verify public modules are packaged
+      - name: Create clean environment
+        run: uv venv --python "${{ matrix.python-version }}" .venv
+      - name: Install built wheel
+        run: uv pip install --python .venv/bin/python dist-ci/*.whl pytest
+      - name: Run pytest against installed wheel
+        run: .venv/bin/python -m pytest -vv
+
+  notebook:
+    name: Notebook smoke test
+    needs: build
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out repo
+        uses: actions/checkout@v7
+      - name: Download distributions
+        uses: actions/download-artifact@v8
+        with:
+          name: distributions
+          path: dist-ci
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+      - name: Create clean environment
+        run: uv venv --python 3.14 .venv
+      - name: Install the notebook extra from the built wheel
+        run: |
+          wheel=$(find dist-ci -name '*.whl' -print -quit)
+          uv pip install --python .venv/bin/python "${wheel}[notebook]"
+      - name: Execute the offline quickstart
         run: >-
-          uv run --frozen python -c 'import glob, zipfile;
-          names=zipfile.ZipFile(glob.glob("dist-ci/*.whl")[0]).namelist();
-          required={"cytools/__init__.py", "cytools/_version.py", "cytools/dataset.py", "cytools/landscape.py", "cytools/store.py"};
-          assert required <= set(names), sorted(required - set(names))'
+          .venv/bin/jupyter nbconvert --to notebook --execute
+          demos/quickstart.ipynb --output cytools-quickstart.ipynb
+          --output-dir /tmp --ExecutePreprocessor.timeout=180
 
   backends:
-    name: Optional compiled backends
-    runs-on: macos-14
+    name: Extra · ${{ matrix.name }}
+    needs: build
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: CVXOPT
+            extra: cvxopt
+            tests: tests/test_cone.py -k cvxopt
+            system-packages: ''
+          - name: GNN
+            extra: gnn
+            tests: tests/test_gnn_sampler.py
+            system-packages: ''
+          - name: Normaliz
+            extra: normaliz
+            tests: tests/test_cone.py -k hilbert_basis
+            system-packages: ''
+          - name: CHOLMOD
+            extra: performance
+            tests: tests/test_solvers.py
+            system-packages: libsuitesparse-dev
     steps:
       - name: Check out repo
         uses: actions/checkout@v7
+      - name: Download distributions
+        uses: actions/download-artifact@v8
+        with:
+          name: distributions
+          path: dist-ci
+      - name: Install system dependencies
+        if: matrix.system-packages != ''
+        run: sudo apt-get update && sudo apt-get install -y ${{ matrix.system-packages }}
       - name: Install uv
         uses: astral-sh/setup-uv@v7
         with:
           enable-cache: true
-      - name: Install SuiteSparse
-        # scikit-sparse is sdist-only and needs the CHOLMOD headers to build.
-        run: brew install suite-sparse libomp
-      - name: Install Python
-        run: uv python install 3.14
-      - name: Install project with every compiled backend
-        env:
-          CFLAGS: -I/opt/homebrew/include/suitesparse -I/opt/homebrew/include
-          LDFLAGS: -L/opt/homebrew/lib
-        run: >-
-          uv sync --frozen --extra gnn --extra normaliz --extra performance
-          --python 3.14
-      - name: Reconcile OpenMP runtimes
-        # Homebrew SuiteSparse and PyTorch each bring their own LLVM OpenMP
-        # runtime, and the second to register aborts the process. Point PyTorch
-        # at the one already present. See INSTALL.md.
+      - name: Create clean environment
+        run: uv venv --python 3.14 .venv
+      - name: Install extra from the built wheel
         run: |
-          bundled=$(uv run --frozen --no-sync python -c 'import torch, pathlib; print(pathlib.Path(torch.__file__).parent / "lib" / "libomp.dylib")')
-          ln -sf "$(brew --prefix libomp)/lib/libomp.dylib" "$bundled"
-          ls -l "$bundled"
-      - name: Run pytest
-        # This is the configuration that exercises CHOLMOD and the GNN sampler
-        # in one process -- the combination a bare matrix run never reaches.
-        run: uv run --frozen --no-sync python -m pytest -vv
+          wheel=$(find dist-ci -name '*.whl' -print -quit)
+          uv pip install --python .venv/bin/python "${wheel}[${{ matrix.extra }}]" pytest
+      - name: Run targeted backend tests
+        run: .venv/bin/python -m pytest -vv ${{ matrix.tests }}

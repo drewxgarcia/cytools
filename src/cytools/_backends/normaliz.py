@@ -23,12 +23,12 @@ def hilbert_basis(rays: Matrix) -> np.ndarray:
         raise ImportError(
             "Hilbert basis computation requires the optional PyNormaliz "
             "binding. Install it with "
-            '`python -m pip install "cytools[normaliz]"`.'
+            '`python -m pip install "cytools-workbench[normaliz]"`.'
         ) from exc
 
     cone = NormalizCone(cone=np.asarray(rays, dtype=int).tolist())
     return np.asarray(
-        cone.HilbertBasis(),  # ty: ignore[unresolved-attribute]  # dynamic binding
+        cone.HilbertBasis(),
         dtype=int,
     )
 

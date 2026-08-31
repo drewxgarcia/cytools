@@ -2859,7 +2859,8 @@ class Polytope:
 
         :::note
         This function requires the optional `dualgnn` package (which depends
-        on PyTorch). It can be installed with `pip install cytools[gnn]` or
+        on PyTorch). It can be installed with
+        `pip install cytools-workbench[gnn]` or
         `pip install dualgnn`.
         :::
 

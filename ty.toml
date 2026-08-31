@@ -1,6 +1,11 @@
 # Optional extras (`gnn`, `mosek`) are not installed in every environment.
 # Configure that here rather than with inline suppressions, which flip to
 # "unused" as soon as the extra *is* installed.
+[environment]
+# The source stays type-compatible with upstream's 3.10 floor even though the
+# Workbench distribution supports 3.12+. Runtime CI covers 3.12 and 3.14.
+python-version = "3.10"
+
 [[overrides]]
 include = [
     "src/cytools/config.py",

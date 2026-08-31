@@ -15,13 +15,20 @@ engines, dataframe libraries, optional features, or network clients.
 
 from importlib import import_module
 
-from cytools._version import __version__, version, versions_with_serious_bugs
+from cytools._version import (
+    __upstream_version__,
+    __version__,
+    upstream_version,
+    version,
+    versions_with_serious_bugs,
+)
 
 _LAZY_EXPORTS = {
     "Cone": ("cytools.cone", "Cone"),
     "Geometry": ("cytools.landscape", "Geometry"),
     "HPolytope": ("cytools.h_polytope", "HPolytope"),
     "Polytope": ("cytools.polytope", "Polytope"),
+    "PerformanceWarning": ("cytools.utils", "PerformanceWarning"),
     "Unsupported": ("cytools.store", "Unsupported"),
     "check_for_updates": ("cytools._updates", "check_for_updates"),
     "config": ("cytools.config", None),
@@ -62,8 +69,10 @@ __all__ = [
     "Cone",
     "Geometry",
     "HPolytope",
+    "PerformanceWarning",
     "Polytope",
     "Unsupported",
+    "__upstream_version__",
     "__version__",
     "check_for_updates",
     "config",
@@ -76,6 +85,7 @@ __all__ = [
     "scan",
     "status",
     "sweep",
+    "upstream_version",
     "vector_config",
     "version",
     "versions_with_serious_bugs",

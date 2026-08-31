@@ -153,11 +153,11 @@ caller's job.
 
 ## Phase 7 — Test/CI coverage gaps
 
-- [x] **7.1** Added a dedicated backend CI job (macOS) that installs SuiteSparse,
-      syncs every compiled backend, reconciles the OpenMP runtimes and runs the
-      suite — the configuration that exercises CHOLMOD and the GNN sampler in
-      one process. The 6-way matrix stays on the safe default plus Normaliz, so
-      it does not build scikit-sparse or download PyTorch six times.
+- [x] **7.1** Added dedicated CI cells for each optional backend. CVXOPT,
+      Normaliz, GNN, and CHOLMOD are installed and tested independently from the
+      built wheel; only the CHOLMOD cell installs SuiteSparse. The six-way base
+      matrix stays on the portable wheel, so it neither builds scikit-sparse
+      nor downloads PyTorch six times.
 - [x] **7.2** Documented in `INSTALL.md`: the SuiteSparse header prerequisite,
       the duplicate-OpenMP failure mode, the symlink fix, and why
       `KMP_DUPLICATE_LIB_OK` is not the answer. Backed by
@@ -166,9 +166,10 @@ caller's job.
       one optional backend is preferable to aborting a notebook kernel and its
       unsaved state. Covered by `tests/test_openmp_guard.py`.
 - [x] **7.3** Kept incompatible compiled backends out of the default dependency
-      group. Local and matrix testing use the safe environment; the dedicated
-      backend job opts into all three extras explicitly and reconciles libomp
-      before importing both CHOLMOD and PyTorch.
+      group. Local and matrix testing use the safe environment; dedicated
+      backend cells opt into one extra at a time. The OpenMP collision guard is
+      covered mechanically without making the hazardous combination the normal
+      development or CI environment.
 
 ### Why the backends are not required dependencies
 
@@ -223,24 +224,45 @@ Measured 2026-08-31 on the paper-realistic payload (`triangulate` ->
 - [x] **9.0** Reuse one lazily created process pool across every nonempty
       source batch in a materialization. A fully cached scan starts no workers;
       pool reuse and shutdown are pinned mechanically.
-- [ ] **9.1** **Make the optional CHOLMOD path easy to install — worth ~3.0x
-      end to end, with no algorithm change.** `intersection_numbers` is ~77% of
-      the payload and 89% of that is one `solve_linear_system` call, which
-      falls through the `backend="all"` waterfall to SciPy's SuperLU when
-      scikit-sparse is absent. On the real h11(N)=300 system (M 28576x15238,
-      nnz 158080): **CHOLMOD 39.1 ms vs SuperLU 793.8 ms**, with a better
-      residual (1.9e-08 vs 3.7e-08). End to end 1105.9 -> 365.0 ms at h11=300,
-      428.2 -> 142.1 ms at h11=150. Keep it in the dedicated backend CI job and
-      optional `performance` extra: Phase 7 records why compiled, hard-linked
-      scikit-sparse and its OpenMP interaction cannot return to the portable
-      default environment.
-- [ ] **9.2** After 9.1, the cone stages are the next target and the only ones
-      with a bad exponent: `toric_kahler_cone` h11^2.13 and
+- [x] **9.1** **Make CHOLMOD an explicit performance tier — ~2.8x end to end,
+      measured.**
+      `intersection_numbers` is ~77% of the payload and 89% of that is one
+      `solve_linear_system` call, which fell silently through the
+      `backend="all"` waterfall to SciPy's SuperLU. The fallback now raises
+      `cytools.PerformanceWarning` once per process instead of a
+      `verbosity>=1` print nobody sets during a sweep, and the SciPy branch uses
+      `permc_spec="MMD_ATA"`, a free ~1.2x for anyone who cannot install
+      CHOLMOD. The measured fast path remains the explicit `performance` extra:
+      a bare `uv sync` must stay portable and representative of a base install.
+      Payload: **428.2 -> 150.5 ms at h11=150, 1105.9 -> 401.1 ms at h11=300.**
+      Note the negative result: the ordering was the *only* SciPy-side lever,
+      and the obvious candidates are far worse — `MMD_AT_PLUS_A` is 45x slower
+      (37.9 s) and `NATURAL` 100x (85.6 s) on the h11=300 system. CHOLMOD's
+      advantage is intrinsic supernodal Cholesky on an SPD system and cannot be
+      closed in SciPy. Covered by four tests in `tests/test_solvers.py`,
+      including one pinning the ordering so it is not "tidied" away.
+
+- [ ] **9.2** The cone stages are now the largest remaining target and the only
+      ones with a bad exponent: `toric_kahler_cone` h11^2.13 and
       `tip_of_stretched_cone` h11^1.92, against h11^1.19-1.28 for everything
-      else. Together they are 15.7% of the payload at h11=150 and 23.9% at
-      h11=300, so they dominate as h11 grows. `tip` is the larger half (18.6%
-      at h11=300) and is LP-bound, not sparse-solve-bound, so CHOLMOD does not
-      help it.
+      else. Together 15.8% of the payload at h11=150 and 25.2% at h11=300.
+      **There is no cheap win here — four hypotheses were measured and all
+      failed.** `tip_of_stretched_cone` is 88% inside `highspy._core.run`; there
+      is no Python overhead to remove.
+      - *Sparse LP encoding:* the Kahler-cone hyperplanes are **1.4% dense** at
+        h11=300, and `cone.feasibility` feeds HiGHS all `m*n` entries — 695,400
+        instead of 9,675, a **71.9x** nonzero inflation. Encoding only the
+        nonzeros is worth just **1.03-1.09x**: HiGHS presolve strips explicit
+        zeros cheaply. Not worth the change for solve time (it would cut ~5 MB
+        of LP memory per solve, which may matter for parallel-sweep RSS).
+      - *Solver algorithm:* on the real h11=150 LP (1061x150), `solver=ipm` is
+        0.96x, `presolve=off` 1.01x, dual simplex 1.02x, and `solver=pdlp`
+        **300x slower** (5.16 s vs 17.4 ms; it is what hung an unbounded sweep
+        at h11=300). Default simplex is already the right choice.
+      The remaining levers are algorithmic, not tuning: **shrink the LP** by
+      removing redundant hyperplanes before the solve (2318 rows at h11=300 —
+      how many are facets?), or avoid the LP. Both need domain input.
+
 - [ ] **9.3** Do not re-optimize triangulation or intnum assembly.
       `_construct_intnum_equations_4d` is **5%** of `intersection_numbers`;
       the assembly work already landed. With CHOLMOD in place no single stage

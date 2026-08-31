@@ -31,7 +31,7 @@ def _release_tuple(value: str) -> tuple[int, ...]:
 
 
 def check_for_updates() -> None:
-    """Print a short notice when PyPI contains a newer CYTools release.
+    """Print a short notice when PyPI contains a newer Workbench release.
 
     The check is explicit and best-effort: network and response errors are
     silently ignored so it remains safe in notebooks, batch jobs, and offline
@@ -40,7 +40,9 @@ def check_for_updates() -> None:
     import requests
 
     try:
-        response = requests.get("https://pypi.org/pypi/cytools/json", timeout=2)
+        response = requests.get(
+            "https://pypi.org/pypi/cytools-workbench/json", timeout=2
+        )
         response.raise_for_status()
         latest = str(response.json()["info"]["version"])
     except (KeyError, TypeError, ValueError, requests.RequestException):
@@ -48,13 +50,13 @@ def check_for_updates() -> None:
 
     if version in versions_with_serious_bugs:
         print(
-            f"Warning: CYTools {version} contains a serious bug. "
+            f"Warning: CYTools Workbench {version} contains a serious bug. "
             "Upgrade before continuing."
         )
     if _release_tuple(latest) > _release_tuple(version):
         print(
-            f"A newer CYTools release is available: {version} -> {latest}. "
-            "Upgrade with `python -m pip install --upgrade cytools`."
+            f"A newer CYTools Workbench release is available: {version} -> {latest}. "
+            "Upgrade with `python -m pip install --upgrade cytools-workbench`."
         )
 
 

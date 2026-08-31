@@ -1,9 +1,11 @@
-# Installing CYTools
+# Installing CYTools Workbench
 
-Full documentation is available on the [CYTools website](https://cy.tools).
+CYTools Workbench is distributed as `cytools-workbench` but imported as
+`cytools`. It replaces the official `cytools` distribution in an environment;
+do not install both together.
 
-CYTools supports Python 3.10 or newer on Linux and Apple Silicon (M-series)
-macOS. Intel-based Macs are not supported.
+The supported runtime is Python 3.12 or newer on Linux and macOS 15 or newer on
+Apple Silicon (M-series). Intel-based Macs and Windows are not supported.
 
 ## Install from PyPI
 
@@ -13,14 +15,14 @@ Create an isolated environment and install the package:
 python3 -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip
-python -m pip install cytools
+python -m pip install cytools-workbench
 ```
 
 For the notebook-first interface, install the notebook extra and launch
 JupyterLab:
 
 ```bash
-python -m pip install "cytools[notebook]"
+python -m pip install "cytools-workbench[notebook]"
 jupyter lab
 ```
 
@@ -28,8 +30,9 @@ Optional features are grouped by purpose:
 
 | Extra | Adds |
 | --- | --- |
-| `notebook` | JupyterLab, widgets, and on-demand dataset access |
-| `streaming` | On-demand dataset access without notebook dependencies |
+| `notebook` | JupyterLab, widgets, and on-demand 4D data |
+| `streaming` | On-demand 4D data without notebook dependencies |
+| `cvxopt` | The optional CVXOPT quadratic-programming solver |
 | `gnn` | GNN-based triangulation sampling through `dualgnn` |
 | `mosek` | The optional MOSEK solver |
 | `normaliz` | In-process Hilbert-basis calculations through PyNormaliz |
@@ -38,11 +41,27 @@ Optional features are grouped by purpose:
 Install one or more extras together, for example:
 
 ```bash
-python -m pip install "cytools[gnn,notebook]"
+python -m pip install "cytools-workbench[gnn,notebook]"
 ```
 
 The `performance` extra requires the SuiteSparse development libraries to be
 available on the host system before `scikit-sparse` is installed.
+
+## Landscape data
+
+The notebook extra downloads requested 4D Parquet shards on demand and reuses
+the Hugging Face cache. No database setup is required for a first notebook.
+
+For a large study, an offline machine, or an explicitly pinned data snapshot,
+point the workbench at a local directory:
+
+```bash
+export CYTOOLS_DB_DIR=/path/to/polytopes-4d
+```
+
+The directory must contain files named
+`polytopes-4d-05-vertices.parquet` through the vertex counts you intend to
+query. Pass `db_dir=` to `scan` when notebook-local configuration is clearer.
 
 ## Develop from source
 
@@ -50,18 +69,18 @@ The repository uses [uv](https://docs.astral.sh/uv/) and commits its lockfile.
 From a source checkout:
 
 ```bash
-git clone https://github.com/LiamMcAllisterGroup/cytools.git
+git clone https://github.com/drewxgarcia/cytools.git
 cd cytools
 uv sync --extra notebook
 uv run pytest
 uv run jupyter lab
 ```
 
-`uv sync` installs CYTools editably and includes the default development tools.
-Compiled backends remain opt-in so the default environment is portable and
-does not combine incompatible native runtimes. Add a feature with `uv sync
---extra <name>`. See [CONTRIBUTING.md](CONTRIBUTING.md) for the test and
-benchmark workflow.
+`uv sync` installs CYTools Workbench editably and includes the default
+development tools. Compiled backends remain opt-in so the default environment
+is portable and does not combine incompatible native runtimes. Add a feature
+with `uv sync --extra <name>`. See [CONTRIBUTING.md](CONTRIBUTING.md) for the
+test and benchmark workflow.
 
 The `performance` extra builds `scikit-sparse` from source and needs the
 SuiteSparse headers first (`brew install suite-sparse` on macOS,
@@ -93,6 +112,6 @@ guard rather than removing the duplicate and is not safe for numerical work.
 With the virtual environment activated:
 
 ```bash
-python -m pip install --upgrade cytools
-python -m pip uninstall cytools
+python -m pip install --upgrade cytools-workbench
+python -m pip uninstall cytools-workbench
 ```

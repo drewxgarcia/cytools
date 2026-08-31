@@ -40,7 +40,7 @@ from cytools.triangulation import Triangulation
 _DUALGNN_HINT = (
     "The optional dualgnn package is required for GNN-based sampling "
     "(triang_method='dualgnn'). Install it with "
-    '`python -m pip install "cytools[gnn]"`.'
+    '`python -m pip install "cytools-workbench[gnn]"`.'
 )
 
 

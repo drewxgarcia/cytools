@@ -5,6 +5,7 @@ import cytools
 
 def test_version_aliases_agree():
     assert cytools.__version__ == cytools.version
+    assert cytools.__upstream_version__ == cytools.upstream_version == "1.4.12"
 
 
 def test_public_api_is_explicit():

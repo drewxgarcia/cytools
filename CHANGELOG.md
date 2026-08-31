@@ -4,7 +4,8 @@
 > project's GitHub release notes and git history, and may contain errors or
 > omissions.
 
-All notable changes to CYTools are documented in this file.
+Workbench changes appear first; the inherited CYTools release history is
+retained below for attribution and upgrade context.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Release dates correspond to the commit dates of the `vX.Y.Z` tags in this
@@ -19,8 +20,9 @@ are occasionally published a day or two later.
 - Notebook-first landscape workflows: `scan`, `sweep`, `status`, the
   `@quantity` extension point, resumable Parquet-backed derived results, and an
   executable `demos/landscape_scans.ipynb` walkthrough.
-- On-demand HuggingFace streaming through the `streaming` and `notebook`
-  extras; `load_polytopes` is now available from the package root.
+- `load_polytopes` is now available from the package root.
+- Local-first 4D database access with on-demand, per-shard Hugging Face fallback
+  through the `streaming` and `notebook` extras.
 - A conventional `__version__` alias and an explicit package-root public API.
 - `compute_gv` can compute Gopakumar-Vafa invariants for a set of target
   points ([#86](https://github.com/LiamMcAllisterGroup/cytools/pull/86)).
@@ -28,6 +30,14 @@ are occasionally published a day or two later.
 
 ### Changed
 
+- The project is now an independently versioned, drop-in fork distributed as
+  `cytools-workbench` while retaining the `cytools` import namespace. Its first
+  Workbench release is based on upstream CYTools 1.4.12.
+- The supported runtime is Python 3.12+ on Linux and macOS 15+ on Apple
+  Silicon. CI builds once and tests the resulting wheel in clean environments;
+  optional native backends are tested independently.
+- CVXOPT is now an optional `cvxopt` extra. OSQP and HiGHS remain the portable
+  default solver paths.
 - Basic landscape columns, including Hodge numbers and point/facet counts, are
   served directly from columnar database buffers without constructing
   `Polytope` objects. Large sweeps avoid collecting result frames and cap
@@ -39,7 +49,14 @@ are occasionally published a day or two later.
   requestable, recorded mode metadata is explicit, and caches remain isolated
   from the historical stretched-cone-tip results.
 - CHOLMOD (`scikit-sparse`) is now an optional `performance` extra. Automatic
-  sparse solves fall back to SciPy on platforms without SuiteSparse.
+  sparse solves fall back to SciPy on platforms without SuiteSparse. That
+  fallback is roughly 20x slower on the intersection-number systems -- about 3x
+  on the whole per-geometry payload -- and was previously announced only at
+  `verbosity>=1`; it now raises `cytools.PerformanceWarning` once per process.
+  The SciPy path uses the `MMD_ATA` ordering, measured ~1.2x faster than the
+  default at equal residual. Developers opt into the compiled fast path with
+  `uv sync --extra performance`; the portable development environment matches
+  the default end-user install.
 - `Cone.hilbert_basis()` now uses the optional PyNormaliz binding instead of
   managing temporary files and shelling out to the Normaliz executable.
 - Third-party engine calls now have an internal adapter boundary, and internal
@@ -54,8 +71,8 @@ are occasionally published a day or two later.
   triangulation, face, cone, toric-variety, or Calabi–Yau implementations.
 - Source formatting, Pyflakes linting, and ty type checking are now reproducible
   development dependencies and required CI checks.
-- CI now exercises the `gnn`, `normaliz`, and `performance` extras together in
-  a dedicated backend job while keeping the default development environment
+- CI now exercises the `cvxopt`, `gnn`, `normaliz`, and `performance` extras in
+  independent backend cells while keeping the default development environment
   portable and free of incompatible optional native runtimes.
 - Feature-package namespaces are explicit: NTFE, vector-configuration, and
   F-theory initializers no longer expose imported implementation dependencies

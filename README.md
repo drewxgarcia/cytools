@@ -1,24 +1,32 @@
 
 <p align="center">
     <img src="https://cy.tools/img/titleimage-circle.png?sanitize=true" width="250"></img><br></br>
-    <b>A software package for analyzing Calabi-Yau manifolds</b><br></br>
-    <img alt="Latest release" src="https://img.shields.io/github/v/release/liammcallistergroup/cytools"></img>
-    <img alt="Number of downloads" src="https://img.shields.io/github/downloads/liammcallistergroup/cytools/total"></img>
-    <img alt="License" src="https://img.shields.io/github/license/liammcallistergroup/cytools"></img>
+    <b>CYTools Workbench — notebook-first Calabi-Yau landscape studies</b><br></br>
+    <img alt="Latest release" src="https://img.shields.io/github/v/release/drewxgarcia/cytools"></img>
+    <img alt="License" src="https://img.shields.io/github/license/drewxgarcia/cytools"></img>
 </p>
 
 -------------------------------------------------------------------------------
 
-CYTools is an open-source software package developed by [Liam McAllister's group](https://liammcallistergroup.com/) with the purpose of studying Calabi-Yau manifolds arising from the Kreuzer-Skarke database. The founding authors are [Mehmet Demirtas](https://inspirehep.net/authors/1765325) and [Andres Rios-Tascon](https://ariostas.com); the current [BDFL](https://en.wikipedia.org/wiki/Benevolent_dictator_for_life) is [Nate MacFadden](https://inspirehep.net/authors/1590972). It emerged from several years of effort towards exploring previously uncharted parts of the string landscape. It offers vastly superior computational performance compared to other software that are typically used in the field, as discussed in the CYTools paper [arXiv:2211.03823](https://arxiv.org/abs/2211.03823). Installation instructions and detailed documentation can be found in the [CYTools website](https://cy.tools).
+CYTools Workbench is an independently maintained, notebook-first fork of
+[CYTools](https://github.com/LiamMcAllisterGroup/cytools), the open-source
+Calabi-Yau geometry package developed by Liam McAllister's group. It keeps the
+compatible `cytools` import namespace while adding reproducible, resumable
+landscape scans and a modern data-analysis workflow.
 
-Most of the code is written in Python, with wrappers to interface with various other open-source software. It is distributed as a Python package through PyPI, with a locked `uv` environment for reproducible source development.
+Install the fork as `cytools-workbench`; it is a drop-in replacement and must
+not be installed in the same environment as the official `cytools`
+distribution. The fork has its own versions and release lifecycle. General
+fixes are kept separable so they can be proposed upstream, while the notebook
+and landscape product surface can evolve independently. The current upstream
+base is available at runtime as `cytools.upstream_version`.
 
 ## Features
 
 * **Polytopes and triangulations.** Lattice point enumeration, face lattices, cone computations, and fine regular star triangulations, along with utilities to fetch reflexive polytopes from the Kreuzer-Skarke database (`cytools.fetch_polytopes`).
 * **Calabi-Yau hypersurfaces.** Hodge numbers, intersection numbers, Mori and Kähler cones, divisor and Calabi-Yau volumes, second Chern class, and Gopakumar-Vafa invariants.
 * **NTFE enumeration.** Enumeration and sampling of the expanded secondary cones and the corresponding FR(S)Ts of a polytope, following [arXiv:2309.10855](https://arxiv.org/abs/2309.10855) (`cytools.ntfe`).
-* **GNN triangulation sampling.** Near-uniform sampling of NTFE FR(S)Ts using the dualGNN graph neural network ([arXiv:2605.27770](https://arxiv.org/abs/2605.27770)) to sample the 2-face triangulations (`Polytope.random_triangulations_gnn`). This requires the optional `dualgnn` package: `pip install "cytools[gnn]"`.
+* **GNN triangulation sampling.** Near-uniform sampling of NTFE FR(S)Ts using the dualGNN graph neural network ([arXiv:2605.27770](https://arxiv.org/abs/2605.27770)) to sample the 2-face triangulations (`Polytope.random_triangulations_gnn`). This requires the optional `dualgnn` package: `pip install "cytools-workbench[gnn]"`.
 * **F-theory tooling.** Orientifolds and F-theory uplifts of Calabi-Yau hypersurfaces (`cytools.f_theory`).
 * **Notebook-first landscape scans.** Query database columns into pandas, lazily compute derived geometry, and resume cached scans by stable Kreuzer-Skarke IDs (`cytools.scan`, `cytools.sweep`).
 
@@ -36,16 +44,16 @@ print(cy.h11(), cy.h21())   # 1 101
 
 ## Notebook-first landscape scans
 
-The landscape API is currently part of the unreleased development tree. From a
-source checkout, install the notebook and on-demand dataset support with:
+From a source checkout, install the notebook environment with:
 
 ```bash
 uv sync --extra notebook
 ```
 
-After the next CYTools release, the equivalent command will be
-`pip install "cytools[notebook]"`. Start with a small vertex-count range so the
-first download stays small:
+For a release install, use `pip install "cytools-workbench[notebook]"`. Start
+with a small vertex-count range: the first scan downloads only those 4D
+Parquet shards and later scans reuse the local Hugging Face cache. For large or
+fully pinned studies, set `CYTOOLS_DB_DIR` to an explicit database snapshot.
 
 ```python
 from cytools import quantities, scan
@@ -56,7 +64,6 @@ df = scan(
     ["h11", "h21", "chi", "n_points"],
     n=100,
     n_vertices=[5, 6, 7],
-    stream=True,
 )
 df.head()
 ```
@@ -70,7 +77,6 @@ df = scan(
     ["h11", "is_favorable", "n_intnums"],
     n=1_000,
     n_vertices=[5, 6, 7],
-    stream=True,
 )
 ```
 
@@ -110,15 +116,14 @@ df = scan(
     ["h11", "max_vertex_coordinate"],
     n=250,
     n_vertices=[5, 6, 7],
-    stream=True,
     version=1,
 )
 ```
 
 For runs too large to collect into one DataFrame, `sweep(...)` computes and
 stores results with bounded memory and returns progress counts. Use `status()`
-to inspect the cache. Local database users can omit `stream=True` and set
-`CYTOOLS_DB_DIR`, or pass `db_dir=` directly. See the executable
+to inspect the cache. Set `CYTOOLS_DB_DIR`, or pass `db_dir=` directly, to
+prefer an explicit local snapshot. See the executable
 [landscape notebook](demos/landscape_scans.ipynb) for the complete workflow.
 
 ## Development
@@ -136,4 +141,7 @@ CYTools makes use of a variety of open-source projects. It includes a few code s
 
 All original CYTools code is distributed under the terms of the [GNU General Public License version 3](https://www.gnu.org/licenses/gpl-3.0.txt). All other packages and code snippets are redistributed under their respective licenses.
 
-Questions, comments and/or suggestions can be directed to [support@cy.tools](mailto:support@cy.tools).
+Questions, bug reports, and product suggestions belong in this fork's
+[issue tracker](https://github.com/drewxgarcia/cytools/issues). Issues that also
+affect official CYTools can be distilled into an upstream report or pull
+request.

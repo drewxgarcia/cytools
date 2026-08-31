@@ -150,7 +150,7 @@ def _block_dualgnn(monkeypatch):
 def test_missing_dualgnn_is_actionable_and_never_installs(monkeypatch):
     _block_dualgnn(monkeypatch)
     # max_npts=0 forces sampling (rather than enumeration) on every 2-face
-    with pytest.raises(ImportError, match=r"cytools\[gnn\]"):
+    with pytest.raises(ImportError, match=r"cytools-workbench\[gnn\]"):
         quintic_dual.face_triangs(triang_method="dualgnn", max_npts=0)
 
 

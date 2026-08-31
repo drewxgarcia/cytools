@@ -7,22 +7,24 @@ path = "src/cytools/_version.py"
 pattern = 'version = "(?P<version>[^"]+)"'
 
 [project]
-name = "cytools"
+name = "cytools-workbench"
 dynamic = ["version"]
-description = "A software package for analyzing Calabi-Yau hypersurfaces in toric varieties."
+description = "A notebook-first fork of CYTools for reproducible Calabi-Yau landscape studies."
 readme = "README.md"
 license = "GPL-3.0-or-later"
 license-files = ["LICENSE"]
 authors = [
   {name = "Liam McAllister Group", email = ""}
 ]
-requires-python = ">=3.10"
+maintainers = [
+  {name = "Drew Garcia"}
+]
+requires-python = ">=3.12"
 dependencies = [
     "numpy",
     "scipy",
     "numba",
     "joblib",
-    "cvxopt",
     "python-flint",
     "pplpy",
     "ortools==9.15.*",      # bundles HiGHS 1.12; keep matched to highspy below
@@ -43,15 +45,13 @@ dependencies = [
     "sympy",
 ]
 classifiers = [
-  "Development Status :: 5 - Production/Stable",
+  "Development Status :: 4 - Beta",
   "Intended Audience :: Science/Research",
   "Operating System :: MacOS",
   "Operating System :: POSIX :: Linux",
   "Programming Language :: Python",
   "Programming Language :: Python :: 3",
   "Programming Language :: Python :: 3 :: Only",
-  "Programming Language :: Python :: 3.10",
-  "Programming Language :: Python :: 3.11",
   "Programming Language :: Python :: 3.12",
   "Programming Language :: Python :: 3.13",
   "Programming Language :: Python :: 3.14",
@@ -62,12 +62,13 @@ classifiers = [
 
 [project.optional-dependencies]
 benchmark = ["pytest", "pytest-benchmark"]
+cvxopt = ["cvxopt"]
 gnn = ["dualgnn"]
 mosek = ["Mosek"]
 normaliz = ["PyNormaliz>=2.24"]
 notebook = ["huggingface-hub", "jupyterlab", "ipywidgets"]
 performance = ["scikit-sparse>=0.5.0"]  # CHOLMOD; needs SuiteSparse
-streaming = ["huggingface-hub"]
+streaming = ["huggingface-hub"]  # fetch database shards not present locally
 test = ["pytest"]
 
 [dependency-groups]
@@ -79,6 +80,7 @@ dev = [
 ]
 
 [tool.ruff]
+# Keep syntax broadly upstreamable even though the distribution supports 3.12+.
 # 88 is the de-facto standard already in this tree: outside `f_theory/`, only
 # 122 of 30k lines exceed it.
 line-length = 88
@@ -91,7 +93,7 @@ select = [
   "F",    # undefined, unused, and shadowed names
   "I",    # deterministic import ordering
   "B904", # preserve exception context at translation boundaries
-  "UP",   # keep syntax aligned with the Python 3.10+ floor
+  "UP",   # keep syntax aligned with the upstream-compatible Python 3.10 target
   "W",    # whitespace defects not handled by the formatter
 ]
 ignore = [
@@ -114,11 +116,11 @@ markers = ["slow: long-running benchmarks (deselect with -m 'not slow')"]
 default-groups = ["dev"]
 
 [project.urls]
-Homepage = "https://cy.tools"
-Documentation = "https://cy.tools/docs/documentation/"
-Repository = "https://github.com/LiamMcAllisterGroup/cytools"
-Changelog = "https://github.com/LiamMcAllisterGroup/cytools/blob/main/CHANGELOG.md"
-Issues = "https://github.com/LiamMcAllisterGroup/cytools/issues"
+Homepage = "https://github.com/drewxgarcia/cytools"
+Documentation = "https://github.com/drewxgarcia/cytools#readme"
+Repository = "https://github.com/drewxgarcia/cytools"
+Changelog = "https://github.com/drewxgarcia/cytools/blob/main/CHANGELOG.md"
+Issues = "https://github.com/drewxgarcia/cytools/issues"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/cytools"]

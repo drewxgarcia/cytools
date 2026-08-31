@@ -1,6 +1,6 @@
-# Contributing to CYTools
+# Contributing to CYTools Workbench
 
-Thanks for your interest in CYTools. This document describes how to set up a
+Thanks for your interest in CYTools Workbench. This document describes how to set up a
 development environment, run the tests, and report problems.
 
 The package boundaries and dependency rules are documented in
@@ -8,9 +8,9 @@ The package boundaries and dependency rules are documented in
 
 ## Supported platforms
 
-CYTools runs on **Linux** and on **Apple Silicon (M-series) macOS**. Intel-based
-Macs are not supported. See [INSTALL.md](INSTALL.md) for the full installation
-instructions and for the non-development installation options.
+CYTools Workbench supports **Python 3.12+ on Linux** and on **macOS 15+ on Apple
+Silicon (M-series)**. Intel-based Macs and Windows are not supported. See
+[INSTALL.md](INSTALL.md) for the full installation instructions.
 
 ## Setting up a development environment
 
@@ -19,7 +19,7 @@ file. `uv sync` creates a project-local virtual environment, installs CYTools
 editably, and includes the default test and benchmark tools:
 
 ```bash
-git clone https://github.com/LiamMcAllisterGroup/cytools.git
+git clone https://github.com/drewxgarcia/cytools.git
 cd cytools
 uv sync --extra notebook
 ```
@@ -67,10 +67,11 @@ uv run pytest benchmarks --benchmark-only -m "not slow"
 ## Continuous integration
 
 `.github/workflows/build-test.yml` runs linting, formatting, type checking, and
-the correctness suite on every pull request and on pushes to `main`. The test
-matrix covers Linux (x86-64 and arm64) and macOS on Apple Silicon across the
-supported Python versions, using the locked `uv` environment. Please make sure
-the checks pass locally before opening a pull request.
+the correctness suite on every pull request and on pushes to `main`. CI builds
+one wheel, installs that artifact into clean Linux (x86-64 and arm64) and macOS
+environments across the supported Python versions, and tests optional backends
+separately. Please make sure the checks pass locally before opening a pull
+request.
 
 The other workflows are `website.yml`, which regenerates the documentation site
 from the source docstrings, and `deploy.yml`, which builds the sdist and wheel
@@ -135,7 +136,7 @@ in the file itself — [CHANGELOG.md](CHANGELOG.md) carries such a disclaimer.
 ## Reporting issues
 
 Please open an issue at
-<https://github.com/LiamMcAllisterGroup/cytools/issues>. A useful report
+<https://github.com/drewxgarcia/cytools/issues>. A useful report
 includes:
 
 - the CYTools version (`import cytools; print(cytools.version)`),
@@ -144,8 +145,9 @@ includes:
   given by explicit points is ideal), and
 - the full traceback or the incorrect output, together with what you expected.
 
-Questions, comments and suggestions can also be sent to
-[support@cy.tools](mailto:support@cy.tools).
+Changes that apply cleanly to official CYTools should be kept in a focused
+commit without Workbench-specific packaging or product changes. That keeps the
+commit straightforward to cherry-pick into an upstream pull request.
 
 ## License
 
