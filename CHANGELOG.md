@@ -32,6 +32,10 @@ are occasionally published a day or two later.
   served directly from columnar database buffers without constructing
   `Polytope` objects. Large sweeps avoid collecting result frames and cap
   automatic worker fan-out at eight processes.
+- Landscape volume scans can evaluate at a deterministic sampled direction in
+  the Kähler cone with `moduli="sampled"`; the selected `kahler_point` is
+  requestable, recorded mode metadata is explicit, and caches remain isolated
+  from the historical stretched-cone-tip results.
 - CHOLMOD (`scikit-sparse`) is now an optional `performance` extra. Automatic
   sparse solves fall back to SciPy on platforms without SuiteSparse.
 - `Cone.hilbert_basis()` now uses the optional PyNormaliz binding instead of

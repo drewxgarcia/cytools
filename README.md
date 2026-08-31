@@ -74,6 +74,22 @@ df = scan(
 )
 ```
 
+Volume scans default to the tip of the stretched Kähler cone. For an ensemble
+with one reproducible interior direction per geometry, select `moduli="sampled"`
+and retain the point alongside the resulting volumes. Sampled rays are rescaled
+to the same minimum curve-volume convention as the tip:
+
+```python
+df = scan(
+    ["h11", "kahler_point", "divisor_volumes", "cy_volume"],
+    n=1_000,
+    moduli="sampled",
+)
+```
+
+The mode is recorded in `df.attrs["cytools"]`; tip and sampled results use
+separate cache keys.
+
 The high-level API consistently uses CYTools' N-lattice convention, including
 for `h11`, `h21`, and `chi` filters. A capped query is a reproducible,
 bounded-memory stratified sample across files and shuffled Parquet row groups;

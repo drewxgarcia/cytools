@@ -76,6 +76,7 @@ import warnings
 from collections.abc import Callable
 from dataclasses import dataclass
 from functools import cached_property
+from typing import Literal
 
 import numpy as np
 
@@ -126,6 +127,7 @@ class _Quantity:
 
 
 _QUANTITIES: dict[str, _Quantity] = {}
+_ModuliMode = Literal["tip", "sampled"]
 
 
 def quantity(fn=None, *, name: str | None = None, source: str = "computed"):
@@ -281,6 +283,8 @@ class Geometry:
         :class:`~cytools.polytope.Polytope`.
     - `triangulation_seed`: `None` for the canonical triangulation, or an
         integer seeding a reproducible random FRST.
+    - `moduli_seed`: `None` to evaluate volumes at the tip of the stretched
+        Kähler cone, or an integer seeding a reproducible interior direction.
 
     **Example:**
     ```python {2}
@@ -292,9 +296,16 @@ class Geometry:
     ```
     """
 
-    def __init__(self, vertices, *, triangulation_seed: int | None = None):
+    def __init__(
+        self,
+        vertices,
+        *,
+        triangulation_seed: int | None = None,
+        moduli_seed: int | None = None,
+    ):
         self._vertices = np.asarray(vertices)
         self._triangulation_seed = triangulation_seed
+        self._moduli_seed = moduli_seed
 
     def __repr__(self):
         seed = self._triangulation_seed
@@ -400,6 +411,28 @@ class Geometry:
     def mori_cone(self):
         """The Mori cone in the current basis."""
         return self.cy.toric_mori_cone(in_basis=True)
+
+    @cached_property
+    def moduli_point(self):
+        """Where in Kahler moduli space the volume columns are evaluated.
+
+        With no `moduli_seed` this is the tip of the stretched Kahler cone: a
+        specific distinguished point and the historical default. With a seed it
+        is a reproducible random direction, suitable for ensemble studies that
+        should not evaluate every geometry at the same distinguished point.
+
+        Divisor volumes are homogeneous under rescaling the Kahler parameters,
+        so only the direction matters; sampling is done on the bounded slice
+        `{x in K : g.x = 1}` for a grading vector `g`, which is positive on the
+        cone and therefore makes the slice a polytope rather than a cone. The
+        sampled ray is then scaled to the same `min(H.x) = 1` stretched-cone
+        convention as :attr:`tip`.
+        """
+        if self._moduli_seed is None:
+            return self.tip
+        return _sample_kahler_direction(
+            self.kahler_cone, int(self._moduli_seed), start=self.tip
+        )
 
     @cached_property
     def kahler_cone(self):
@@ -532,23 +565,29 @@ def tip_backend(g):
 
 
 @quantity
+def kahler_point(g):
+    """Kähler parameters used to evaluate the volume columns."""
+    return g.moduli_point
+
+
+@quantity
 def divisor_volumes(g):
-    """Volumes of the prime toric divisors at the tip of the stretched Kahler cone.
+    """Prime-toric-divisor volumes at the selected Kähler-moduli point.
 
     The central quantity of the type IIB axion literature: divisor volumes set
     instanton actions, and hence axion masses and decay constants.
     """
-    if g.tip is None:
+    if g.moduli_point is None:
         return None
-    return np.asarray(g.cy.compute_divisor_volumes(g.tip), dtype=float)
+    return np.asarray(g.cy.compute_divisor_volumes(g.moduli_point), dtype=float)
 
 
 @quantity
 def cy_volume(g):
-    """Volume of the Calabi-Yau at the tip of the stretched Kahler cone."""
-    if g.tip is None:
+    """Volume of the Calabi-Yau at the selected Kähler-moduli point."""
+    if g.moduli_point is None:
         return None
-    return float(g.cy.compute_cy_volume(g.tip))
+    return float(g.cy.compute_cy_volume(g.moduli_point))
 
 
 # ---------------------------------------------------------------------------
@@ -564,8 +603,9 @@ class _Payload:
     public surface -- there is no user-supplied callable to fail to serialize.
     """
 
-    def __init__(self, columns):
+    def __init__(self, columns, moduli: _ModuliMode = "tip"):
         self.columns = tuple(columns)
+        self.moduli = moduli
 
     def __call__(self, item):
         """Compute each column independently, keeping whatever succeeds.
@@ -586,7 +626,18 @@ class _Payload:
         else:
             vertices, seed = item, None
 
-        g = Geometry(vertices, triangulation_seed=seed)
+        # Deterministic from the vertices, so a resumed scan reproduces the
+        # same moduli point rather than drawing a fresh one.
+        moduli_seed = None
+        if self.moduli == "sampled":
+            # Canonical little-endian representation keeps the sample stable
+            # across NumPy integer widths and machine architectures.
+            seed_material = np.asarray(vertices, dtype="<i8").tobytes(order="C")
+            if seed is not None:
+                seed_material += int(seed).to_bytes(8, "little", signed=True)
+            moduli_seed = _hash_bytes(seed_material) & 0x7FFFFFFF
+
+        g = Geometry(vertices, triangulation_seed=seed, moduli_seed=moduli_seed)
         out, reason = {}, None
 
         for c in self.columns:
@@ -770,6 +821,53 @@ def _hash_bytes(data: bytes) -> int:
     return h - (1 << 64) if h >= (1 << 63) else h
 
 
+def _sample_kahler_direction(cone, seed: int, start=None, burn: int = 30):
+    """A reproducible random direction inside *cone*, by hit-and-run.
+
+    A grading vector is strictly positive on a pointed cone, so the slice
+    `{x : g.x = 1}` is bounded and every hit-and-run interval is finite. Steps
+    are projected onto `g.d = 0` so the walk stays on the slice. Returns None
+    if no interior starting point is available. The selected ray is rescaled
+    onto the `min(H.x) = 1` stretched-cone boundary before it is returned.
+    """
+    H = np.asarray(cone.hyperplanes(), dtype=float)
+    grading = cone.find_grading_vector()
+    if grading is None:
+        return None
+    g = np.asarray(grading, dtype=float)
+    norm_squared = float(g @ g)
+    if not np.isfinite(norm_squared) or norm_squared <= 0:
+        return None
+
+    x = start if start is not None else cone.tip_of_stretched_cone(1, show_hints=False)
+    if x is None:
+        return None
+    x = np.asarray(x, dtype=float)
+    denom = float(g @ x)
+    if not np.isfinite(denom) or denom <= 0:
+        return None
+    x = x / denom
+
+    rng = np.random.default_rng(seed)
+    for _ in range(burn):
+        d = rng.normal(size=len(x))
+        d -= g * (g @ d) / norm_squared
+        Hx, Hd = H @ x, H @ d
+        with np.errstate(divide="ignore", invalid="ignore"):
+            ratios = -Hx / Hd
+        lo = ratios[Hd > 0].max() if np.any(Hd > 0) else -np.inf
+        hi = ratios[Hd < 0].min() if np.any(Hd < 0) else np.inf
+        if not (np.isfinite(lo) and np.isfinite(hi)) or hi <= lo:
+            continue
+        pad = 1e-9 * (hi - lo)
+        x = x + rng.uniform(lo + pad, hi - pad) * d
+
+    min_slack = float(np.min(H @ x))
+    if not np.isfinite(min_slack) or min_slack <= 0:
+        return None
+    return x / min_slack
+
+
 def _mix(ks_id: int, k: int) -> int:
     """Derive a geometry id for the k-th triangulation of one polytope.
 
@@ -869,6 +967,7 @@ def _run(
     collect,
     max_rows,
     triangulations,
+    moduli,
     filters,
 ):
     """Shared body of `scan` and `sweep`."""
@@ -881,6 +980,8 @@ def _run(
     triangulations = int(triangulations)
     if triangulations < 1:
         raise ValueError(f"triangulations must be at least 1, got {triangulations}")
+    if moduli not in ("tip", "sampled"):
+        raise ValueError(f"moduli must be 'tip' or 'sampled', got {moduli!r}")
     db_cols = [c for c in cols if _QUANTITIES[c].source == "database"]
     computed = [c for c in cols if _QUANTITIES[c].source != "database"]
 
@@ -919,6 +1020,7 @@ def _run(
         df.attrs["cytools"] = {
             "columns": cols,
             "version": version,
+            "moduli": moduli,
             "requested": seen,
         }
         return df
@@ -926,7 +1028,9 @@ def _run(
     # Database-backed columns are read directly and must not fragment the
     # cache: `scan(["is_favorable"])` and
     # `scan(["h11", "is_favorable"])` reuse the same materialization.
-    key = _store_key(computed)
+    # The mode is part of the key: sampled volumes are a different quantity
+    # from tip volumes and must never be served from the same cache.
+    key = _store_key(computed) + ("" if moduli == "tip" else "-sampled")
     store = DerivedStore(derived_dir)
     workers = _resolve_workers(workers, computed)
 
@@ -950,7 +1054,7 @@ def _run(
     try:
         summary = materialize(
             key,
-            _Payload(computed),
+            _Payload(computed, moduli=moduli),
             store=store,
             scan=source(),
             version=version,
@@ -992,6 +1096,7 @@ def _run(
         "columns": cols,
         "version": version,
         "triangulations": triangulations,
+        "moduli": moduli,
         **summary,
     }
     return df
@@ -1017,6 +1122,7 @@ def scan(
     workers: int | None = None,
     version: int = 1,
     triangulations: int = 1,
+    moduli: _ModuliMode = "tip",
     recompute: bool = False,
     progress=None,
     db_dir=None,
@@ -1048,6 +1154,11 @@ def scan(
         rather than invalidates what a previous scan computed. With more than
         one, the result carries `polytope_id` and `triangulation_index`, and
         `triangulation_hash` is worth requesting to spot repeated draws.
+    - `moduli`: `"tip"` evaluates volume columns at the tip of the stretched
+        Kähler cone. `"sampled"` uses one deterministic interior direction per
+        geometry, rescales it to the same minimum curve-volume convention, and
+        keeps those results in a separate cache. Request `kahler_point` to
+        retain the coordinates used.
     - `recompute`: Ignore cached results and compute every row again.
     - `progress`: `False` to silence it, or a callable taking the running
         summary dict to report progress your own way. Defaults to a `tqdm` bar.
@@ -1084,6 +1195,7 @@ def scan(
         collect=True,
         max_rows=max_rows,
         triangulations=triangulations,
+        moduli=moduli,
         filters=filters,
     )
 
@@ -1095,6 +1207,7 @@ def sweep(
     workers: int | None = None,
     version: int = 1,
     triangulations: int = 1,
+    moduli: _ModuliMode = "tip",
     recompute: bool = False,
     progress=None,
     db_dir=None,
@@ -1137,5 +1250,6 @@ def sweep(
         collect=False,
         max_rows=None,
         triangulations=triangulations,
+        moduli=moduli,
         filters=filters,
     )

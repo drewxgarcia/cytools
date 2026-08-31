@@ -53,6 +53,7 @@ def test_builtin_quantities_are_registered():
         "is_favorable",
         "n_intnums",
         "divisor_volumes",
+        "kahler_point",
         "tip",
         "tip_backend",
     ):
@@ -130,6 +131,17 @@ def test_iterable_filters_are_translated_elementwise():
 def test_unexpected_filter_is_rejected():
     with pytest.raises(TypeError, match="unexpected filter"):
         _scan_kwargs(n=1, batch_size=8, db_dir=None, filters={"h13": 4})
+
+
+def test_unknown_moduli_mode_is_rejected_before_database_access(monkeypatch):
+    import cytools.landscape as lm
+
+    def fail_if_accessed(**_):
+        raise AssertionError("database was accessed")
+
+    monkeypatch.setattr(lm, "scan_batches", fail_if_accessed)
+    with pytest.raises(ValueError, match="moduli must be"):
+        scan(["h11"], n=1, moduli="boundary")
 
 
 # ---------------------------------------------------------------------------
@@ -515,6 +527,102 @@ def test_payload_keeps_successful_columns_when_one_is_unsupported():
     finally:
         del _QUANTITIES["_test_supported"]
         del _QUANTITIES["_test_unsupported"]
+
+
+def test_sampled_moduli_seed_is_stable_and_distinguishes_triangulations():
+    from cytools.landscape import _Payload
+
+    vertices = np.arange(20, dtype=np.int32).reshape(5, 4)
+
+    @quantity(name="_test_moduli_seed")
+    def moduli_seed(g):
+        """The internal seed, exposed only for this test."""
+        return g._moduli_seed
+
+    try:
+        payload = _Payload(["_test_moduli_seed"], moduli="sampled")
+        canonical = payload(vertices)["_test_moduli_seed"]
+        assert payload(vertices)["_test_moduli_seed"] == canonical
+        assert payload(vertices.astype(np.int64))["_test_moduli_seed"] == canonical
+        assert payload((vertices, 7))["_test_moduli_seed"] != canonical
+        assert _Payload(["_test_moduli_seed"])(vertices)["_test_moduli_seed"] is None
+    finally:
+        del _QUANTITIES["_test_moduli_seed"]
+
+
+def test_sampled_kahler_direction_is_reproducible_and_interior():
+    from cytools.landscape import _sample_kahler_direction
+
+    class PositiveOrthant:
+        @staticmethod
+        def hyperplanes():
+            return np.eye(3)
+
+        @staticmethod
+        def find_grading_vector():
+            return np.ones(3)
+
+        @staticmethod
+        def tip_of_stretched_cone(*_, **__):
+            return np.ones(3)
+
+    cone = PositiveOrthant()
+    first = _sample_kahler_direction(cone, 41)
+    again = _sample_kahler_direction(cone, 41)
+    other = _sample_kahler_direction(cone, 42)
+
+    assert np.allclose(first, again)
+    assert not np.allclose(first, other)
+    assert np.all(first > 0)
+    assert np.isclose(first.min(), 1)
+
+
+def test_sampled_kahler_direction_handles_missing_grading_vector():
+    from cytools.landscape import _sample_kahler_direction
+
+    class UngradedCone:
+        @staticmethod
+        def hyperplanes():
+            return np.eye(2)
+
+        @staticmethod
+        def find_grading_vector():
+            return None
+
+    assert _sample_kahler_direction(UngradedCone(), 1, start=np.ones(2)) is None
+
+
+def test_moduli_modes_use_separate_caches(derived, monkeypatch):
+    import cytools.landscape as lm
+    from cytools.store import DerivedStore
+
+    monkeypatch.setattr(lm, "scan_batches", _synthetic_scan([]))
+
+    @quantity(name="_test_moduli_cache")
+    def moduli_seed(g):
+        """The selected mode's deterministic seed."""
+        return g._moduli_seed
+
+    try:
+        tip_result = scan(
+            ["_test_moduli_cache"], n=2, workers=1, progress=False, moduli="tip"
+        )
+        sampled_result = scan(
+            ["_test_moduli_cache"],
+            n=2,
+            workers=1,
+            progress=False,
+            moduli="sampled",
+        )
+
+        assert tip_result.attrs["cytools"]["moduli"] == "tip"
+        assert sampled_result.attrs["cytools"]["moduli"] == "sampled"
+        assert set(DerivedStore(derived).quantities()) == {
+            "_test_moduli_cache",
+            "_test_moduli_cache-sampled",
+        }
+    finally:
+        del _QUANTITIES["_test_moduli_cache"]
 
 
 def test_quantity_registration_validates_public_schema():
