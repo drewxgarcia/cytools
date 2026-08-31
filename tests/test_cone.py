@@ -122,6 +122,30 @@ def find_interior_point():
     assert c.contains(pt)
 
 
+def test_cvxopt_backend_when_installed():
+    pytest.importorskip("cvxopt", reason="requires the cvxopt extra")
+    c = Cone([[1, 0], [0, 1]])
+    tip = c.tip_of_stretched_cone(backend="cvxopt")
+    assert tip is not None
+    assert np.allclose(tip, [1.0, 1.0], atol=1e-5)
+
+
+def test_missing_cvxopt_extra_is_actionable(monkeypatch):
+    import cytools.cone as cone_module
+
+    monkeypatch.setattr(
+        cone_module.qpsolvers,
+        "available_solvers",
+        [
+            solver
+            for solver in cone_module.qpsolvers.available_solvers
+            if solver != "cvxopt"
+        ],
+    )
+    with pytest.raises(ImportError, match=r"cytools-workbench\[cvxopt\]"):
+        Cone([[1, 0], [0, 1]]).tip_of_stretched_cone(backend="cvxopt")
+
+
 def test_find_lattice_points():
     c = Cone([[3, 2], [5, 3]])
     pts = c.find_lattice_points(min_points=20)
@@ -157,7 +181,7 @@ def test_hilbert_basis_missing_extra_is_actionable(monkeypatch):
         return real_import(name, *args, **kwargs)
 
     monkeypatch.setattr(builtins, "__import__", without_pynormaliz)
-    with pytest.raises(ImportError, match=r"cytools\[normaliz\]"):
+    with pytest.raises(ImportError, match=r"cytools-workbench\[normaliz\]"):
         Cone([[1, 3], [2, 1]]).hilbert_basis()
 
 

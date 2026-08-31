@@ -1304,6 +1304,11 @@ class Cone:
         backends = (None, "mosek", "osqp", "cvxopt", "highs", "glop")
         if backend not in backends:
             raise ValueError(f"Invalid backend. The options are: {backends}.")
+        if backend == "cvxopt" and "cvxopt" not in qpsolvers.available_solvers:
+            raise ImportError(
+                "The CVXOPT backend is optional. Install it with "
+                '`python -m pip install "cytools-workbench[cvxopt]"`.'
+            )
 
         if backend is None:
             if self.ambient_dim() < 25:

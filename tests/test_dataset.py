@@ -13,7 +13,7 @@ ds = pytest.importorskip("cytools.dataset")
 def _load(**kwargs):
     try:
         return ds.load_polytopes(**kwargs)
-    except ValueError as e:
+    except (ImportError, ValueError) as e:
         pytest.skip(f"no local KS database configured: {e}")
 
 
@@ -62,29 +62,34 @@ def test_vertex_extraction_matches_reference(n_vertices, monkeypatch):
     """The zero-copy fast path must agree with per-row extraction.
 
     Regression test: the fast path used to validate stride uniformity by
-    comparing only the first and last row, so a query merging several
+    comparing only the first and last row, so a query spanning several
     vertex-count files could mis-slice vertices into the wrong rows and
     silently yield a corrupted (e.g. non-reflexive) polytope.
     """
     seen = []
-    orig = ds._extract_vertices_from_table
+    orig = ds._table_to_batch
 
     def spy(table):
+        # `_table_to_batch` rather than `_extract_vertices_from_table`: the
+        # latter is only the ragged fallback inside `_batch_buffers`, so a
+        # uniform-stride query never reaches it and the comparison below would
+        # silently never run.
         fast = orig(table)
         ref = _safe_extract(table)
         seen.append(sorted({len(r) for r in ref}))
         assert len(fast) == len(ref)
-        for i, (a, b) in enumerate(zip(fast, ref)):
-            assert np.array_equal(a, b), f"row {i} mismatch"
+        for i, b in enumerate(ref):
+            assert np.array_equal(fast.vertices(i), b), f"row {i} mismatch"
         return fast
 
-    monkeypatch.setattr(ds, "_extract_vertices_from_table", spy)
+    monkeypatch.setattr(ds, "_table_to_batch", spy)
     records = _load(n_vertices=n_vertices, n=16)
 
     assert records, "expected at least one record"
     assert seen, "extraction was never exercised"
     if len(n_vertices) > 1:
-        assert any(len(s) > 1 for s in seen), "ragged case was not exercised"
+        observed = {count for batch_counts in seen for count in batch_counts}
+        assert len(observed) > 1, "multiple vertex-count files were not exercised"
 
 
 def test_records_are_wellformed():
@@ -119,7 +124,7 @@ def test_hodge_columns_use_m_lattice_convention():
 def _batches(**kwargs):
     try:
         return list(ds.scan_batches(**kwargs))
-    except ValueError as e:
+    except (ImportError, ValueError) as e:
         pytest.skip(f"no local KS database configured: {e}")
 
 
@@ -237,7 +242,7 @@ def test_scan_batches_respects_batch_size():
 def test_capped_scan_is_spread_across_vertex_counts():
     """A small n must not be served entirely out of the first file.
 
-    Regression test. The streaming scan yields one batch per row group, and an
+    Regression test. The batched scan yields one batch per row group, and an
     early version let the first file's batch absorb the whole budget, so
     `n_vertices=[13, 14, 15], n=16` returned sixteen 13-vertex polytopes. Every
     benchmark fixture that samples a vertex-count range would have been
@@ -253,8 +258,18 @@ def test_capped_scan_is_spread_across_vertex_counts():
 
     assert rows == 30
     assert set(counts) == {13, 14, 15}, f"only got {dict(counts)}"
-    # even apportioning, within the rounding of n / n_files
-    assert max(counts.values()) - min(counts.values()) <= 1, dict(counts)
+
+    # Apportioned in proportion to how many polytopes each file holds, not
+    # evenly: 13v/14v/15v hold 43.5M/56.1M/64.1M rows, so an even 10/10/10
+    # would under-represent 15v by a third. Evenness was the old behaviour and
+    # skewed every distribution built on a capped scan.
+    populations = {13: 43_458_000, 14: 56_060_584, 15: 64_085_869}
+    total = sum(populations.values())
+    for vc, pop in populations.items():
+        expected = 30 * pop / total
+        assert abs(counts[vc] - expected) <= 1.5, (
+            f"{vc}v got {counts[vc]}, expected about {expected:.1f}"
+        )
 
 
 def test_streaming_memory_does_not_grow_with_n():
@@ -278,7 +293,7 @@ def test_streaming_memory_does_not_grow_with_n():
     try:
         small = peak_pool(1000)
         large = peak_pool(50_000)
-    except ValueError as e:
+    except (ImportError, ValueError) as e:
         pytest.skip(f"no local KS database configured: {e}")
 
     assert large < small * 4, (
@@ -390,17 +405,23 @@ def test_capped_scans_are_nested_in_n():
     assert small <= medium <= large
 
 
-def test_streaming_capped_scan_resolves_files_lazily(monkeypatch):
-    """A two-row notebook sample must not download every requested file."""
+def test_capped_scan_reads_only_the_files_it_budgets(monkeypatch):
+    """A two-row sample must not open every requested file.
+
+    Files are apportioned a share of `n`, and a file allotted nothing should
+    never be read. This used to be about not *downloading* files in streaming
+    mode; streaming is gone, but the property still matters -- opening a row
+    group is the expensive part of a local scan too.
+    """
     import pyarrow as pa
 
-    resolved = []
+    read = []
 
-    def resolve(vc, resolved_dir, stream, hf_token):
-        resolved.append(vc)
+    def resolve(vc, resolved_dir):
         return vc
 
     def one_file(path, dnf, expr, rng, batch_size):
+        read.append(path)
         yield pa.record_batch({"marker": pa.array([path], type=pa.int64())})
 
     monkeypatch.setattr(ds, "_resolve_4d_path", resolve)
@@ -417,15 +438,13 @@ def test_streaming_capped_scan_resolves_files_lazily(monkeypatch):
             n_dual_points=None,
             n=2,
             seed=42,
-            resolved_dir=None,
-            stream=True,
-            hf_token=None,
+            resolved_dir="/nonexistent",
             batch_size=8,
         )
     )
 
     assert sum(batch.num_rows for batch in batches) == 2
-    assert resolved == [5, 6]
+    assert len(read) <= 2, f"read {read} for a two-row sample"
 
 
 def test_empty_batch_scan_needs_no_database_configuration(monkeypatch):
@@ -433,3 +452,83 @@ def test_empty_batch_scan_needs_no_database_configuration(monkeypatch):
     monkeypatch.setattr(ds, "DB_DIR", None)
     assert list(ds.scan_batches(n=0)) == []
     assert ds.load_polytopes(n=0) == []
+
+
+# ---------------------------------------------------------------------------
+# A capped scan must sample in proportion to what each file holds
+# ---------------------------------------------------------------------------
+
+
+def test_apportion_is_proportional_and_exact():
+    """Splitting n evenly across files skews the sample; weight it instead.
+
+    Measured at h11(N)=200, where the population is 6v:5 ... 10v:174 ... 15v:5,
+    an even split exhausted the small files (3.5x over-represented) while 10v
+    returned 23 rows where 49 were due (0.47x).
+    """
+    from cytools.dataset import _apportion
+
+    weights = [5, 38, 82, 107, 174, 132, 98, 51, 14, 5]
+    budgets = _apportion(350, weights)
+
+    assert sum(budgets) == 350, "apportionment must not lose or invent rows"
+    total = sum(weights)
+    for w, b in zip(weights, budgets):
+        expected = 350 * w / total
+        assert abs(b - expected) < 1.0, f"{b} vs {expected:.2f} for weight {w}"
+
+
+def test_apportion_falls_back_when_weights_are_unknown():
+    from cytools.dataset import _apportion
+
+    budgets = _apportion(10, [0, 0, 0])
+    assert sum(budgets) == 10
+    assert max(budgets) - min(budgets) <= 1
+
+
+def test_apportion_handles_n_smaller_than_file_count():
+    from cytools.dataset import _apportion
+
+    budgets = _apportion(3, [100, 50, 10, 1])
+    assert sum(budgets) == 3
+    # the largest population must be served first
+    assert budgets[0] >= budgets[-1]
+
+
+def test_capped_scan_matches_the_population_shape():
+    """End-to-end: the returned vertex-count mix tracks the real population."""
+    import collections
+
+    ds = pytest.importorskip("cytools.dataset")
+    truth = {
+        6: 5,
+        7: 38,
+        8: 82,
+        9: 107,
+        10: 174,
+        11: 132,
+        12: 98,
+        13: 51,
+        14: 14,
+        15: 5,
+    }
+    try:
+        got = collections.Counter()
+        for b in ds.scan_batches(h12=200, n=350, batch_size=64):
+            for i in range(len(b)):
+                got[len(b.vertices(i))] += 1
+    except (ImportError, ValueError) as e:
+        pytest.skip(f"no local KS database configured: {e}")
+    if not got:
+        pytest.skip("no rows returned")
+
+    drawn = sum(got.values())
+    total = sum(truth.values())
+    # Only check files with a big enough expectation that rounding is not the
+    # dominant effect.
+    for nv, pop in truth.items():
+        expected = pop / total * drawn
+        if expected < 5:
+            continue
+        ratio = got.get(nv, 0) / expected
+        assert 0.8 < ratio < 1.25, f"{nv}v drawn at {ratio:.2f}x its share"

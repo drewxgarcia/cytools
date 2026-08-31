@@ -22,6 +22,7 @@
 
 # 'standard' imports
 import math
+from fractions import Fraction
 from itertools import combinations, combinations_with_replacement, permutations, product
 
 # 3rd party imports
@@ -846,6 +847,71 @@ def Gorenstein_index(cone):
     raise ValueError("Cone is not reflexive Gorenstein")
 
 
+#: Largest denominator admitted when reconstructing local Cartier data from
+#: the floating-point solve. The exact data has denominator dividing the cone
+#: determinant, so this is a resolution limit rather than a mathematical one:
+#: a cone beyond it is reported as admitting no local data, never as having
+#: the wrong index.
+_MAX_CARTIER_DENOMINATOR = 10**6
+
+
+def _local_cartier_data(toric_fan, weights, cone):
+    """
+    **Description:**
+    The local Cartier vector on `cone`, exactly, or `None` if none exists.
+
+    The cone's ray matrix and the weights are integral, so whenever local data
+    exists it is exactly rational. A floating-point least-squares solve supplies
+    a fast candidate, but the accept/reject decision is made over the rationals,
+    so no tolerance enters the result -- mirroring the exact-verification idiom
+    used by `sums_to_anticanonical` below.
+
+    Solving rather than trusting `lstsq`'s own `residuals` output is essential:
+    that array is empty for square and rank-deficient systems, which is every
+    maximal cone of a simplicial fan, so `sum(residuals)` is 0 unconditionally
+    and would accept an inconsistent system.
+
+    **Arguments:**
+    - `toric_fan`: The toric fan.
+    - `weights`: Divisor coefficients in the toric prime divisor basis.
+    - `cone`: The cone to solve on.
+
+    **Returns:**
+    A list of `Fraction`s, or `None` when the cone admits no local data.
+    """
+    arr = np.asarray(toric_fan.vectors(cone))
+    rhs = np.asarray(weights)[np.array(cone) - 1]
+
+    approx, *_ = np.linalg.lstsq(arr.astype(float), rhs.astype(float), rcond=None)
+    y = [Fraction(float(v)).limit_denominator(_MAX_CARTIER_DENOMINATOR) for v in approx]
+
+    # exact check: arr @ y == rhs over the rationals, or there is no local data
+    for row, b in zip(arr.tolist(), rhs.tolist()):
+        if sum(c * yi for c, yi in zip(row, y)) != b:
+            return None
+
+    return [-yi for yi in y]
+
+
+def _cartier_index_of(local_data):
+    """
+    **Description:**
+    The smallest positive integer clearing every denominator in `local_data`.
+
+    Computed from the denominators directly. Scanning multipliers and testing
+    `np.isclose(n * y, round(n * y))` cannot work: `isclose` is relative, so its
+    tolerance grows with `n` until every value is accepted -- returning 169 for
+    an irrational input, and 999973 rather than 999983 for `y = 1/999983`.
+
+    **Arguments:**
+    - `local_data`: Local Cartier data, as `Fraction`s.
+
+    **Returns:**
+    *(int)* The local Cartier index.
+    """
+    return math.lcm(*(yi.denominator for yi in local_data))
+
+
 def Cartier_index(toric_fan, weights):
     """
     **Description:**
@@ -866,17 +932,10 @@ def Cartier_index(toric_fan, weights):
     weights = np.array(weights)
     index_data = []
     for c in toric_fan.cones():
-        arr = toric_fan.vectors(c)
-        cone_gen_weights = weights[np.array(c) - 1]
-        least_sq = np.linalg.lstsq(arr, cone_gen_weights)
-        y = -least_sq[0]
-        res = sum(least_sq[1])
-        if res > 1e-10:
+        local_data = _local_cartier_data(toric_fan, weights, c)
+        if local_data is None:
             return None
-        cone_index = 1
-        while np.all(np.isclose(cone_index * y, np.round(cone_index * y))) == False:
-            cone_index += 1
-        index_data.append(cone_index)
+        index_data.append(_cartier_index_of(local_data))
     return math.lcm(*index_data)
 
 
@@ -903,22 +962,20 @@ def is_Cartier(toric_fan, weights, return_Q_Cartier_data=False, decimals=10):
     cartier_data = []
     is_cartier = True
     for c in toric_fan.cones():
-        arr = toric_fan.vectors(c)
-        cone_gen_weights = weights[np.array(c) - 1]
-        least_sq = np.linalg.lstsq(arr, cone_gen_weights)
-        y = -least_sq[0]
-        res = sum(least_sq[1])
-        if np.all(np.isclose(y, np.round(y))) and res < 1e-10:
-            cartier_data.append(np.round(y).astype(int))
-        else:
-            is_cartier = False
-            if return_Q_Cartier_data:
-                if res < 1e-10:
-                    cartier_data.append(np.round(y, decimals=decimals))
-                else:
-                    cartier_data.append(None)
-            else:
-                return (False, None)
+        local_data = _local_cartier_data(toric_fan, weights, c)
+
+        if local_data is not None and _cartier_index_of(local_data) == 1:
+            cartier_data.append(np.array([int(yi) for yi in local_data]))
+            continue
+
+        is_cartier = False
+        if not return_Q_Cartier_data:
+            return (False, None)
+        cartier_data.append(
+            None
+            if local_data is None
+            else np.round([float(yi) for yi in local_data], decimals=decimals)
+        )
 
     return (is_cartier, cartier_data)
 

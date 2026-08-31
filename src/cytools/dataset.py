@@ -10,28 +10,20 @@
 Canonical access to the Kreuzer-Skarke 4D and Schöller-Skarke 5D reflexive
 polytope databases, stored as Parquet files.
 
-Two access modes are supported for each database:
+Reads from a directory on the user's machine, supplied via the ``db_dir``
+parameter or an environment variable:
 
-**Local** (default)
-    Reads Parquet files from a directory on the user's machine.  The directory
-    must be supplied via the ``db_dir`` parameter or an environment variable:
+- 4D: ``CYTOOLS_DB_DIR``
+- 5D: ``CYTOOLS_5D_DB_DIR``
 
-    - 4D: ``CYTOOLS_DB_DIR``
-    - 5D: ``CYTOOLS_5D_DB_DIR``
-
-**Streaming**
-    Downloads individual Parquet files on demand from HuggingFace and caches
-    them under ``~/.cache/huggingface/hub/``.  Requires the ``huggingface_hub``
-    package (``pip install 'cytools[streaming]'``).  Pass ``stream=True`` and,
-    if needed, a HuggingFace token via ``hf_token=`` or the ``HF_TOKEN``
-    environment variable.
-
-    - 4D repo: ``calabi-yau-data/polytopes-4d``
-    - 5D repo: ``calabi-yau-data/ws-5d``
+The 4D API prefers explicitly configured local shards. If no local directory
+is configured, it downloads only the requested shards from Hugging Face and
+reuses its local cache. Install the `streaming` or `notebook` extra for that
+zero-configuration fallback. The 5D API remains local-only.
 
 ----
 
-**4D file naming convention** (local)::
+**4D file naming convention**::
 
     polytopes-4d-{NN}-vertices.parquet   (NN = 05 … 36)
 
@@ -104,13 +96,6 @@ DB_DIR: Path | None = Path(_db_dir_env) if _db_dir_env else None
 
 _db_5d_dir_env = os.environ.get("CYTOOLS_5D_DB_DIR")
 DB_5D_DIR: Path | None = Path(_db_5d_dir_env) if _db_5d_dir_env else None
-
-# ---------------------------------------------------------------------------
-# HuggingFace repository identifiers
-# ---------------------------------------------------------------------------
-
-_HF_4D_REPO = "calabi-yau-data/polytopes-4d"
-_HF_5D_REPO = "calabi-yau-data/ws-5d"
 
 # ---------------------------------------------------------------------------
 # Record types
@@ -220,22 +205,34 @@ def _resolve_dir(
     )
 
 
-def _hf_download(repo_id: str, filename: str, token: str | None) -> Path:
-    """
-    Download *filename* from a HuggingFace dataset repo to the local HF cache
-    and return the local path.  Repeated calls for the same file are instant
-    (HF cache hit).
+#: HuggingFace dataset repositories holding the Parquet shards. Used only as a
+#: fallback: a shard present locally is never re-fetched.
+_HF_4D_REPO = "calabi-yau-data/polytopes-4d"
+_HF_5D_REPO = "calabi-yau-data/ws-5d"
 
-    Requires ``huggingface_hub`` (imported lazily so that the local-Parquet
-    path never depends on it).
+
+def _hf_download(repo_id: str, filename: str, token: str | None = None) -> Path:
+    """
+    Fetch one Parquet shard from a HuggingFace dataset repo, returning its
+    local path.
+
+    Shards are fetched individually rather than as a whole snapshot: the 4D
+    database is ~16 GB, but a query restricted by vertex count needs only the
+    files for those counts. Repeat calls are an HF cache hit, so this is paid
+    once per shard, not once per query.
+
+    `huggingface_hub` is imported lazily, so the local-Parquet path never
+    depends on it being installed.
     """
     try:
-        from huggingface_hub import hf_hub_download  # ty: ignore[unresolved-import]
+        from huggingface_hub import hf_hub_download
     except ImportError as e:
         raise ImportError(
-            "Downloading datasets requires huggingface_hub. Install it with "
-            "`pip install 'cytools[streaming]'` (or `cytools[notebook]`), or "
-            "point CYTOOLS_DB_DIR at a local directory of Parquet files."
+            "No local copy of this database shard was found, and downloading "
+            "one requires huggingface_hub. Install it with "
+            "`pip install 'cytools-workbench[streaming]'`, or point "
+            "CYTOOLS_DB_DIR at a "
+            "directory of Parquet files."
         ) from e
 
     return Path(
@@ -243,7 +240,7 @@ def _hf_download(repo_id: str, filename: str, token: str | None) -> Path:
             repo_id=repo_id,
             filename=filename,
             repo_type="dataset",
-            token=token,
+            token=token or os.environ.get("HF_TOKEN"),
         )
     )
 
@@ -255,6 +252,60 @@ def _hf_4d_filename(n_verts: int) -> str:
 def _hf_5d_filename(file_idx: int, reflexive: bool) -> str:
     subset = "reflexive" if reflexive else "non-reflexive"
     return f"{subset}/full/{file_idx:04d}.parquet"
+
+
+def _hf_4d_vertex_counts(token: str | None = None) -> list[int]:
+    """The vertex counts the remote 4D repository actually publishes."""
+    try:
+        from huggingface_hub import list_repo_files
+    except ImportError as e:
+        raise ImportError(
+            "No local 4D polytope database was found, and listing the remote "
+            "one requires huggingface_hub. Install it with "
+            "`pip install 'cytools-workbench[streaming]'`, or set "
+            "CYTOOLS_DB_DIR."
+        ) from e
+
+    published = set(list_repo_files(_HF_4D_REPO, repo_type="dataset", token=token))
+    return [n for n in range(5, 37) if _hf_4d_filename(n) in published]
+
+
+def _optional_dir(
+    db_dir: Path | str | None,
+    global_default: Path | None,
+    env_var: str,
+) -> Path | None:
+    """
+    Resolve a database directory, or `None` when none is configured.
+
+    The strict counterpart, :func:`_resolve_dir`, raises instead. This one is
+    for the 4D path, where "no local directory" is not an error: individual
+    shards are fetched on demand.
+    """
+    if db_dir is not None:
+        return Path(db_dir)
+    if global_default is not None:
+        return global_default
+    env = os.environ.get(env_var)
+    return Path(env) if env else None
+
+
+def _available_4d_vertex_counts(
+    resolved_dir: Path | None, hf_token: str | None = None
+) -> list[int]:
+    """
+    The vertex counts to scan when the caller did not name any.
+
+    A local directory holding any shards is authoritative -- a partially
+    populated one is not silently completed from the network, because that
+    would make the contents of a scan depend on connectivity. Only a missing
+    or empty directory consults the remote repository.
+    """
+    if resolved_dir is not None:
+        local = _all_vertex_counts(resolved_dir)
+        if local:
+            return local
+    return _hf_4d_vertex_counts(hf_token)
 
 
 def _weights_to_vertices(weights: np.ndarray) -> np.ndarray:
@@ -553,24 +604,21 @@ class PolytopeBatch:
         )
 
 
-def _resolve_4d_path(vc, resolved_dir, stream, hf_token) -> Path:
+def _resolve_4d_path(vc, resolved_dir, hf_token: str | None = None) -> Path:
     """Resolve one Parquet path when its generator is first consumed.
 
-    Keeping this lazy matters for notebooks using ``stream=True``: a small
-    capped query can finish without downloading every vertex-count file.
-    """
-    if stream:
-        return _hf_download(_HF_4D_REPO, _hf_4d_filename(vc), hf_token)
+    Lazy so that a capped query does not touch every vertex-count file, and so
+    that a download is only ever paid for a shard the query actually reads.
 
-    assert resolved_dir is not None
-    path = _db_path(vc, resolved_dir)
-    if not path.exists():
-        raise FileNotFoundError(
-            f"Polytope database file not found: {path}\n"
-            "Set CYTOOLS_DB_DIR to the directory containing the .parquet "
-            "files, or pass stream=True to download from HuggingFace."
-        )
-    return path
+    A shard present locally is used as-is and never re-fetched; only a missing
+    one falls back to HuggingFace.
+    """
+    if resolved_dir is not None:
+        path = _db_path(vc, resolved_dir)
+        if path.exists():
+            return path
+
+    return _hf_download(_HF_4D_REPO, _hf_4d_filename(vc), hf_token)
 
 
 def _dnf_constraints(dnf) -> list[tuple]:
@@ -609,6 +657,85 @@ def _row_group_can_match(metadata, rg_index: int, constraints, col_index) -> boo
     return True
 
 
+_MATCH_COUNT_CACHE: dict = {}
+
+
+def _file_weights(counts, dnf, resolved_dir) -> list[int]:
+    """How many matching rows each vertex-count file holds.
+
+    Needed because a capped scan must apportion `n` in proportion to what each
+    file actually contains. Splitting `n` evenly instead skews the sample badly:
+    measured at h11(N)=200, where the population is 6v:5 ... 10v:174 ... 15v:5,
+    an even split exhausted the small files (3.5x over-represented) while 10v
+    returned 23 rows where 49 were due (0.47x).
+
+    With no column filter the footers give exact totals for free. With a filter
+    the filter columns are read once per file -- pruned by row-group statistics
+    and memoised, since one scan may ask repeatedly.
+    """
+    weights = []
+    for vc in counts:
+        try:
+            path = _resolve_4d_path(vc, resolved_dir)
+        except Exception:
+            weights.append(0)
+            continue
+
+        if not dnf:
+            try:
+                weights.append(pq.read_metadata(path).num_rows)
+            except Exception:
+                weights.append(0)
+            continue
+
+        key = (str(path), repr(dnf))
+        if key in _MATCH_COUNT_CACHE:
+            weights.append(_MATCH_COUNT_CACHE[key])
+            continue
+
+        constraints = _dnf_constraints(dnf)
+        cols = sorted({c for c, _, _ in constraints})
+        try:
+            pf = pq.ParquetFile(path)
+            md = pf.metadata
+            col_index = {md.schema.column(j).name: j for j in range(md.num_columns)}
+            total = 0
+            for rg in range(md.num_row_groups):
+                if not _row_group_can_match(md, rg, constraints, col_index):
+                    continue
+                tbl = pf.read_row_group(rg, columns=cols)
+                mask = None
+                for col, op, val in constraints:
+                    arr = tbl.column(col).to_numpy(zero_copy_only=False)
+                    hit = (arr == val) if op == "=" else np.isin(arr, np.asarray(val))
+                    mask = hit if mask is None else (mask & hit)
+                total += int(mask.sum()) if mask is not None else tbl.num_rows
+        except Exception:
+            total = 0
+        _MATCH_COUNT_CACHE[key] = total
+        weights.append(total)
+    return weights
+
+
+def _apportion(n: int, weights) -> list[int]:
+    """Split *n* across files in proportion to *weights* (largest remainder)."""
+    total = sum(weights)
+    if total <= 0:
+        base, extra = divmod(n, len(weights))
+        return [base + (1 if i < extra else 0) for i in range(len(weights))]
+
+    exact = [n * w / total for w in weights]
+    budgets = [int(x) for x in exact]
+    short = n - sum(budgets)
+    if short > 0:
+        order = sorted(
+            range(len(weights)), key=lambda i: exact[i] - budgets[i], reverse=True
+        )
+        for i in order[:short]:
+            budgets[i] += 1
+    return budgets
+
+
 def _iter_record_batches(
     *,
     counts,
@@ -621,8 +748,6 @@ def _iter_record_batches(
     n,
     seed,
     resolved_dir,
-    stream,
-    hf_token,
     batch_size: int,
 ):
     """Stream matching rows as Arrow record batches, bounded by *batch_size*.
@@ -656,11 +781,11 @@ def _iter_record_batches(
     expr = pq.filters_to_expression(dnf) if dnf else None
 
     def one_file(idx, vc):
-        path = _resolve_4d_path(vc, resolved_dir, stream, hf_token)
+        path = _resolve_4d_path(vc, resolved_dir)
         file_rng = np.random.default_rng(None if seed is None else seed + idx)
         yield from _stream_one_file(path, dnf, expr, file_rng, batch_size)
 
-    # Generators resolve their files on first use. In particular, streaming a
+    # Generators resolve their files on first use, so a capped scan does not
     # five-row sample from 32 requested vertex counts downloads at most five
     # files unless one of those files has no matching rows.
     gens = [one_file(idx, vc) for idx, vc in enumerate(counts)]
@@ -687,8 +812,8 @@ def _iter_record_batches(
     # small `n` is served entirely out of paths[0]: the first file yields a
     # full batch_size batch, which is sliced down to n and exhausts the budget,
     # so `n_vertices=[13, 14, 15], n=16` returns sixteen 13-vertex polytopes.
-    base, extra = divmod(n, len(gens))
-    budgets = [base + (1 if i < extra else 0) for i in range(len(gens))]
+    weights = _file_weights(counts, dnf, resolved_dir)
+    budgets = _apportion(n, weights)
     produced = [0] * len(gens)
     exhausted = [False] * len(gens)
     total = 0
@@ -804,49 +929,6 @@ def _stream_one_file(path: Path, dnf, expr, rng, batch_size: int):
                 yield batch
 
 
-def _scan_table(
-    *,
-    counts,
-    h11,
-    h12,
-    chi,
-    n_facets,
-    n_points,
-    n_dual_points,
-    n,
-    seed,
-    resolved_dir,
-    stream,
-    hf_token,
-) -> pa.Table:
-    """Collect a scan into one table.
-
-    For :func:`load_polytopes`, which materializes a Polytope per row anyway
-    and so is already bounded by the object graph rather than by the Arrow
-    buffers. Prefer :func:`scan_batches` at scale.
-    """
-    batches = list(
-        _iter_record_batches(
-            counts=counts,
-            h11=h11,
-            h12=h12,
-            chi=chi,
-            n_facets=n_facets,
-            n_points=n_points,
-            n_dual_points=n_dual_points,
-            n=n,
-            seed=seed,
-            resolved_dir=resolved_dir,
-            stream=stream,
-            hf_token=hf_token,
-            batch_size=4096,
-        )
-    )
-    if not batches:
-        return pa.table({col: [] for col in _LOAD_COLUMNS})
-    return pa.Table.from_batches(batches)
-
-
 def scan_batches(
     n_vertices: int | Iterable[int] | None = None,
     h11: int | Iterable[int] | None = None,
@@ -859,8 +941,6 @@ def scan_batches(
     batch_size: int = 4096,
     seed: int = 42,
     db_dir: Path | str | None = None,
-    stream: bool = False,
-    hf_token: str | None = None,
 ):
     """
     **Description:**
@@ -885,9 +965,8 @@ def scan_batches(
     - `n`: Total rows to sample. `None` scans everything matching.
     - `batch_size`: Rows per yielded batch.
     - `seed`: Sampling seed.
-    - `db_dir`: Local database directory. Defaults to `CYTOOLS_DB_DIR`.
-    - `stream`: Download from HuggingFace instead of reading locally.
-    - `hf_token`: HuggingFace token, when streaming.
+    - `db_dir`: Local database directory. Defaults to `CYTOOLS_DB_DIR`; when
+        neither is set, requested 4D shards are downloaded and cached.
 
     **Returns:**
     *(generator)* Yields :class:`PolytopeBatch`.
@@ -911,18 +990,10 @@ def scan_batches(
     if n == 0:
         return
 
-    resolved_dir = (
-        _resolve_dir(db_dir, DB_DIR, "CYTOOLS_DB_DIR", "4D polytope")
-        if not stream
-        else None
-    )
+    resolved_dir = _optional_dir(db_dir, DB_DIR, "CYTOOLS_DB_DIR")
 
     if n_vertices is None:
-        if stream:
-            counts = list(range(5, 37))
-        else:
-            assert resolved_dir is not None
-            counts = _all_vertex_counts(resolved_dir)
+        counts = _available_4d_vertex_counts(resolved_dir)
     elif isinstance(n_vertices, (int, np.integer)):
         counts = [int(n_vertices)]
     else:
@@ -939,8 +1010,6 @@ def scan_batches(
         n=n,
         seed=seed,
         resolved_dir=resolved_dir,
-        stream=stream,
-        hf_token=hf_token,
         batch_size=batch_size,
     ):
         yield _table_to_batch(pa.Table.from_batches([record_batch]))
@@ -1071,26 +1140,6 @@ def _load_table(
     return pa.concat_tables(batches)
 
 
-def _table_to_records(table: pa.Table) -> list[PolytopeRecord]:
-    if not len(table):
-        return []
-    verts_list = _extract_vertices_from_table(table)
-    vc = table.column("vertex_count").to_numpy(zero_copy_only=False)
-    h11 = table.column("h11").to_numpy(zero_copy_only=False)
-    h12 = table.column("h12").to_numpy(zero_copy_only=False)
-    ec = table.column("euler_characteristic").to_numpy(zero_copy_only=False)
-    return [
-        PolytopeRecord(
-            polytope=Polytope(verts),
-            vertex_count=int(v),
-            h11=int(h),
-            h12=int(h2),
-            euler_characteristic=int(e),
-        )
-        for verts, v, h, h2, e in zip(verts_list, vc, h11, h12, ec)
-    ]
-
-
 # ---------------------------------------------------------------------------
 # 5D internal helpers
 # ---------------------------------------------------------------------------
@@ -1193,8 +1242,6 @@ def load_polytopes(
     n: int | None = None,
     seed: int = 42,
     db_dir: Path | str | None = None,
-    stream: bool = False,
-    hf_token: str | None = None,
 ) -> list[PolytopeRecord]:
     """
     Load reflexive 4D polytopes from the Kreuzer-Skarke database.
@@ -1214,17 +1261,9 @@ def load_polytopes(
         sample over every matching row. ``None`` returns all matches.
     - `seed`: RNG seed for reproducible row-group ordering and file
         interleaving (only used when ``n`` is set).
-    - `db_dir`: Path to the local directory containing the Parquet files.
-        Ignored when ``stream=True``.  If omitted, falls back to
-        ``$CYTOOLS_DB_DIR``.  A :exc:`ValueError` is raised if neither is set
-        and ``stream=False``.
-    - `stream`: If ``True``, download files on demand from HuggingFace
-        (``calabi-yau-data/polytopes-4d``) instead of reading from a local
-        directory.  Requires ``huggingface_hub`` (``pip install
-        'cytools[streaming]'``).
-    - `hf_token`: HuggingFace API token for authenticated access.  Only used
-        when ``stream=True``.  Can also be set via the ``HF_TOKEN`` environment
-        variable.
+    - `db_dir`: Path to the local directory containing the Parquet files. If
+        omitted, falls back to ``$CYTOOLS_DB_DIR``, then to cached on-demand
+        downloads from Hugging Face.
 
     **Returns:**
     A list of :class:`PolytopeRecord` named tuples.
@@ -1237,7 +1276,6 @@ def load_polytopes(
     recs = load_polytopes(h11=3, n=10, db_dir="/data/polytopes-4d")
 
     # Streaming
-    recs = load_polytopes(h11=3, n=10, stream=True)
     polys = [r.polytope for r in recs]
     ```
     """
@@ -1246,40 +1284,26 @@ def load_polytopes(
     if n == 0:
         return []
 
-    # Resolve local directory once (ignored when streaming)
-    resolved_dir = (
-        _resolve_dir(db_dir, DB_DIR, "CYTOOLS_DB_DIR", "4D polytope")
-        if not stream
-        else None
-    )
-
-    # Normalise n_vertices → list
-    if n_vertices is None:
-        if not stream:
-            assert resolved_dir is not None
-            counts = _all_vertex_counts(resolved_dir)
-        else:
-            counts = list(range(5, 37))
-    elif isinstance(n_vertices, (int, np.integer)):
-        counts = [int(n_vertices)]
-    else:
-        counts = list(n_vertices)
-
-    table = _scan_table(
-        counts=counts,
-        h11=h11,
-        h12=h12,
-        chi=chi,
-        n_facets=n_facets,
-        n_points=n_points,
-        n_dual_points=n_dual_points,
-        n=n,
-        seed=seed,
-        resolved_dir=resolved_dir,
-        stream=stream,
-        hf_token=hf_token,
-    )
-    return _table_to_records(table)
+    # Materialized from `scan_batches` rather than through a second query
+    # path: one core means a filter or sampling fix cannot land in one entry
+    # point and miss the other. Records are built per batch, so peak memory is
+    # one batch rather than the whole result concatenated into a single table.
+    return [
+        batch.record(i)
+        for batch in scan_batches(
+            n_vertices=n_vertices,
+            h11=h11,
+            h12=h12,
+            chi=chi,
+            n_facets=n_facets,
+            n_points=n_points,
+            n_dual_points=n_dual_points,
+            n=n,
+            seed=seed,
+            db_dir=db_dir,
+        )
+        for i in range(len(batch))
+    ]
 
 
 # ---------------------------------------------------------------------------
@@ -1298,8 +1322,6 @@ def load_5d_polytopes(
     n: int | None = None,
     seed: int = 42,
     db_dir: Path | str | None = None,
-    stream: bool = False,
-    hf_token: str | None = None,
 ) -> list[PolytopeRecord5D]:
     """
     Load 5D polytopes from the Schöller-Skarke weight-system database.
@@ -1330,10 +1352,7 @@ def load_5d_polytopes(
             {db_dir}/reflexive/0000.parquet … 0399.parquet
             {db_dir}/non-reflexive/0000.parquet … 0405.parquet
 
-        Ignored when ``stream=True``.  Falls back to ``$CYTOOLS_5D_DB_DIR``.
-    - `stream`: If ``True``, download files on demand from HuggingFace
-        (``calabi-yau-data/ws-5d``).  Requires ``huggingface_hub``.
-    - `hf_token`: HuggingFace API token.  Only used when ``stream=True``.
+        Falls back to ``$CYTOOLS_5D_DB_DIR``.
         Can also be set via ``HF_TOKEN``.
 
     **Returns:**
@@ -1349,7 +1368,6 @@ def load_5d_polytopes(
     recs = load_5d_polytopes(h11=10, n=5, db_dir="/data/ws-5d")
 
     # Streaming non-reflexive
-    recs = load_5d_polytopes(reflexive=False, n=20, stream=True)
     print(recs[0].polytope)
     ```
     """
@@ -1368,21 +1386,14 @@ def load_5d_polytopes(
     )
 
     # Resolve file list
-    if stream:
-        n_files = 400 if reflexive else 406
-        file_indices = list(range(n_files))
-    else:
-        resolved_dir = _resolve_dir(
-            db_dir, DB_5D_DIR, "CYTOOLS_5D_DB_DIR", "5D polytope"
+    resolved_dir = _resolve_dir(db_dir, DB_5D_DIR, "CYTOOLS_5D_DB_DIR", "5D polytope")
+    file_indices = _all_5d_file_indices(reflexive, resolved_dir)
+    if not file_indices:
+        subset = "reflexive" if reflexive else "non-reflexive"
+        raise FileNotFoundError(
+            f"No 5D Parquet files found under {resolved_dir / subset}\n"
+            "Set CYTOOLS_5D_DB_DIR to a directory of 5D Parquet files."
         )
-        file_indices = _all_5d_file_indices(reflexive, resolved_dir)
-        if not file_indices:
-            subset = "reflexive" if reflexive else "non-reflexive"
-            raise FileNotFoundError(
-                f"No 5D Parquet files found under {resolved_dir / subset}\n"
-                f"Set CYTOOLS_5D_DB_DIR or pass stream=True to download from "
-                f"HuggingFace."
-            )
 
     cache_key = (
         reflexive,
@@ -1394,8 +1405,7 @@ def load_5d_polytopes(
         n_dual_points,
         n,
         seed,
-        stream,
-        str(db_dir) if not stream else None,
+        str(db_dir),
     )
     if cache_key in _CACHE_5D:
         return _CACHE_5D[cache_key]
@@ -1407,12 +1417,9 @@ def load_5d_polytopes(
     tables: list[pa.Table] = []
     collected = 0
     for idx in file_indices:
-        if stream:
-            path = _hf_download(_HF_5D_REPO, _hf_5d_filename(idx, reflexive), hf_token)
-        else:
-            path = _5d_path(idx, reflexive, resolved_dir)
-            if not path.exists():
-                continue  # sparse local download — skip missing files
+        path = _5d_path(idx, reflexive, resolved_dir)
+        if not path.exists():
+            continue  # sparse local copy — skip missing files
 
         remaining = (
             (n - collected) if (n is not None and arrow_filter is None) else None

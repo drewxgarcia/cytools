@@ -35,7 +35,7 @@ def _vertices(n=4, n_vertices=None):
         if not out:
             pytest.skip("no rows returned from the local KS database")
         return out
-    except ValueError as e:
+    except (ImportError, ValueError) as e:
         pytest.skip(f"no local KS database configured: {e}")
 
 
@@ -753,3 +753,96 @@ def test_raising_triangulations_reuses_the_earlier_ones(derived):
     )
     assert second["skipped"] == 12, "did not reuse the first two triangulations"
     assert second["computed"] == 12, "did not compute exactly the two new ones"
+
+
+# ---------------------------------------------------------------------------
+# Volumes are contracted from a native sparse tensor, not a dense (h11)^3 one
+# ---------------------------------------------------------------------------
+
+
+def test_contract_kappa_handles_every_multiplicity_class():
+    """The two two-equal key shapes need different ordering sets.
+
+    Keys are sorted, so a repeated pair sits at (0,1) -> (x,x,y) or at (1,2) ->
+    (x,y,y). Applying one ordering set to both double-counts one ordering and
+    drops another; that produced divisor volumes wrong by 8e6 relative.
+    Checked here against a dense contraction built from the same data.
+    """
+    from cytools.landscape import _PERMS_3, _contract_kappa
+
+    n = 5
+    rng = np.random.default_rng(0)
+    keys = [(0, 1, 2), (1, 1, 3), (0, 2, 2), (4, 4, 4), (0, 1, 1), (2, 3, 4)]
+    vals = rng.normal(size=len(keys))
+    idx = np.array(keys, dtype=np.int32)
+    val = np.asarray(vals, dtype=np.float64)
+    t = rng.normal(size=n) + 3.0
+
+    # dense reference: fill every distinct permutation with the same value
+    dense = np.zeros((n, n, n))
+    for key, v in zip(keys, vals):
+        for p in _PERMS_3:
+            dense[key[p[0]], key[p[1]], key[p[2]]] = v
+    expected = (np.tensordot(dense, t, axes=([-1], [0])) @ t) / 2
+
+    got = _contract_kappa(idx, val, t, n)
+    assert np.allclose(got, expected, rtol=1e-12, atol=1e-12), f"{got} vs {expected}"
+
+
+def test_volume_columns_match_the_library(derived):
+    """Differential: the sparse path must reproduce cytools' dense result."""
+    verts = _vertices(40, n_vertices=[13])
+    checked = 0
+    for v in verts:
+        if checked >= 3:
+            break
+        g = Geometry(v)
+        try:
+            if not g.is_favorable or g.tip is None:
+                continue
+        except Exception:
+            continue
+        ref_dv = np.asarray(g.cy.compute_divisor_volumes(g.moduli_point), dtype=float)
+        ref_cv = float(g.cy.compute_cy_volume(g.moduli_point))
+        assert np.allclose(g.divisor_volumes, ref_dv, rtol=1e-8, atol=1e-8)
+        assert abs(g.cy_volume - ref_cv) <= 1e-8 * max(abs(ref_cv), 1.0)
+        checked += 1
+    if checked == 0:
+        pytest.skip("no favorable geometry with a tip in the sample")
+
+
+def test_both_volume_columns_share_one_contraction(monkeypatch):
+    """cy_volume is tau.t/3, so asking for both must contract only once.
+
+    The sparse route is forced here: it is gated on h11 >= 150 in normal use,
+    and the geometries cheap enough to test with sit well below that.
+    """
+    import cytools.landscape as lm
+
+    monkeypatch.setattr(lm, "_SPARSE_KAPPA_MIN_H11", 0)
+
+    verts = None
+    for v in _vertices(40, n_vertices=[13]):
+        g = Geometry(v)
+        try:
+            if g.is_favorable and g.tip is not None:
+                verts = v
+                break
+        except Exception:
+            continue
+    if verts is None:
+        pytest.skip("no favorable geometry with a tip in the sample")
+
+    calls = []
+    real = lm._contract_kappa
+
+    def counting(*a, **k):
+        calls.append(1)
+        return real(*a, **k)
+
+    monkeypatch.setattr(lm, "_contract_kappa", counting)
+
+    g = Geometry(verts)
+    g.divisor_volumes
+    g.cy_volume
+    assert len(calls) == 1, f"contracted {len(calls)} times"

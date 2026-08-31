@@ -64,8 +64,6 @@ def load_tier(
     name: str,
     *,
     db_dir: str | Path | None = None,
-    stream: bool = False,
-    hf_token: str | None = None,
 ) -> list[PolytopeRecord]:
     """Load the benchmark sample described by ``name``."""
     try:
@@ -80,11 +78,9 @@ def load_tier(
             n_vertices=tier.vertex_counts,
             n=size,
             db_dir=db_dir,
-            stream=stream,
-            hf_token=hf_token,
         )
 
-    counts = list(range(5, 37)) if stream else _local_vertex_counts(db_dir)
+    counts = _local_vertex_counts(db_dir)
     records: list[PolytopeRecord] = []
     for vertex_count in counts:
         records.extend(
@@ -92,8 +88,6 @@ def load_tier(
                 n_vertices=vertex_count,
                 n=size,
                 db_dir=db_dir,
-                stream=stream,
-                hf_token=hf_token,
             )
         )
     return records

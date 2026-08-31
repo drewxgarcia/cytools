@@ -23,10 +23,12 @@
 import copy
 import fractions
 import functools
+import importlib.util
 import io
 import itertools
 import math
 import re
+import warnings
 from collections.abc import Generator
 from typing import TYPE_CHECKING, Literal, overload
 
@@ -772,6 +774,16 @@ def finalize_intersection_numbers(
 
 # solve systems
 # -------------
+class PerformanceWarning(UserWarning):
+    """A computation is correct but is taking a materially slower path.
+
+    Raised when an optional accelerated backend is unavailable and CYTools
+    falls back to a slower one. Silence it with::
+
+        warnings.filterwarnings("ignore", category=cytools.PerformanceWarning)
+    """
+
+
 def solve_linear_system(
     M: sp.csr_matrix,
     C: list[float],
@@ -791,7 +803,8 @@ def solve_linear_system(
         When set to "all" it tries the installed backends in order and returns
         the first solution that passes the residual check. "sksparse" uses an
         optional CHOLMOD Cholesky factorization of the normal equations and is
-        the faster of the two; install it with ``cytools[performance]``.
+        the faster of the two; install it with
+        ``cytools-workbench[performance]``.
         "scipy" uses SuperLU and is always available as the fallback.
     - `check`: Whether to explicitly check the solution to the linear system.
     - `backend_error_tol`: Error tolerance for the solution.
@@ -835,11 +848,21 @@ def solve_linear_system(
             except ImportError:
                 if s != "sksparse":
                     raise
-                if verbosity >= 1:
-                    print(
-                        "Linear backend unavailable: install "
-                        "cytools[performance] for CHOLMOD; using scipy."
-                    )
+                # Falling back is correct but expensive, and it used to be
+                # silent: CHOLMOD solves these normal equations roughly 20x
+                # faster than SuperLU, which is ~3x on the whole per-geometry
+                # payload. Warn rather than print, so it surfaces once per
+                # process without a verbosity flag nobody sets in a sweep.
+                warnings.warn(
+                    "CHOLMOD is unavailable, so sparse solves fall back to "
+                    "SciPy's SuperLU. This is correct but roughly 20x slower "
+                    "on the intersection-number systems, about 3x on the "
+                    "whole per-geometry payload. Install it with "
+                    '`pip install "cytools-workbench[performance]"` (needs SuiteSparse '
+                    "headers). Pass backend='scipy' to silence this.",
+                    PerformanceWarning,
+                    stacklevel=2,
+                )
                 continue
             if solution is not None:
                 return solution
@@ -859,7 +882,8 @@ def solve_linear_system(
         except ImportError as e:
             raise ImportError(
                 "The 'sksparse' backend requires scikit-sparse and SuiteSparse; "
-                "install the 'cytools[performance]' extra or use backend='scipy'."
+                "install the 'cytools-workbench[performance]' extra or use "
+                "backend='scipy'."
             ) from e
 
         Mt = M.transpose()
@@ -873,9 +897,16 @@ def solve_linear_system(
                 print(f"Linear backend error: sksparse failed ({e}).")
 
     elif backend == "scipy":
+        # SuperLU LU on a symmetric positive-definite system -- the wrong tool,
+        # but the only one always available. Measured on real intersection-number
+        # systems (h11(N)=150 and 300), "MMD_ATA" beats the COLAMD default by
+        # ~1.2x at equal residual, while "MMD_AT_PLUS_A" and "NATURAL" are 45x
+        # and 100x *slower*. Do not "improve" this ordering without measuring.
         try:
             solution = np.asarray(
-                sp.linalg.spsolve(M.transpose() * M, -M.transpose() * C)
+                sp.linalg.spsolve(
+                    M.transpose() * M, -M.transpose() * C, permc_spec="MMD_ATA"
+                )
             ).ravel()
         except Exception:
             if verbosity >= 1:
@@ -1363,48 +1394,56 @@ def polytope_generator(
         l = in_string.pop(0)
 
     if format == "ws":
-        buf = io.StringIO(input)
+        # Read the weight systems from the input itself. For a file that means
+        # the file's contents: `io.StringIO(input)` here would wrap the *file
+        # name*, feeding the path string to PALP as though it were a weight
+        # system. `in_file` is already positioned past its first line, so it is
+        # rewound rather than reopened.
+        if input_type == "file":
+            in_file.seek(0)
+            buf = in_file
+        else:
+            buf = io.StringIO(input)
 
-        # read the polytopes as weight systems
-        while (limit is None) or (n_yielded < limit):
-            # pass line to PALP
-            p = pypalp.Polytope(buf.readline())
-            vert = p.vertices()
+        try:
+            # read the polytopes as weight systems
+            while (limit is None) or (n_yielded < limit):
+                # a blank line is end-of-input; PALP aborts the process rather
+                # than raising if it is handed one, so stop before that
+                line = buf.readline()
+                if not line.strip():
+                    break
 
-            # ensure reasonable shape
-            if len(vert.shape) == 0:
-                break
-            if vert.shape[0] < vert.shape[1]:
-                vert = vert.T
+                # pass line to PALP
+                p = pypalp.Polytope(line)
+                vert = p.vertices()
 
-            # build the Polytope
-            p = Polytope(
-                vert, backend=backend, deterministic_glsm_basis=deterministic_glsm_basis
-            )
+                # ensure reasonable shape
+                if len(vert.shape) == 0:
+                    break
+                if vert.shape[0] < vert.shape[1]:
+                    vert = vert.T
 
-            if (favorable_lattice is None) or (
-                p.is_favorable(lattice=favorable_lattice) == favorable
-            ):
-                n_yielded += 1
-                yield (p.dual() if dualize else p)
+                # build the Polytope
+                p = Polytope(
+                    vert,
+                    backend=backend,
+                    deterministic_glsm_basis=deterministic_glsm_basis,
+                )
 
-            # get next line
+                if (favorable_lattice is None) or (
+                    p.is_favorable(lattice=favorable_lattice) == favorable
+                ):
+                    n_yielded += 1
+                    yield (p.dual() if dualize else p)
+        finally:
             if input_type == "file":
-                l = in_file.readline()
+                in_file.close()
 
-                for i in range(5):
-                    if l != "":
-                        break
-                    l = in_file.readline()
-                else:
-                    in_file.close()
-                    break
-            else:
-                if len(in_string) > 0:
-                    l = in_string.pop(0)
-                else:
-                    break
-    elif format != "ks":
+        # the "ks" loop below reads a different format; do not fall into it
+        return
+
+    if format != "ks":
         raise ValueError('Unsupported format. Options are "ks" and "ws".')
 
     # format is "ks"
@@ -1538,6 +1577,105 @@ def read_polytopes(
     return g
 
 
+def _local_database_exists(db_dir=None) -> bool:
+    """
+    Whether Parquet shards are present on disk.
+
+    This, rather than "could the database be reached", is what `source="auto"`
+    switches on. The 4D database is ~16 GB; a plain `fetch_polytopes(h11=5)`
+    must never start downloading it because the caller happens to have
+    `huggingface_hub` installed. Downloading stays opt-in via
+    `source="database"`.
+    """
+    from cytools.dataset import DB_DIR, _optional_dir
+
+    resolved = _optional_dir(db_dir, DB_DIR, "CYTOOLS_DB_DIR")
+    return (resolved is not None) and any(resolved.glob("*.parquet"))
+
+
+def _database_is_reachable(db_dir=None) -> bool:
+    """Whether the database can be served at all, locally or by download."""
+    if _local_database_exists(db_dir):
+        return True
+    return importlib.util.find_spec("huggingface_hub") is not None
+
+
+def _fetch_from_database(
+    *,
+    h11,
+    h12,
+    chi,
+    n_points,
+    n_vertices,
+    n_dual_points,
+    n_facets,
+    limit,
+    scan_limit,
+    favorable,
+    lattice,
+    backend,
+    deterministic_glsm_basis,
+    dualize,
+    seed,
+    db_dir,
+):
+    """
+    **Description:**
+    Yield polytopes from the local Parquet database instead of the Kreuzer-
+    Skarke website.
+
+    `scan_batches` is used rather than `load_polytopes` for two reasons: it
+    hands back the Parquet buffers without building a `Polytope` per row, so
+    favorability filtering does not pay for objects it discards; and it leaves
+    construction to this function, which must honour the caller's `backend`
+    and `deterministic_glsm_basis`. `load_polytopes` builds `Polytope(verts)`
+    with neither, so routing through it would silently change the GLSM basis.
+
+    **Arguments:**
+    - `h11`, `h12`, `chi`: Already converted to the M-lattice convention the
+        database stores, by the same swap the web request applies.
+    - `scan_limit`: Rows to draw from the database. Exceeds `limit` when
+        favorability filtering will discard some of them.
+    - `seed`: Seed for the database's reproducible stratified sampling.
+
+    **Returns:**
+    *(generator)* Yields `Polytope` objects.
+    """
+    from cytools.dataset import scan_batches
+    from cytools.polytope import Polytope
+
+    n_yielded = 0
+    for batch in scan_batches(
+        n_vertices=n_vertices,
+        h11=h11,
+        h12=h12,
+        chi=chi,
+        n_facets=n_facets,
+        n_points=n_points,
+        n_dual_points=n_dual_points,
+        n=scan_limit,
+        seed=seed,
+        db_dir=db_dir,
+    ):
+        for verts in batch.iter_vertices():
+            if n_yielded >= limit:
+                return
+
+            p = Polytope(
+                verts,
+                backend=backend,
+                deterministic_glsm_basis=deterministic_glsm_basis,
+            )
+
+            if (favorable is not None) and (
+                p.is_favorable(lattice=lattice) != favorable
+            ):
+                continue
+
+            n_yielded += 1
+            yield (p.dual() if dualize else p)
+
+
 def fetch_polytopes(
     h11: int | None = None,
     h12: int | None = None,
@@ -1562,6 +1700,8 @@ def fetch_polytopes(
     dualize: bool = False,
     favorable: bool | None = None,
     verbosity: int = 0,
+    source: str = "auto",
+    db_dir: "str | None" = None,
 ) -> 'Generator["Polytope", None, None] | list["Polytope"]':
     """
     **Description:**
@@ -1621,6 +1761,22 @@ def fetch_polytopes(
         to True, or non-favorable when set to False. If not specified then it
         yields both favorable and non-favorable polytopes.
     - `verbostiy`: The verbosity level.
+    - `source`: Where to read the polytopes from. `"auto"` (the default) uses
+        the Parquet database when its shards are already present locally and
+        falls back to the website otherwise; `"database"` always uses the
+        database, downloading any shard the query reads that is not present
+        locally; `"web"` forces the website. Only 4D is wired up for the
+        database. `"auto"` never downloads: the database is ~16 GB, so
+        fetching is opt-in through `"database"`.
+    - `db_dir`: Directory holding the Parquet database. Defaults to
+        `CYTOOLS_DB_DIR`.
+
+    :::note
+    The database and the website are independent sources and need not agree
+    row for row: a local database may be missing shards, and the two order
+    results differently, so a capped query can return a different set of
+    polytopes from each. The filters themselves have identical meaning.
+    :::
 
     **Returns:**
     A generator of [`Polytope`](./polytope) objects, or the full list when
@@ -1646,6 +1802,15 @@ def fetch_polytopes(
     # --------------
     if dim not in (4, 5):
         raise ValueError("Only polytopes of dimension 4 or 5 are available.")
+
+    if source not in ("auto", "database", "web"):
+        raise ValueError('Options for source are "auto", "database" and "web".')
+
+    if (source == "database") and (dim != 4):
+        raise ValueError(
+            "The local database is only wired up for 4D polytopes; "
+            'use source="web" or source="auto" for dim=5.'
+        )
 
     if lattice not in ("N", "M", None):
         raise ValueError("Options for lattice are 'N' and 'M'.")
@@ -1699,6 +1864,49 @@ def fetch_polytopes(
             and (chi != 2 * (h11 - h12))
         ):
             raise ValueError("Inconsistent Euler characteristic input.")
+
+        # Serve from the local Parquet database when one is present. The Hodge
+        # arguments are M-lattice by this point -- the swap above converts them
+        # for the website, and the database stores the same convention -- so
+        # they carry over unchanged. See `PolytopeRecord` for that convention.
+        # Checked here rather than inside the generator: `as_list=False` would
+        # otherwise defer a plain misconfiguration to the first `next()`.
+        if (source == "database") and not _database_is_reachable(db_dir):
+            raise ValueError(
+                'source="database" needs either a local Parquet database -- '
+                "pass db_dir= or set CYTOOLS_DB_DIR -- or huggingface_hub, to "
+                "fetch the shards it reads "
+                "(`pip install cytools-workbench[streaming]`)."
+            )
+
+        # "auto" deliberately switches on *local* shards only, so it can never
+        # start a multi-gigabyte download on the caller's behalf.
+        use_database = (source == "database") or (
+            source == "auto" and _local_database_exists(db_dir)
+        )
+        if use_database:
+            if verbosity >= 1:
+                print("Fetching from the local Parquet database...")
+
+            g = _fetch_from_database(
+                h11=h11,
+                h12=h12,
+                chi=chi,
+                n_points=n_points,
+                n_vertices=n_vertices,
+                n_dual_points=n_dual_points,
+                n_facets=n_facets,
+                limit=limit if samples is None else samples,
+                scan_limit=fetch_limit if samples is None else samples,
+                favorable=favorable,
+                lattice=lattice,
+                backend=backend,
+                deterministic_glsm_basis=deterministic_glsm_basis,
+                dualize=dualize,
+                seed=42 if sample_seed is None else sample_seed,
+                db_dir=db_dir,
+            )
+            return list(g) if as_list else g
 
         # build/send a request
         variables = [

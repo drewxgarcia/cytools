@@ -106,6 +106,16 @@ _BATCH_SIZE = 2048
 _CHUNKSIZE = 8
 _MAX_AUTO_WORKERS = 8
 
+# Below this h11 the dense (h11)^3 tensor is small enough that allocating it
+# beats converting the sparse dict; above it, the dense form dominates memory.
+# Measured crossover: 0.91x at h11=20, 1.01x at 50, 1.05x at 100, and ~1 GB
+# saved per geometry at 491.
+_SPARSE_KAPPA_MIN_H11 = 150
+
+# Minimum rows per worker for a pool to be worth spawning. At 60 rows, 8
+# workers measured 7.2 s against 3.5 s serial.
+_MIN_ROWS_PER_WORKER = 64
+
 # `scan` is the interactive verb and returns a DataFrame. Past this many rows
 # that is the wrong tool, and silently truncating would be worse than saying so.
 _MAX_COLLECT = 2_000_000
@@ -435,6 +445,40 @@ class Geometry:
         )
 
     @cached_property
+    def _kappa_sparse(self):
+        """Native sparse triple intersection numbers, shared by the volumes."""
+        return _kappa_coo(self.cy.triangulation().fan())
+
+    @cached_property
+    def _tau_basis(self):
+        """Divisor volumes in the current basis at :attr:`moduli_point`.
+
+        One contraction serves both volume columns: the Calabi-Yau volume is
+        `tau . t / 3`, since tau_i = kappa_ijk t^j t^k / 2 and
+        V = kappa_ijk t^i t^j t^k / 6.
+
+        Two routes, chosen by h11, because neither wins everywhere. The dense
+        `(h11, h11, h11)` tensor is 64 kB at h11=20 -- free to allocate -- so
+        the sparse path's dict-to-array conversion is pure overhead there and
+        measured 0.91x end to end. By h11=491 the same tensor is 947 MB and
+        costs ~1 GB resident per geometry, which caps worker count regardless
+        of cores. The crossover sits around h11=150 (~27 MB); measured 1.01x at
+        h11=50 and 1.05x at h11=100, i.e. nothing either way in between.
+        """
+        if self.moduli_point is None:
+            return None
+        t = np.asarray(self.moduli_point, dtype=float)
+
+        if len(t) < _SPARSE_KAPPA_MIN_H11:
+            return np.asarray(
+                self.cy.compute_divisor_volumes(self.moduli_point, in_basis=True),
+                dtype=float,
+            )
+
+        idx, val = self._kappa_sparse
+        return _contract_kappa(idx, val, t, len(t))
+
+    @cached_property
     def kahler_cone(self):
         """The Kahler cone inferred from toric geometry."""
         return self.cy.toric_kahler_cone()
@@ -579,7 +623,8 @@ def divisor_volumes(g):
     """
     if g.moduli_point is None:
         return None
-    return np.asarray(g.cy.compute_divisor_volumes(g.moduli_point), dtype=float)
+    glsm = g.polytope.glsm_charge_matrix(include_origin=False)
+    return np.asarray(np.asarray(glsm).T @ g._tau_basis, dtype=float)
 
 
 @quantity
@@ -587,7 +632,8 @@ def cy_volume(g):
     """Volume of the Calabi-Yau at the selected Kähler-moduli point."""
     if g.moduli_point is None:
         return None
-    return float(g.cy.compute_cy_volume(g.moduli_point))
+    t = np.asarray(g.moduli_point, dtype=float)
+    return float(g._tau_basis @ t / 3)
 
 
 # ---------------------------------------------------------------------------
@@ -683,8 +729,6 @@ def _scan_kwargs(*, n, batch_size, db_dir, filters) -> dict:
         "n_points",
         "n_dual_points",
         "seed",
-        "stream",
-        "hf_token",
     }
     unknown = set(filters) - known
     if unknown:
@@ -699,8 +743,6 @@ def _scan_kwargs(*, n, batch_size, db_dir, filters) -> dict:
         "n_points",
         "n_dual_points",
         "seed",
-        "stream",
-        "hf_token",
     ):
         if k in filters:
             out[k] = filters[k]
@@ -868,6 +910,65 @@ def _sample_kahler_direction(cone, seed: int, start=None, burn: int = 30):
     return x / min_slack
 
 
+# All six orderings of a 3-index intersection-number key.
+_PERMS_3 = ((0, 1, 2), (0, 2, 1), (1, 0, 2), (1, 2, 0), (2, 0, 1), (2, 1, 0))
+
+
+def _kappa_coo(fan):
+    """The fan's triple intersection numbers as native (int32 idx, float64 val).
+
+    Takes the `symmetrize=False` view, which holds kappa[i,j,k] for i<=j<=k
+    with full values -- verified element-wise against the symmetrised dense
+    tensor (exact agreement).
+
+    `copy=True` is deliberate: with `copy=False` this returns the raw
+    unformatted cache rather than the formatted view, and contracting that
+    disagreed with the library by ~1e-4 at h11=300.
+    """
+    dok = fan.intersection_numbers(
+        pushed_down=True, in_basis=True, symmetrize=False, copy=True
+    )
+    n = len(dok)
+    idx = np.empty((n, 3), dtype=np.int32)
+    val = np.empty(n, dtype=np.float64)
+    for r, (key, v) in enumerate(dok.items()):
+        idx[r, 0], idx[r, 1], idx[r, 2] = key
+        val[r] = v
+    return idx, val
+
+
+def _contract_kappa(idx, val, t, n_basis):
+    """tau_i = (1/2) kappa_ijk t^j t^k, without materialising the dense tensor.
+
+    The dense form is `(h11, h11, h11)` float64: 947 MB at h11=491, measured as
+    a ~1 GB resident spike for a single geometry, which is what caps worker
+    count at high h11 regardless of core count. The sparse form is a few
+    thousand entries.
+
+    Multiplicity is handled by class, vectorised, because keys are sorted:
+    all-distinct contributes six orderings, all-equal one, and *two* distinct
+    two-equal shapes contribute three each. Using one ordering set for both
+    two-equal shapes double-counts one ordering and drops another.
+    """
+    a, b, c = idx[:, 0], idx[:, 1], idx[:, 2]
+    ab, bc = (a == b), (b == c)
+
+    tau = np.zeros(n_basis, dtype=np.float64)
+
+    def accumulate(mask, orderings):
+        if not mask.any():
+            return
+        sub, sv = idx[mask], val[mask]
+        for p in orderings:
+            np.add.at(tau, sub[:, p[0]], sv * t[sub[:, p[1]]] * t[sub[:, p[2]]])
+
+    accumulate(~(ab | bc), _PERMS_3)  # i<j<k
+    accumulate(ab & ~bc, ((0, 1, 2), (0, 2, 1), (2, 0, 1)))  # (x,x,y)
+    accumulate(bc & ~ab, ((0, 1, 2), (1, 0, 2), (1, 2, 0)))  # (x,y,y)
+    accumulate(ab & bc, ((0, 1, 2),))  # (x,x,x)
+    return tau / 2
+
+
 def _mix(ks_id: int, k: int) -> int:
     """Derive a geometry id for the k-th triangulation of one polytope.
 
@@ -899,12 +1000,23 @@ def _store_key(columns) -> str:
     return f"{joined[:70]}-{digest}"
 
 
-def _resolve_workers(workers, columns) -> int:
-    """Worker count, falling back to 1 when a column cannot survive `spawn`.
+def _resolve_workers(workers, columns, n=None) -> int:
+    """Worker count, given the columns requested and how much work there is.
 
-    Worker processes re-import the library but not the caller's notebook, so a
-    quantity defined interactively does not exist on the other side. Rather
-    than failing deep inside `concurrent.futures`, run in-process.
+    Two things can force fewer workers than the machine has cores.
+
+    A column that a spawned worker cannot re-import must run in-process:
+    workers re-import the library but not the caller's notebook, so a quantity
+    defined interactively does not exist on the other side, and failing deep
+    inside `concurrent.futures` names nothing useful.
+
+    And a small job cannot pay for the workers it asks for. Each spawned
+    process pays a cold `import cytools` of ~1.4 s, and they contend: at 60
+    rows, 8 workers measured 7.2 s against 3.5 s in-process -- parallelism was
+    2x *slower*. So the pool is sized to keep at least
+    `_MIN_ROWS_PER_WORKER` rows per worker, which puts startup well under a
+    tenth of the run. With `n=None` the row count is unknown, and an
+    unbounded scan is by definition large, so the full pool is used.
     """
     local = [
         c for c in columns if getattr(_QUANTITIES[c].fn, "__module__", None) != __name__
@@ -918,9 +1030,25 @@ def _resolve_workers(workers, columns) -> int:
                 stacklevel=3,
             )
         return 1
-    if workers is not None:
-        return max(1, int(workers))
-    return min(_MAX_AUTO_WORKERS, max(1, (os.cpu_count() or 2) - 2))
+
+    requested = (
+        max(1, int(workers))
+        if workers is not None
+        else min(_MAX_AUTO_WORKERS, max(1, (os.cpu_count() or 2) - 2))
+    )
+
+    if n is None:
+        return requested
+
+    affordable = max(1, int(n) // _MIN_ROWS_PER_WORKER)
+    if affordable < requested and workers is not None and requested > 1:
+        warnings.warn(
+            f"{n} rows is too little work for workers={workers}; each spawned "
+            f"process costs ~1.4 s to start. Using {affordable}.",
+            RuntimeWarning,
+            stacklevel=3,
+        )
+    return min(requested, affordable)
 
 
 def _progress_callback(progress, total):
@@ -1032,7 +1160,7 @@ def _run(
     # from tip volumes and must never be served from the same cache.
     key = _store_key(computed) + ("" if moduli == "tip" else "-sampled")
     store = DerivedStore(derived_dir)
-    workers = _resolve_workers(workers, computed)
+    workers = _resolve_workers(workers, computed, n=n)
 
     # Tee the source columns and ids out of the scan as materialize consumes
     # it, so they can be joined back without a second pass over Parquet.
