@@ -29,7 +29,7 @@ import os
 import random
 import time
 from collections.abc import Generator, Iterator, Sequence
-from typing import Any, Literal, Union, overload
+from typing import Any, Literal, overload
 
 # 3rd party imports
 import flint
@@ -47,6 +47,18 @@ from cytools.helpers.arithmetic import primitive
 from cytools.polytope import Polytope
 from cytools.triangulation import Triangulation
 from cytools.utils import adjugate, integral_nullspace
+
+__all__ = [
+    "cone_of_permissible_heights",
+    "expanded_secondary_fan",
+    "ntfe_cones",
+    "ntfe_frsts",
+    "ntfe_frts",
+    "ntfe_hypers",
+    "triangface_ineqs",
+    "triangfaces_to_frst",
+    "triangfaces_to_frt",
+]
 
 # fast HiGHS feasibility helper for NTFE cones
 # --------------------------------------------
@@ -1042,7 +1054,7 @@ def ntfe_hypers(
     as_generator: bool = False,
     separate_boring: bool = True,
     verbosity: int = 0,
-) -> Union[Generator["matrix.CSR_stack", None, None], list["matrix.CSR_stack"]]:
+) -> Generator["matrix.CSR_stack", None, None] | list["matrix.CSR_stack"]:
     """
     **Description:**
     See https://arxiv.org/abs/2309.10855
@@ -1238,7 +1250,7 @@ def ntfe_cones(
     as_generator: bool = False,
     separate_boring: bool = True,
     verbosity=0,
-) -> Union[Generator[Cone, None, None], list[Cone]]:
+) -> Generator[Cone, None, None] | list[Cone]:
     """
     **Description:**
     See/cite https://arxiv.org/abs/2309.10855

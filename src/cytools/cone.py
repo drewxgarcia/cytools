@@ -1781,10 +1781,10 @@ class Cone:
             try:
                 status = solver.SearchForAllSolutions(model, solution_storage)
             except MoreThanOneSolution:
-                raise Exception(
+                raise ValueError(
                     "More than one solution was found. The grading"
                     " vector must be wrong."
-                )
+                ) from None
 
         if not isinstance(c, Iterable):
             c_vals = [c] * len(hp)

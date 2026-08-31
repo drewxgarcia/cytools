@@ -46,6 +46,12 @@ are occasionally published a day or two later.
   triangulation, face, cone, toric-variety, or Calabi–Yau implementations.
 - Source formatting, Pyflakes linting, and ty type checking are now reproducible
   development dependencies and required CI checks.
+- CI now exercises the `gnn`, `normaliz`, and `performance` extras together in
+  a dedicated backend job while keeping the default development environment
+  portable and free of incompatible optional native runtimes.
+- Feature-package namespaces are explicit: NTFE, vector-configuration, and
+  F-theory initializers no longer expose imported implementation dependencies
+  through wildcard re-exports.
 - Importing `cytools` no longer starts network activity; update checks run only
   when `check_for_updates()` is called explicitly, and the NTFE disk cache is
   loaded and written only after the corresponding computation is used.
@@ -94,6 +100,22 @@ are occasionally published a day or two later.
 
 ### Fixed
 
+- `Fan.restricted_simps(padded=True, as_face_inds=False)` raised
+  `TypeError: 'frozenset' object is not subscriptable`. The padding step
+  indexed and concatenated values that the reduction step had produced as
+  frozensets, so it failed exactly when a restricted simplex had two points --
+  the case `padded` exists to handle.
+- `ToricVariety.intersection_numbers(zero_as_anticanonical=True)` raised
+  `KeyError` for the `"coo"` and `"dense"` formats on a freshly constructed
+  object. The sign-flipped tensor was cached under the requested format's key
+  while the format conversion reads the `"dok"` key; an earlier `"dok"` call
+  masked it. The shared post-processing is now in
+  `utils.finalize_intersection_numbers`, used by both `ToricVariety` and
+  `CalabiYau`.
+- CYTools now refuses to import PyTorch when a second OpenMP runtime is already
+  loaded, instead of letting the process die with SIGABRT and no traceback.
+  This is reachable on macOS by combining the `gnn` and `performance` extras;
+  see INSTALL.md for the fix.
 - Recomputed derived rows now deterministically supersede older cache parts,
   and unsupported geometries are recorded separately from failures.
 - N-lattice Hodge filters in representative benchmarks now map to the correct

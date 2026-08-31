@@ -63,3 +63,38 @@ jobs:
           names=zipfile.ZipFile(glob.glob("dist-ci/*.whl")[0]).namelist();
           required={"cytools/__init__.py", "cytools/_version.py", "cytools/dataset.py", "cytools/landscape.py", "cytools/store.py"};
           assert required <= set(names), sorted(required - set(names))'
+
+  backends:
+    name: Optional compiled backends
+    runs-on: macos-14
+    steps:
+      - name: Check out repo
+        uses: actions/checkout@v7
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+      - name: Install SuiteSparse
+        # scikit-sparse is sdist-only and needs the CHOLMOD headers to build.
+        run: brew install suite-sparse libomp
+      - name: Install Python
+        run: uv python install 3.14
+      - name: Install project with every compiled backend
+        env:
+          CFLAGS: -I/opt/homebrew/include/suitesparse -I/opt/homebrew/include
+          LDFLAGS: -L/opt/homebrew/lib
+        run: >-
+          uv sync --frozen --extra gnn --extra normaliz --extra performance
+          --python 3.14
+      - name: Reconcile OpenMP runtimes
+        # Homebrew SuiteSparse and PyTorch each bring their own LLVM OpenMP
+        # runtime, and the second to register aborts the process. Point PyTorch
+        # at the one already present. See INSTALL.md.
+        run: |
+          bundled=$(uv run --frozen --no-sync python -c 'import torch, pathlib; print(pathlib.Path(torch.__file__).parent / "lib" / "libomp.dylib")')
+          ln -sf "$(brew --prefix libomp)/lib/libomp.dylib" "$bundled"
+          ls -l "$bundled"
+      - name: Run pytest
+        # This is the configuration that exercises CHOLMOD and the GNN sampler
+        # in one process -- the combination a bare matrix run never reaches.
+        run: uv run --frozen --no-sync python -m pytest -vv

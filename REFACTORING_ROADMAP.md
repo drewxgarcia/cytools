@@ -4,7 +4,8 @@ Living document. Each item has **evidence** (a measurement, not an opinion), an
 **action**, and a **done-when**. Check items off as they land.
 
 Baseline measured 2026-08-31 on `dvg/data-plane`, 30,387 LOC across `src/cytools`.
-Test baseline: **387 passed, 5 skipped** (the 5 are mathematically irreducible —
+Safe-default test baseline: **387 passed, 15 skipped** (10 optional-backend
+skips plus the 5 mathematically irreducible cases —
 see Appendix B). All four gates green: `ruff check`, `ruff format --check`,
 `ty check`, pytest.
 
@@ -31,11 +32,11 @@ staged so that every CI gate is enforceable when introduced.
 
 - [x] **1.1** Make the syntax/Pyflakes lint floor clean across `src/`, removing
       unused imports and names and fixing the undefined face-enumeration state.
-      The three remaining wildcard-export compatibility modules have narrow,
-      documented `F403` exceptions.
-- [ ] **1.2** Enable the remaining Ruff families in reviewed batches. There are
-      currently 256 non-line-length, non-ambiguous-variable findings outside
-      the enforced floor; do not apply unsafe fixes without numerical tests.
+      The former wildcard-export feature modules now have explicit public
+      namespaces, so no `F403` exceptions remain.
+- [ ] **1.2** Enable the remaining Ruff families in reviewed batches. Import
+      ordering is now enforced; the remaining semantic/style families must be
+      enabled without unsafe fixes unless numerical tests justify them.
       *Done when:* the full intended rule set is green and enabled in CI.
 
 ### Defects fixed while clearing the gates
@@ -115,9 +116,22 @@ signature (15 lines), a docstring block (19), and the caching/dispatch logic are
 copy-pasted. (`fan.py`'s third version is a different algorithm — 3.5% — and is
 *not* duplication.)
 
-- [ ] **5.1** Extract the shared cache-key/lookup/rounding scaffolding into one
-      helper; leave the differing geometry in place.
-      *Done when:* the identical runs are gone and both call one helper.
+- [x] **5.1** Extracted the 56-line post-processing block (anticanonical sign
+      convention, basis change, format conversion) into
+      `utils.finalize_intersection_numbers`. Duplication in runs of >=4 lines:
+      **108 -> 63**, and what remains is the signature plus docstring, which two
+      classes sharing a public API are entitled to. **This surfaced a real bug**:
+      the two copies had diverged on one line, and the `ToricVariety` spelling
+      wrote the sign-flipped tensor under the *requested* format's cache key
+      while the conversion step below reads the `"dok"` key. On a fresh object
+      `intersection_numbers(zero_as_anticanonical=True, format="coo"|"dense")`
+      raised `KeyError: (True, False, False, 'dok')`; a prior `format="dok"`
+      call masked it. `CalabiYau` had the correct spelling. Verified with a
+      144-combination differential (3 polytopes x both classes x every flag
+      combination): 6 differences, all `KeyError -> correct value`, and the new
+      cold path matches the previously-working warm path exactly. Covered by
+      `test_intersection_numbers_anticanonical_cold_cache`, confirmed failing
+      against the old key.
 
 ## Phase 6 — Collapse the remaining return-type flags
 
@@ -139,19 +153,41 @@ caller's job.
 
 ## Phase 7 — Test/CI coverage gaps
 
-- [ ] **7.1** CI installs only `--extra normaliz`. The `gnn` and `performance`
-      extras are never exercised. Today's finding: sksparse + torch together
-      **abort the interpreter** (two OpenMP runtimes) — exactly the class of bug
-      CI is blind to.
-      *Done when:* a CI job installs both extras and runs the suite.
-- [ ] **7.2** Document the libomp conflict and its fix (single shared runtime,
-      not `KMP_DUPLICATE_LIB_OK`) in `INSTALL.md`.
-- [ ] **7.3** A plain `uv sync` prunes the `gnn` and `performance` extras and
-      restores torch's bundled `libomp.dylib`, silently returning the suite to
-      15 skips and re-arming the abort. Local verification currently needs
-      `uv sync --extra gnn --extra performance --extra normaliz` followed by
-      re-pointing `torch/lib/libomp.dylib` at the homebrew runtime. Make this
-      reproducible (a documented dev-setup target) rather than folklore.
+- [x] **7.1** Added a dedicated backend CI job (macOS) that installs SuiteSparse,
+      syncs every compiled backend, reconciles the OpenMP runtimes and runs the
+      suite — the configuration that exercises CHOLMOD and the GNN sampler in
+      one process. The 6-way matrix stays on the safe default plus Normaliz, so
+      it does not build scikit-sparse or download PyTorch six times.
+- [x] **7.2** Documented in `INSTALL.md`: the SuiteSparse header prerequisite,
+      the duplicate-OpenMP failure mode, the symlink fix, and why
+      `KMP_DUPLICATE_LIB_OK` is not the answer. Backed by
+      `cytools._backends.openmp`, which raises an actionable Python exception
+      before importing PyTorch when a second runtime is already loaded. Losing
+      one optional backend is preferable to aborting a notebook kernel and its
+      unsaved state. Covered by `tests/test_openmp_guard.py`.
+- [x] **7.3** Kept incompatible compiled backends out of the default dependency
+      group. Local and matrix testing use the safe environment; the dedicated
+      backend job opts into all three extras explicitly and reconciles libomp
+      before importing both CHOLMOD and PyTorch.
+
+### Why the backends are not required dependencies
+
+Considered and rejected, with measurements:
+
+- **`gnn`** pulls PyTorch: **492 MB installed**. A Calabi-Yau geometry library
+  should not impose that on users who never touch the GNN sampler.
+- **`performance`** (`scikit-sparse`) is **sdist-only**: the installed wheel is
+  `Generator: setuptools` with a local platform tag, and the built extension
+  hard-links `/opt/homebrew/opt/suite-sparse/lib/libcholmod.5.dylib` — an
+  absolute, machine-specific path. Requiring it would make `pip install cytools`
+  fail on any machine without the SuiteSparse headers. CHANGELOG 1.4.x records
+  the deliberate move *to* an optional extra with a SciPy fallback; reversing it
+  would be a regression.
+- Making them required would also force the duplicate-OpenMP hazard on every
+  install rather than only on the combination that opts into both.
+
+A dedicated opt-in CI job gives backend coverage without imposing those costs
+or native-runtime hazards on every development checkout.
 
 ## Phase 8 — Long tail
 
@@ -165,9 +201,17 @@ caller's job.
       `normal_form` (317), `find_lattice_points` (310, 12 params),
       `Triangulation.__init__` (295), `fetch_polytopes` (262 lines, **23
       parameters**).
-- [ ] **8.3** Drop the redundant `num_2face_triangs` alias of `n_2face_triangs`.
-- [ ] **8.4** Review the 5 `except …: pass` sites; narrow or comment each.
-- [ ] **8.5** Docstring typo "triangularions" (2 files).
+- [ ] **8.3** ~~Drop~~ **reconsider** the `num_2face_triangs` alias of
+      `n_2face_triangs`. It is pinned by `test_ntfe_enumeration.py` and
+      `test_architecture.py`, so it is a deliberate public alias, not an
+      oversight. Removing it is an API decision for the maintainer, not a
+      cleanup.
+- [x] **8.4** Reviewed all 5 `except …: pass` sites. Four were already
+      correctly narrow (`ValueError`, `OSError`, `LinAlgError`,
+      `(TypeError, IndexError, KeyError)`); each now states why swallowing is
+      correct. Only `calabiyau.py`'s forkserver-preload catch is broad, and it
+      is genuinely best-effort — documented rather than narrowed.
+- [x] **8.5** Docstring typo "triangularions" fixed in 2 files.
 
 ---
 

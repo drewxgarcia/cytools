@@ -67,7 +67,9 @@ descriptor: the implementation module is loaded on first method access, while
 the public call remains an ordinary bound method such as `poly.ntfe_frts()`.
 Feature modules never mutate classes at import time, and the package root loads
 their namespaces only when `cytools.ntfe` or `cytools.vector_config` is
-requested explicitly.
+requested explicitly. Each feature package defines a deliberate `__all__`;
+package initializers must not use wildcard imports or leak implementation
+dependencies into the supported namespace.
 
 ## Change checklist
 

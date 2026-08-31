@@ -35,8 +35,8 @@ from scipy.sparse import csr_matrix
 # CYTools imports
 import cytools.config as config
 from cytools.utils import (
-    finalize_intersection_numbers,
     array_float_to_fmpq,
+    finalize_intersection_numbers,
     float_to_fmpq,
     fmpq_to_float,
     gcd_list,

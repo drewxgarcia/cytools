@@ -1432,10 +1432,10 @@ class CalabiYau:
                             )
                             .get_toric_variety()
                         )
-                    except Exception:
+                    except Exception as error:
                         raise NotImplementedError(
                             "This type of complete intersection is not supported."
-                        )
+                        ) from error
             self._intersection_numbers[(False, False, exact_arithmetic, "dok")] = (
                 intnums_cy
             )

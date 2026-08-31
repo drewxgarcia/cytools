@@ -175,3 +175,39 @@ def test_equality():
     v2 = t2.get_toric_variety()
     assert v1 == v1
     assert v1 != v2
+
+
+def test_intersection_numbers_anticanonical_cold_cache():
+    """`zero_as_anticanonical=True` with a non-dok format must work on a fresh
+    object.
+
+    Regression test: `ToricVariety.intersection_numbers` stored the
+    sign-flipped tensor under the *requested* format's cache key, but the
+    format-conversion step below it reads the "dok" key. On a fresh object
+    nothing had populated that key, so it raised
+    `KeyError: (True, False, False, 'dok')`. Calling with format="dok" first
+    masked it, which is why it survived. `CalabiYau.intersection_numbers` held
+    a near-identical copy of this block that wrote the correct key; the two
+    have since been folded into `utils.finalize_intersection_numbers`.
+    """
+    p = Polytope(
+        [[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1], [-1, -1, -6, -9]]
+    )
+
+    for fmt in ("coo", "dense"):
+        cold = p.triangulate().get_toric_variety()
+        got = np.asarray(
+            cold.intersection_numbers(zero_as_anticanonical=True, format=fmt),
+            dtype=float,
+        )
+
+        # the previously-working path: a dok call first warmed the cache
+        warm = p.triangulate().get_toric_variety()
+        warm.intersection_numbers(zero_as_anticanonical=True, format="dok")
+        ref = np.asarray(
+            warm.intersection_numbers(zero_as_anticanonical=True, format=fmt),
+            dtype=float,
+        )
+
+        assert got.shape == ref.shape
+        assert np.allclose(got, ref)

@@ -58,8 +58,35 @@ uv run jupyter lab
 ```
 
 `uv sync` installs CYTools editably and includes the default development tools.
-Add an optional feature with `uv sync --extra <name>`. See
-[CONTRIBUTING.md](CONTRIBUTING.md) for the test and benchmark workflow.
+Compiled backends remain opt-in so the default environment is portable and
+does not combine incompatible native runtimes. Add a feature with `uv sync
+--extra <name>`. See [CONTRIBUTING.md](CONTRIBUTING.md) for the test and
+benchmark workflow.
+
+The `performance` extra builds `scikit-sparse` from source and needs the
+SuiteSparse headers first (`brew install suite-sparse` on macOS,
+`libsuitesparse-dev` on Debian/Ubuntu).
+
+### Duplicate OpenMP runtimes on macOS
+
+Installing both `gnn` and `performance` can put two OpenMP runtimes in one
+process: homebrew's SuiteSparse links `/opt/homebrew/opt/libomp/lib/libomp.dylib`,
+while PyTorch bundles its own under `torch/lib/`. LLVM's runtime calls
+`abort()` rather than tolerating a duplicate, so the interpreter can die with
+SIGABRT and no Python traceback.
+
+CYTools refuses to import PyTorch when it detects this collision, naming both
+paths instead of allowing LLVM to abort the interpreter. Keep the extras in
+separate environments, or make PyTorch share the runtime already present:
+
+```bash
+ln -sf /opt/homebrew/opt/libomp/lib/libomp.dylib \
+       "$(uv run python -c 'import torch,pathlib;print(pathlib.Path(torch.__file__).parent/"lib"/"libomp.dylib")')"
+```
+
+Re-apply it after any reinstall of PyTorch, which restores the bundled copy.
+`KMP_DUPLICATE_LIB_OK=TRUE` silences the abort instead, but it suppresses the
+guard rather than removing the duplicate and is not safe for numerical work.
 
 ## Upgrade or uninstall
 

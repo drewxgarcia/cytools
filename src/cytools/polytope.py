@@ -3104,7 +3104,7 @@ class Polytope:
         star_origin: int | None = None,
         include_points_interior_to_facets: bool | None = None,
         backend: str | None = None,
-    ) -> Iterator["np.ndarray"]:
+    ) -> Iterator[np.ndarray]:
         """
         **Description:**
         As [`all_triangulations`](#all_triangulations), but yields each

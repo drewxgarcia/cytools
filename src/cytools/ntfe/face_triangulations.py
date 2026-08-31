@@ -30,6 +30,7 @@ from typing import Union
 # 3rd party imports
 import numpy as np
 
+from cytools._backends import openmp
 from cytools.helpers import basic_geometry
 
 # CYTools imports
@@ -45,6 +46,10 @@ _DUALGNN_HINT = (
 
 def _import_dualgnn():
     """Import the optional GNN implementation or raise an actionable error."""
+    # dualgnn pulls in PyTorch, which bundles its own OpenMP runtime. If
+    # another one is already loaded (CHOLMOD, via the `performance` extra),
+    # that import can abort the interpreter outright -- so say so first.
+    openmp.ensure_compatible()
     try:
         from dualgnn import sample_frts
         from dualgnn.model import DualGNN

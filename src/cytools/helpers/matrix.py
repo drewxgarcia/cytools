@@ -22,7 +22,7 @@
 # 'standard' imports
 # 3rd party imports
 from collections.abc import Iterable, Sequence
-from typing import Literal, Union, overload
+from typing import Literal, overload
 
 import numpy as np
 import scipy.sparse as sp
@@ -30,7 +30,7 @@ import scipy.sparse as sp
 # CYTools imports
 from cytools.helpers import misc
 
-numeric = Union[int, float, np.number]
+numeric = int | float | np.number
 
 
 # helpers

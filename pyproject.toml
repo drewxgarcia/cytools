@@ -89,6 +89,10 @@ src = ["src", "tests", "benchmarks"]
 select = [
   "E9",   # syntax and indentation failures
   "F",    # undefined, unused, and shadowed names
+  "I",    # deterministic import ordering
+  "B904", # preserve exception context at translation boundaries
+  "UP",   # keep syntax aligned with the Python 3.10+ floor
+  "W",    # whitespace defects not handled by the formatter
 ]
 ignore = [
   # Docstrings in this project are the published API reference (rendered by
@@ -99,13 +103,6 @@ ignore = [
   # geometry code; renaming would obscure the mathematics.
   "E741",
 ]
-
-[tool.ruff.lint.per-file-ignores]
-# These compatibility namespaces intentionally mirror their implementation
-# modules. Replace the wildcard exports when their public APIs are stabilized.
-"src/cytools/f_theory/__init__.py" = ["F403"]
-"src/cytools/ntfe/__init__.py" = ["F403"]
-"src/cytools/vector_config/__init__.py" = ["F403"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

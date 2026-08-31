@@ -14,4 +14,9 @@
 # CYTools. If not, see <https://www.gnu.org/licenses/>.
 # =============================================================================
 
-from cytools.vector_config.vectorconfiguration import *
+from cytools.vector_config.vectorconfiguration import (
+    Fan,
+    VectorConfiguration,
+)
+
+__all__ = ["Fan", "VectorConfiguration"]

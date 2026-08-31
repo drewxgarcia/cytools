@@ -21,7 +21,7 @@
 
 # external imports
 from collections.abc import Iterable
-from typing import Union, overload
+from typing import overload
 
 import numpy as np
 import regfans
@@ -35,6 +35,8 @@ from cytools.polytope import Polytope
 
 # vector configuration imports
 from .fan import Fan
+
+__all__ = ["Fan", "VectorConfiguration"]
 
 
 class VectorConfiguration(regfans.VectorConfiguration):
@@ -92,7 +94,7 @@ class VectorConfiguration(regfans.VectorConfiguration):
 
     # hulls
     # -----
-    def conical_hull(self, which: Union[int, Iterable[int]] | None = None) -> Cone:
+    def conical_hull(self, which: int | Iterable[int] | None = None) -> Cone:
         """
         **Description:**
         Compute the positive/conical hull of (some) vectors of the VC.
@@ -116,7 +118,7 @@ class VectorConfiguration(regfans.VectorConfiguration):
     coni = conical_hull
     cone = conical_hull
 
-    def convex_hull(self, which: Union[int, Iterable[int]] | None = None) -> Polytope:
+    def convex_hull(self, which: int | Iterable[int] | None = None) -> Polytope:
         """
         **Description:**
         Compute the convex hull of (some) vectors of the VC.
@@ -218,7 +220,7 @@ class VectorConfiguration(regfans.VectorConfiguration):
         """
         return self.subdivide(heights=[1 for _ in self.labels])
 
-    def vectors(self, which: Union[int, Iterable[int]] | None = None) -> np.ndarray:
+    def vectors(self, which: int | Iterable[int] | None = None) -> np.ndarray:
         """
         **Description:**
         Return the vectors of the configuration, as an array.

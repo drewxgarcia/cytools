@@ -23,7 +23,7 @@
 import collections
 import itertools
 from collections.abc import Collection, Iterable
-from typing import TYPE_CHECKING, Literal, Union, overload
+from typing import TYPE_CHECKING, Literal, overload
 
 import numpy as np
 import regfans.fan
@@ -146,7 +146,7 @@ class Fan(regfans.fan.Fan):
         ind_offset: int = 0,
         *,
         formal: bool = False,
-    ) -> Union[tuple, list]:
+    ) -> tuple | list:
         """
         **Description:**
         Returns the cones in the fan, each cone specified either by
@@ -400,7 +400,7 @@ class Fan(regfans.fan.Fan):
         digits: int | None = _INTERSECTION_NUMBERS_DEFAULT_DIGITS,
         copy: bool = True,
         verbosity: int = 0,
-    ) -> Union[dict, np.ndarray]:
+    ) -> dict | np.ndarray:
         """
         **Description:**
         Compute the intersection numbers of the toric variety defined by the
@@ -898,78 +898,6 @@ class Fan(regfans.fan.Fan):
                 new_rays = rays[:, basis]
         c = Cone(new_rays, check=len(basis.shape) == 2)
         return c
-        # (vvv OLD... MAYBE PREFERABLE BUT NOT WORKING??? vvv)
-        """
-        dim = self.dim
-        
-        
-
-        if in_basis:
-            basis = self.vc.divisor_basis_inds
-        else:
-            basis = None
-
-        # push down if basis provided
-        #if False:
-        #    if in_basis:
-        #        print("basis requested so push down!")
-        #        pushed_down = True
-
-        # compute the facets
-        if verbosity >= 1:
-            print("Computing the facets...")
-        facets = {
-            facet
-            for simp in self.cones()
-            for facet in itertools.combinations(simp, r=dim - 1)
-        }
-
-        # get intersection numbers
-        if verbosity >= 1:
-            print("Computing the intersection numbers...")
-        if False:
-            kappa = self.intersection_numbers(
-                pushed_down=pushed_down, in_basis=in_basis, verbosity=verbosity - 1
-            )
-        else:
-            kappa = self.intersection_numbers(
-                pushed_down = False,
-                in_basis = False,
-                verbosity=verbosity - 1
-            )
-
-        # get the rays of the Mori cone
-        if verbosity >= 1:
-            print("Computing the rays...")
-        ray_iter = (
-            basis
-            if basis is not None
-            else [i for i in range(0, self.vc.size + 1)]
-        )
-        rays = []
-        for facet in facets:
-            
-            for extra_zeros in range(0,1+0*len(facet)+1):
-                for fake_facet in itertools.combinations(facet, r=len(facet)-extra_zeros):
-                    fake_facet = extra_zeros*(0,) + fake_facet
-
-                    r = np.array([kappa.get(tuple(sorted(fake_facet + (i,))), 0) for i in ray_iter])
-                    r = float_to_int_vec(r)
-                    rays.append(r)
-        rays = np.array(rays)
-        if verbosity >= 1:
-            print(f"Found rays = {rays}")
-
-        # check for trivial cones
-        if (len(rays) == 0) or max(np.linalg.norm(rays, axis=1)) < eps:
-            size = dim if in_basis else len(self.vc.divisor_basis_inds)
-            H = np.vstack(
-                (+np.identity(size, dtype=int), -np.identity(size, dtype=int))
-            )
-            return Cone(hyperplanes=H)
-
-        return Cone(rays=rays)
-        """
 
     def kahler_cone(self, pushed_down=False, in_basis=False, verbosity=0):
         """
