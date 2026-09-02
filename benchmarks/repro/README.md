@@ -174,3 +174,80 @@ Two avenues not pursued:
   `np.linalg.det` / `np.delete` calls per triangulation (28,758 and 47,930 calls
   in the profiled run). Collapsing them into one call over a precomputed index
   array would cut numpy dispatch overhead; bounded by ~6% of the sweep.
+
+## The real win: use `ntfe_frsts`, not `all_triangulations`, for class counts
+
+Enumerate-then-dedup is the wrong algorithm for the "# FRST classes" column.
+`cytools.ntfe.ntfe_frsts` returns one FRST per two-face class directly, via
+secondary-cone geometry, so it never materializes the redundancy. Both routes
+give **identical class sets** (verified at h11=3..7):
+
+| h11 | FRSTs | classes | `all_triangulations`+dedup | `ntfe_frsts` | speedup |
+|---|---|---|---|---|---|
+| 3 | 526 | 306 | 1.09s | 2.04s | 0.5x |
+| 4 | 497 | 256 | 0.76s | 1.25s | 0.6x |
+| 5 | 1,178 | 212 | 2.30s | 1.22s | 1.9x |
+| 6 | 3,714 | 173 | 9.93s | 0.74s | **13.4x** |
+| 7 | 9,064 | 132 | 30.78s | 0.45s | **68.9x** |
+
+Crossover is ~h11=5; below that the enumerate route wins. Full-database effect
+on the paper's two hardest numbers (`classes_fast.py`, 9 workers):
+
+| | enumerate-then-dedup | via `ntfe` | result |
+|---|---|---|---|
+| h11=6 classes | 276.4s | **79.7s** | 74,503 (paper: 74,503) |
+| h11=7 classes | 5,824.9s | **306.2s** | 467,283 (paper: 467,283) |
+
+97 minutes to 5 minutes. Caveat, stated plainly: this accelerates the *classes*
+column only. The paper's "# FRSTs" column is a count of all FRSTs, so it still
+requires full enumeration -- there is no shortcut to counting things you must
+enumerate. Non-favorable class counts (1,068 at h11=6, 8,126 at h11=7) agree
+between the two routes as well.
+
+## 5th change: batched minors in `_secondary_cone_hyperplanes_native`
+`dim+2` separate `np.delete` + `np.linalg.det` pairs per triangulation (28,758
+det and 47,930 delete calls in the profiled sweep) collapsed into one fancy
+index against a cached drop table plus a single batched `det`. Verified over
+9,066 secondary-cone records with **zero** flint fallbacks in either version,
+i.e. the batched floats round to bit-identical integers.
+
+Honest size: **~1-2%** end-to-end (-1.6/-2.6/-0.1/-1.5/-2.1% at h11=3..7). The
+determinants were already batched over facet pairs, so only numpy dispatch
+overhead was recovered. Kept because it is verified and also removes two loops;
+drop it without loss if you want a minimal diff in that numerically delicate
+function.
+
+## Next targets (profiled, with mechanism — not guesses)
+
+Once you switch class counting to `ntfe_frsts`, the hot path moves. Profile of
+the ntfe route (h11=7, 250 polytopes, 8.85s):
+
+| cost | share | note |
+|---|---|---|
+| `Triangulation.__init__` | **3.07s cum (35%)** | 11,215 calls |
+| `Polytope._process_points` + `ppl_hull` | 1.5s cum | **8,541 Polytope builds for 250 inputs** |
+| LP (`highspy`) | 0.41s | external |
+| `_secondary_cone_hyperplanes_native` | 1.27s cum | already batched |
+
+**The lead: `ntfe.face_triangulations._as_2d_poly` builds a fresh `Polytope`
+per 2-face.** Every 2-face of a 4d reflexive polytope lives in ZZ^4, so the
+`ambient_dim() == 2` fast path never fires and each face pays a convex hull
+(`ppl_hull`) plus `saturating_lattice_pts` — ~34 Polytope constructions per
+input polytope. Two-faces of reflexive polytopes are overwhelmingly the same
+few small shapes, so the geometric work is almost all redundant.
+
+Care required: the docstring's warning is real — `labels=poly.labels` is
+load-bearing, and labels differ per face. So memoize the *geometric* part
+(hull / inequalities / saturating points) keyed on the canonical point set and
+re-attach labels, rather than caching the `Polytope` object. The module already
+has a persistent `_ineq_cache` for two-face inequalities, so the pattern exists;
+it just does not cover construction.
+
+### Ruled out
+* **`all_connected_triangulations` is not a regularity shortcut.** Tested
+  directly: it returns a *different, larger* set than the regular
+  triangulations (796 vs 380 regular at h11=5; 175 vs 144 at h11=4), so it
+  cannot replace the secondary-cone + LP regularity pass.
+* **Python micro-optimization of the enumerate path is exhausted.** After the
+  five changes above the profile is 38% native C++ enumerator and ~23%
+  external LP solver; every remaining Python candidate measured 1-5%.
