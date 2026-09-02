@@ -156,6 +156,19 @@ def _batches(**kwargs):
     return list(ds.scan_batches(**kwargs))
 
 
+def _shard_rows(n_vertices: int) -> int:
+    """Row count of a configured shard, from its Parquet footer.
+
+    Whatever database the suite is pointed at -- the committed slice by
+    default, a full mirror under `CYTOOLS_TEST_DB_DIR` -- this reports what is
+    actually there, without decoding a single row.
+    """
+    import pyarrow.parquet as pq
+
+    db_dir = ds._resolve_dir(None, ds.DB_DIR, "CYTOOLS_DB_DIR", "4D")
+    return pq.read_metadata(ds._db_path(n_vertices, db_dir)).num_rows
+
+
 def test_scan_batches_constructs_no_polytopes(monkeypatch):
     """The whole point: a scan must not materialize a Polytope per row.
 
@@ -287,10 +300,17 @@ def test_capped_scan_is_spread_across_vertex_counts():
     assert rows == 30
     assert set(counts) == set(MULTI_VERTEX_COUNTS), f"only got {dict(counts)}"
 
-    # Apportioned in proportion to the committed shards, not evenly. These
-    # counts are pinned by the fixture generator and make the test identical
-    # on a laptop and in CI.
-    populations = {7: 1_622, 8: 2_767, 9: 1_556}
+    # Apportioned in proportion to shard population, not evenly. The
+    # populations are read from the configured shards' Parquet footers rather
+    # than hard-coded: pinning the committed slice's counts made this the one
+    # test that could not run under the `CYTOOLS_TEST_DB_DIR` override the
+    # suite documents, because the full mirror holds 177k/835k/2.87M rows in
+    # these shards instead of 1622/2767/1556 and apportions them differently.
+    #
+    # Reading a row count is independent of the apportionment being tested --
+    # it comes from file metadata, not from the scan -- so this stays a real
+    # check rather than comparing the scan against itself.
+    populations = {vc: _shard_rows(vc) for vc in MULTI_VERTEX_COUNTS}
     total = sum(populations.values())
     for vc, pop in populations.items():
         expected = 30 * pop / total
