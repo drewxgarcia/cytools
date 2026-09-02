@@ -42,6 +42,7 @@ from scipy.optimize import linprog, nnls
 
 import cytools.config as config
 import cytools.utils as utils
+from cytools._backends.arith import exact_rank, is_unimodular
 from cytools._backends.engines import INTERIOR_POINT, STRETCHED_TIP
 from cytools._backends.extremalrays import (
     exhaustive_indices as _extremal_indices,
@@ -597,14 +598,14 @@ class Cone:
 
         if self._rays is not None:
             # know the rays... semi simple computation
-            self._dim = np.linalg.matrix_rank(self._rays)
+            self._dim = exact_rank(self._rays)
         else:
             # don't know the rays... still simple if the cone is solid...
             if self.is_solid():
                 self._dim = self.ambient_dim()
             else:
                 # yikes need to compute the rays
-                self._dim = np.linalg.matrix_rank(self.rays())
+                self._dim = exact_rank(self.rays())
         return self._dim
 
     # aliases
@@ -1154,7 +1155,7 @@ class Cone:
         face_objects = {}
         for ray_inds in sorted(seen, key=lambda inds: tuple(sorted(inds))):
             face_rays = R[list(ray_inds)]
-            face_dim = np.linalg.matrix_rank(face_rays)
+            face_dim = exact_rank(face_rays)
             if face_dim <= 0:
                 continue
 
@@ -1466,7 +1467,7 @@ class Cone:
         """
         # If the rays are already computed then this is a simple task
         if (self._rays is not None) and (backend is None) and (lower is None):
-            if np.linalg.matrix_rank(self._rays) != self._ambient_dim:
+            if exact_rank(self._rays) != self._ambient_dim:
                 return None
 
             point = self._rays.sum(axis=0)
@@ -1930,7 +1931,7 @@ class Cone:
         if self._is_solid is not None:
             return self._is_solid
         if self._rays is not None:
-            return bool(np.linalg.matrix_rank(self._rays) == self._ambient_dim)
+            return exact_rank(self._rays) == self._ambient_dim
 
         # we just have hyperplanes... a bit harder
         if backend == "ppl":
@@ -2143,7 +2144,13 @@ class Cone:
             self._is_smooth = False
             return self._is_smooth
         if self.is_solid():
-            self._is_smooth = abs(abs(np.linalg.det(self.extremal_rays())) - 1) < 1e-4
+            # Smoothness of a simplicial solid cone is unimodularity of its ray
+            # matrix, which is an exact question about integers. It used to be
+            # decided by `abs(abs(np.linalg.det(rays)) - 1) < 1e-4`, and that
+            # was wrong from ambient dimension 16 upward: on ray matrices whose
+            # exact determinant is 1, float64 returns 1.19 at n=16 and -4.5e29
+            # at n=32, so genuinely smooth cones were reported singular.
+            self._is_smooth = is_unimodular(self.extremal_rays())
             return self._is_smooth
         snf = np.array(
             fmpz_mat(self.extremal_rays().tolist()).snf().tolist(), dtype=int

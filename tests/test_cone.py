@@ -3,6 +3,7 @@ import builtins
 import numpy as np
 import pytest
 
+import cytools.cone as cone_module
 from cytools import Cone
 
 
@@ -241,13 +242,19 @@ def test_equality():
 def test_dimension_is_lazy_not_computed_on_construction():
     """Constructing a Cone from rays must not compute its dimension.
 
-    The rank is an SVD of the ray matrix -- ~(1500 x 200) for a Mori cone at
-    h11 ~ 200 -- and the Kahler-cone/tip path that dominates ensemble scans
-    never asks for it. Computing it eagerly in `__init__` cost 26% of that
-    path. This pins the laziness so it cannot regress.
+    The rank is an exact integer elimination on the ray matrix -- ~(1500 x 200)
+    for a Mori cone at h11 ~ 200 -- and the Kahler-cone/tip path that dominates
+    ensemble scans never asks for it. Computing it eagerly in `__init__` cost
+    26% of that path. This pins the laziness so it cannot regress.
+
+    The argument got stronger when the rank became exact. Measured on integer
+    matrices of the shapes that arise here, `exact_rank` costs about 6x
+    `numpy.linalg.matrix_rank` -- 130 ms against 20 ms at (2320 x 300) -- which
+    is the price of an answer that is right on ill-conditioned input. Paying it
+    once, on demand, is affordable; paying it in every constructor is not.
     """
     calls = []
-    real = np.linalg.matrix_rank
+    real = cone_module.exact_rank
 
     def spy(M, *a, **k):
         calls.append(np.asarray(M).shape)
@@ -255,7 +262,7 @@ def test_dimension_is_lazy_not_computed_on_construction():
 
     rays = [[1, 0, 0], [0, 1, 0], [0, 0, 1], [1, 1, 1]]
     with pytest.MonkeyPatch.context() as mp:
-        mp.setattr(np.linalg, "matrix_rank", spy)
+        mp.setattr(cone_module, "exact_rank", spy)
         c = Cone(rays)
         assert calls == [], f"__init__ computed a rank: {calls}"
         assert c.dimension() == 3  # computed on demand
