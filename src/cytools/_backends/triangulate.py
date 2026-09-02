@@ -8,12 +8,11 @@
 # =============================================================================
 """Triangulation engines for a point configuration.
 
-A note on the names this replaces. The public API previously offered
-``backend="cgal"``, ``backend="qhull"`` and ``backend="topcom"``. Neither CGAL
-nor TOPCOM was involved: both of those paths called `triangulumancer`, and
-differed only in whether the caller supplied heights. The names survived the
-library they referred to, and a user choosing "topcom" for its enumeration
-guarantees got a placing triangulation from an unrelated engine.
+The historical public names describe the native implementations, while
+``triangulumancer`` is their Python binding: ``triangulate_with_heights`` uses
+CGAL and ``fine_triangulation`` uses TOPCOM. Keeping that distinction explicit
+avoids both leaking extension objects into the domain model and erasing the
+scientifically meaningful algorithm choice.
 
 What actually varies:
 
@@ -34,7 +33,7 @@ from cytools._typing import Matrix, Vector
 __all__ = ["fine_triangulate", "heights_triangulate", "qhull_triangulate"]
 
 
-def heights_triangulate(points: Matrix, heights: Vector) -> np.ndarray:
+def heights_triangulate(points: Matrix, heights: Vector | None) -> np.ndarray:
     """
     **Description:**
     The regular triangulation induced by lifting `points` to `heights`. The
@@ -49,6 +48,9 @@ def heights_triangulate(points: Matrix, heights: Vector) -> np.ndarray:
     **Returns:**
     The simplices, as sorted index arrays.
     """
+    if heights is None:
+        raise ValueError("The CGAL triangulation engine requires heights.")
+
     import triangulumancer
 
     pc = triangulumancer.PointConfiguration(points)
@@ -56,11 +58,12 @@ def heights_triangulate(points: Matrix, heights: Vector) -> np.ndarray:
     return np.array(sorted([sorted(s) for s in simp]))
 
 
-def fine_triangulate(points: Matrix) -> np.ndarray:
+def fine_triangulate(points: Matrix, heights: Vector | None = None) -> np.ndarray:
     """
     **Description:**
-    A fine triangulation of `points`, chosen by the engine. Used when the
-    caller has no heights to supply.
+    A fine triangulation of `points`, computed by TOPCOM through
+    ``triangulumancer``. A height argument is accepted for the registry's
+    uniform call signature but is intentionally ignored.
 
     :::note
     The result is fine, but no height vector is returned, so regularity is
@@ -81,7 +84,7 @@ def fine_triangulate(points: Matrix) -> np.ndarray:
     return np.array(sorted([sorted(s) for s in simp]))
 
 
-def qhull_triangulate(points: Matrix, heights: Vector) -> np.ndarray:
+def qhull_triangulate(points: Matrix, heights: Vector | None) -> np.ndarray:
     """
     **Description:**
     The lifted-hull construction computed in double precision by QHull.
@@ -103,6 +106,9 @@ def qhull_triangulate(points: Matrix, heights: Vector) -> np.ndarray:
     **Returns:**
     The simplices, as sorted index arrays.
     """
+    if heights is None:
+        raise ValueError("The QHull triangulation engine requires heights.")
+
     from scipy.spatial import ConvexHull
 
     lifted = [tuple(points[i]) + (heights[i],) for i in range(len(points))]

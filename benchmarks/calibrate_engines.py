@@ -223,11 +223,15 @@ def calibrate_interior_point(repeat: int) -> dict:
 
 
 def calibrate_stretched_tip(repeat: int) -> dict:
-    """The QP across ambient dimension."""
-    cells = [(d, 4 * d) for d in (4, 8, 12, 16, 20, 25, 30, 40)]
+    """The QP across ambient dimension.
+
+    The dimensions extend beyond the historical 40-dimensional cutoff so the
+    report captures convergence failures as well as speed crossovers.
+    """
+    cells = [(d, 4 * d) for d in (4, 8, 12, 16, 20, 25, 30, 40, 60, 100)]
     return _sweep(
         "stretched_tip",
-        ("mosek", "osqp", "cvxopt"),
+        ("highs", "mosek", "osqp", "cvxopt"),
         cells,
         repeat,
         1e3,

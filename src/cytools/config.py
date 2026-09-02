@@ -198,7 +198,7 @@ def engines(*, allow_weaker: bool = False, **choices: str):
 def available_engines() -> dict[str, tuple[str, ...]]:
     """
     **Description:**
-    The engines usable in this process, per task, in preference order.
+    The engines usable in this process, per task, in stable registration order.
 
     Useful for reporting what a given machine actually ran with: an engine
     absent here was never a candidate, whatever the documentation says.

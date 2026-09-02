@@ -15,8 +15,8 @@
 # =============================================================================
 #
 # -----------------------------------------------------------------------------
-# Description:  Engine resolution. Guarantees decide, measurements order,
-#               callers do not choose.
+# Description:  Engine resolution. Guarantees decide eligibility;
+#               measurements order eligible implementations.
 #
 #               A *task* is a mathematical problem (build a convex hull, find
 #               an interior point). An *engine* is one implementation of a
@@ -73,9 +73,9 @@ __all__ = [
 #: different polytope.
 EXACT = "exact"
 
-#: A failure return distinguishes "no solution exists" from "the solver gave
-#: up". Required wherever absence of a solution is read as a mathematical
-#: conclusion rather than as an error.
+#: A ``None`` return is an exact proof that no solution exists, not merely a
+#: floating-point solver status or an exhausted search bound. Required wherever
+#: absence of a solution is read as a mathematical conclusion.
 CERTIFIES_INFEASIBLE = "certifies_infeasible"
 
 #: The triangulation produced is regular by construction, so regularity needs
@@ -206,9 +206,11 @@ class Engine:
     - `available`: Whether the engine's dependency can be used in this
         process. Called at resolution time, never at import time, so an
         optional dependency is not imported merely by loading this module.
-    - `applies`: Whether the engine is a candidate for a particular problem.
-        This is where measured size crossovers live; see
-        `cytools._backends.crossovers`.
+    - `applies`: Whether the engine supports a particular problem at all.
+        This is a hard capability boundary, never a performance heuristic.
+    - `preference`: A problem-dependent cost rank. Lower is preferred. This is
+        where measured size crossovers live; it may reorder engines but never
+        make an otherwise valid explicit selection illegal.
     - `why_unavailable`: Human-readable reason, shown when resolution fails.
     """
 
@@ -217,6 +219,7 @@ class Engine:
     provides: frozenset[str] = frozenset()
     available: Callable[[], bool] = lambda: True
     applies: Callable[[Mapping[str, Any]], bool] = lambda problem: True
+    preference: Callable[[Mapping[str, Any]], float] = lambda problem: 0
     why_unavailable: str = "the engine is unavailable in this environment"
 
     def __post_init__(self) -> None:
@@ -230,11 +233,11 @@ class Engine:
 
 @dataclass(frozen=True)
 class Registry:
-    """The engines implementing one task, in order of preference.
+    """The engines implementing one task, in stable tie-break order.
 
-    Order is by measured cost for a typical problem, cheapest first. It is not
-    a correctness mechanism: an engine that cannot provide a required
-    guarantee is excluded regardless of position.
+    Problem-dependent preference scores order qualifying engines; declaration
+    order breaks ties. Neither is a correctness mechanism: an engine that
+    cannot provide a required guarantee is excluded regardless of rank.
     """
 
     task: str
@@ -257,12 +260,35 @@ class Registry:
         )
 
     def names(self) -> tuple[str, ...]:
-        """Every registered engine name, in preference order."""
+        """Every engine name, in stable registration order."""
         return tuple(e.name for e in self.engines)
 
     def available(self) -> tuple[str, ...]:
-        """The engine names usable in this process, in preference order."""
+        """The usable engine names, in stable registration order."""
         return tuple(e.name for e in self.engines if e.available())
+
+    def select(self, name: str, problem: Mapping[str, Any] | None = None) -> Engine:
+        """Select an explicitly named engine without inventing requirements.
+
+        Historical ``backend=`` parameters already represent an explicit
+        implementation choice. They use this method to retain that contract
+        while sharing registry diagnostics and adapters. New automatic call
+        sites should use :meth:`resolve` and state the guarantees their
+        mathematics requires.
+        """
+        problem = {} if problem is None else problem
+        engine = self[name]
+        if not engine.available():
+            raise EngineUnavailable(
+                f"Engine {name!r} was selected for task {self.task!r}, but "
+                f"{engine.why_unavailable}."
+            )
+        if not engine.applies(problem):
+            raise EngineUnavailable(
+                f"Engine {name!r} was selected for task {self.task!r}, but it "
+                f"does not support problem {dict(problem)}."
+            )
+        return engine
 
     # resolution
     # ----------
@@ -293,10 +319,14 @@ class Registry:
         active = _overrides.get()
         if active.get(self.task) is not None:
             return (self.resolve(need, problem),)
-        return tuple(
+        eligible = tuple(
             e
             for e in self.engines
             if not (need - e.provides) and e.available() and e.applies(problem)
+        )
+        order = {engine.name: i for i, engine in enumerate(self.engines)}
+        return tuple(
+            sorted(eligible, key=lambda e: (e.preference(problem), order[e.name]))
         )
 
     def resolve(
@@ -338,7 +368,8 @@ class Registry:
             return self._resolve_forced(forced, need, problem, active)
 
         rejected: list[str] = []
-        for engine in self.engines:
+        eligible: list[tuple[float, int, Engine]] = []
+        for index, engine in enumerate(self.engines):
             missing = need - engine.provides
             if missing:
                 rejected.append(f"{engine.name}: does not provide {sorted(missing)}")
@@ -347,9 +378,12 @@ class Registry:
                 rejected.append(f"{engine.name}: {engine.why_unavailable}")
                 continue
             if not engine.applies(problem):
-                rejected.append(f"{engine.name}: not applicable to this problem size")
+                rejected.append(f"{engine.name}: does not support this problem")
                 continue
-            return engine
+            eligible.append((engine.preference(problem), index, engine))
+
+        if eligible:
+            return min(eligible, key=lambda item: (item[0], item[1]))[2]
 
         raise EngineUnavailable(
             f"No engine for task {self.task!r} provides {sorted(need)} "
@@ -364,17 +398,7 @@ class Registry:
         active: Mapping[str, str],
     ) -> Engine:
         """Apply an override, checking availability and guarantees."""
-        engine = self[name]  # raises UnknownEngine
-        if not engine.available():
-            raise EngineUnavailable(
-                f"Engine {name!r} was forced for task {self.task!r}, but "
-                f"{engine.why_unavailable}."
-            )
-        if not engine.applies(problem):
-            raise EngineUnavailable(
-                f"Engine {name!r} was forced for task {self.task!r}, but it "
-                f"does not apply to problem {dict(problem)}."
-            )
+        engine = self.select(name, problem)
         missing = need - engine.provides
         if missing:
             message = (

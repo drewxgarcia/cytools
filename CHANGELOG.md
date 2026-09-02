@@ -38,6 +38,11 @@ are occasionally published a day or two later.
   optional native backends are tested independently.
 - CVXOPT is now an optional `cvxopt` extra. OSQP and HiGHS remain the portable
   default solver paths.
+- Stretched-cone tips now use HiGHS' quadratic solver by default and validate
+  both primal feasibility and the primal-dual gap before returning a point.
+  OSQP, Mosek, and CVXOPT remain explicit compatibility and differential-test
+  engines. A negative automatic result is confirmed exactly before it can be
+  interpreted as an empty stretched region.
 - Basic landscape columns, including Hodge numbers and point/facet counts, are
   served directly from columnar database buffers without constructing
   `Polytope` objects. Large sweeps avoid collecting result frames and cap
@@ -65,7 +70,13 @@ are occasionally published a day or two later.
   use guarantee-aware engine registries. Automatic selection cannot substitute
   a solver that changes the mathematical meaning of failure; scoped overrides
   are available through `cytools.config.engines(...)`, while established
-  `backend=` arguments remain compatible at public entry points.
+  `backend=` arguments remain compatible at public entry points. Hard engine
+  support is separate from performance crossover ranking, so an explicit
+  choice is never rejected merely for being below a speed threshold. HiGHS,
+  GLOP, and SCIP keep the fast numerical path for feasible cone problems and
+  verify negative results exactly with PPL before CYTools treats `None` as a
+  geometric conclusion. CGAL and TOPCOM provenance is retained through their
+  `triangulumancer` bindings.
 - PPL now loads through one compatibility boundary that restores the process
   floating-point rounding mode once, replacing three scattered `ctypes` calls.
 - NTFE and vector-configuration methods are now declared by their owning

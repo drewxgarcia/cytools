@@ -61,8 +61,8 @@ class HPolytope(polytope.Polytope):
         integer hull (convex hull of contained lattice points) instead.
     - `backend`: A string that specifies the backend used to construct the
         convex hull. The available options are "ppl", "qhull", or "palp". When
-        not specified, it uses PPL for dimensions up to four, and palp
-        otherwise.
+        not specified, CYTools selects an exact, recoverable engine; currently
+        this is PPL, with a closed-form one-dimensional path.
     """
 
     def __init__(
@@ -87,8 +87,8 @@ class HPolytope(polytope.Polytope):
             False, computes the integer hull instead.
         - `backend`: A string that specifies the backend used to construct the
             convex hull. The available options are "ppl", "qhull", or "palp".
-            When not specified, it uses PPL for dimensions up to four, and palp
-            otherwise.
+            When not specified, CYTools selects an exact, recoverable engine;
+            currently this is PPL, with a closed-form one-dimensional path.
         - `verbosity` *(int, optional, default=0)*: The verbosity level.
 
         **Returns:**

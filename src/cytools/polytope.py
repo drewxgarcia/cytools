@@ -42,7 +42,7 @@ from tqdm import tqdm
 
 import cytools.config as config
 from cytools._backends.engines import CONVEX_HULL
-from cytools._backends.registry import EXACT, RECOVERABLE, EngineUnavailable
+from cytools._backends.registry import EXACT, RECOVERABLE
 from cytools._extensions import lazy_method
 from cytools._typing import (
     AutomorphismAction,
@@ -92,8 +92,8 @@ class Polytope:
         points are given semi-arbitrary default labels.
     - `backend`: A string that specifies the backend used to construct the
         convex hull. The available options are "ppl", "qhull", or "palp".
-        When not specified, it uses PPL for dimensions up to four, and palp
-        otherwise.
+        When not specified, CYTools selects an exact, recoverable engine;
+        currently this is PPL, with a closed-form one-dimensional path.
 
     **Example:**
     We construct two polytopes from lists of points.
@@ -175,8 +175,11 @@ class Polytope:
             points are given semi-arbitrary default labels.
         - `backend`: A string that specifies the backend used to construct the
             convex hull. The available options are "ppl", "qhull", or "palp".
-            When not specified, it uses PPL for dimensions up to four, and palp
-            otherwise.
+            When not specified, CYTools selects an exact, recoverable engine;
+            currently this is PPL (with a closed-form one-dimensional path).
+            Explicit backend names retain their historical behavior. QHull is
+            floating-point, and PALP may abort the process above its compiled
+            limits, so neither is selected automatically.
         - `deterministic_glsm_basis`: Whether to fix the GLSM basis in a
             deterministic manner. By setting this True, the GLSM/divisor bases
             should be consistent across different machines. If this is left as
@@ -860,6 +863,13 @@ class Polytope:
 
         # Calculate the polytope, inequalities
         # ------------------------------------
+        # EXACT is required, not preferred. These are lattice polytopes:
+        # `is_reflexive` compares facet constants to 1 and the point
+        # enumerator consumes the facets as integers, so a normal recovered by
+        # rounding a floating-point hull yields a *different polytope*, not the
+        # same one computed faster. RECOVERABLE keeps PALP off the automatic
+        # path -- it aborts the interpreter past its compiled-in array bounds,
+        # which a 9-dimensional configuration of 40 points reaches.
         problem = {"dim": self.dim(), "size": len(pts_optimal)}
         if self._auto_backend:
             engine = CONVEX_HULL.resolve(need=(EXACT, RECOVERABLE), problem=problem)
@@ -873,11 +883,19 @@ class Polytope:
                 if self._backend == "qhull" and self.dim() == 1
                 else self._backend
             )
-            engine = CONVEX_HULL[engine_name]
-            if not engine.available():
-                raise EngineUnavailable(
-                    f"Convex-hull engine {engine_name!r} is unavailable: "
-                    f"{engine.why_unavailable}."
+            # ``backend=`` predates the registry and is an established,
+            # explicit implementation choice. Preserve it as a drop-in path;
+            # new automatic code states its mathematical requirements above.
+            engine = CONVEX_HULL.select(engine_name, problem)
+            if RECOVERABLE not in engine.provides:
+                warnings.warn(
+                    f"The {engine.name!r} convex-hull engine aborts the "
+                    "process rather than raising when a configuration "
+                    "exceeds its compiled-in limits, which cannot be caught "
+                    "from Python. Omit backend= to let CYTools choose an "
+                    "engine that fails recoverably.",
+                    RuntimeWarning,
+                    stacklevel=3,
                 )
 
         self._ineqs_optimal, self._vertices_optimal = engine.run(pts_optimal)
@@ -4201,12 +4219,9 @@ def poly_v_to_h(pts: Matrix, backend: PolytopeBackend) -> tuple[np.ndarray, np.n
     engine_name = (
         "interval" if backend == "qhull" and pts_array.shape[1] == 1 else backend
     )
-    engine = CONVEX_HULL[engine_name]
-    if not engine.available():
-        raise EngineUnavailable(
-            f"Convex-hull engine {engine_name!r} is unavailable: "
-            f"{engine.why_unavailable}."
-        )
+    engine = CONVEX_HULL.select(
+        engine_name, {"dim": pts_array.shape[1], "size": len(pts_array)}
+    )
     return engine.run(pts_array)
 
 

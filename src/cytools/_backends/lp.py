@@ -24,10 +24,12 @@ from __future__ import annotations
 
 import math
 from collections.abc import Mapping, Sequence
+from fractions import Fraction
 
 import numpy as np
 
 from cytools._backends.arith import gcd_int
+from cytools._backends.ppl import ppl
 from cytools._typing import Matrix
 
 __all__ = [
@@ -47,11 +49,82 @@ class SolverFailure(RuntimeError):
     """
 
 
-def _rows(hyperplanes):
-    """Iterate (index, value) pairs per row, dense or sparse-dict."""
-    if isinstance(hyperplanes, (list, np.ndarray)):
-        return enumerate
-    return lambda hp: hp.items()
+def _unconstrained_point(ambient_dim: int, lower_bound: float | None) -> np.ndarray:
+    """A deterministic point satisfying an optional coordinate lower bound."""
+    value = 1.0 if lower_bound is None else max(1.0, float(lower_bound))
+    return np.full(ambient_dim, value)
+
+
+def _entries(row):
+    """Iterate ``(column, value)`` pairs for a dense or mapping row."""
+    return row.items() if isinstance(row, Mapping) else enumerate(row)
+
+
+def _fraction(value: float) -> Fraction:
+    """Interpret an input scalar as the rational its spelling represents."""
+    if isinstance(value, (int, np.integer)):
+        return Fraction(int(value))
+    value_float = float(value)
+    if not math.isfinite(value_float):
+        raise ValueError("LP constraints must contain finite coefficients.")
+    return Fraction(str(value_float))
+
+
+def _ppl_feasibility(
+    hyperplanes: Matrix | Sequence[Mapping[int, float]],
+    c: float,
+    ambient_dim: int,
+    lower_bound: float | None,
+) -> np.ndarray | None:
+    """Solve ``A x >= c`` exactly with PPL.
+
+    This is deliberately the negative-result path, not the default search:
+    floating-point LP is dramatically faster on the large solid cones common
+    in CYTools, while an exact fallback is what makes ``None`` a mathematical
+    conclusion rather than a tolerance-dependent solver opinion.
+    """
+    constraints = ppl.Constraint_System()
+
+    for row in hyperplanes:
+        coefficients = [Fraction(0) for _ in range(ambient_dim)]
+        for index, value in _entries(row):
+            coefficients[int(index)] = _fraction(value)
+        constant = -_fraction(c)
+        denominator = math.lcm(
+            constant.denominator,
+            *(coefficient.denominator for coefficient in coefficients),
+        )
+        integer_coefficients = [
+            int(coefficient * denominator) for coefficient in coefficients
+        ]
+        integer_constant = int(constant * denominator)
+        expression = ppl.Linear_Expression(integer_coefficients, integer_constant)
+        constraints.insert(expression >= 0)
+
+    if lower_bound is not None:
+        lower = _fraction(lower_bound)
+        for index in range(ambient_dim):
+            denominator = lower.denominator
+            coefficients = [0 for _ in range(ambient_dim)]
+            coefficients[index] = denominator
+            expression = ppl.Linear_Expression(coefficients, -int(lower * denominator))
+            constraints.insert(expression >= 0)
+
+    polyhedron = ppl.C_Polyhedron(constraints)
+    if polyhedron.is_empty():
+        return None
+
+    for generator in polyhedron.minimized_generators():
+        if generator.is_point():
+            divisor = int(generator.divisor())
+            return np.asarray(
+                [
+                    int(coefficient) / divisor
+                    for coefficient in generator.coefficients()
+                ],
+                dtype=float,
+            )
+    raise SolverFailure("PPL found a nonempty region but returned no point.")
 
 
 def highs_feasibility(
@@ -63,8 +136,7 @@ def highs_feasibility(
 ) -> np.ndarray | None:
     """
     **Description:**
-    LP feasibility on HiGHS. The default engine: an exact simplex basis
-    status, so infeasibility is proved rather than inferred from a failure.
+    LP feasibility on HiGHS, with exact PPL verification of negative results.
 
     **Arguments:**
     - `hyperplanes`: The constraint matrix A, dense or as sparse rows.
@@ -79,9 +151,8 @@ def highs_feasibility(
     import highspy
 
     if len(hyperplanes) == 0:
-        return np.ones(ambient_dim)
+        return _unconstrained_point(ambient_dim, lower_bound)
 
-    hp_iter = _rows(hyperplanes)
     n = ambient_dim
 
     if isinstance(hyperplanes, np.ndarray):
@@ -98,7 +169,7 @@ def highs_feasibility(
         grading = np.zeros(n)
         for v in hyperplanes:
             starts.append(len(index))
-            for ind, val in hp_iter(v):
+            for ind, val in _entries(v):
                 index.append(int(ind))
                 value.append(float(val))
                 grading[int(ind)] += float(val)
@@ -129,7 +200,7 @@ def highs_feasibility(
     if status == highspy.HighsModelStatus.kOptimal:
         return np.asarray(h.getSolution().col_value, dtype=float)
     if status == highspy.HighsModelStatus.kInfeasible:
-        return None
+        return _ppl_feasibility(hyperplanes, c, ambient_dim, lower_bound)
     raise SolverFailure(f"HiGHS returned status {status!r}, which is not a proof.")
 
 
@@ -145,9 +216,8 @@ def _ortools_feasibility(
     from ortools.linear_solver import pywraplp
 
     if len(hyperplanes) == 0:
-        return np.ones(ambient_dim)
+        return _unconstrained_point(ambient_dim, lower_bound)
 
-    hp_iter = _rows(hyperplanes)
     solver = pywraplp.Solver.CreateSolver(solver_name.upper())
     if verbose:
         solver.EnableOutput()
@@ -156,14 +226,16 @@ def _ortools_feasibility(
     lower = -solver.infinity() if lower_bound is None else lower_bound
     var = [var_type(lower, solver.infinity(), f"x_{i}") for i in range(ambient_dim)]
 
+    obj_vec = np.zeros(ambient_dim)
     for v in hyperplanes:
         cons = solver.Constraint(c, solver.infinity())
-        for ind, val in hp_iter(v):
+        for ind, val in _entries(v):
             cons.SetCoefficient(var[ind], float(val))
+            obj_vec[ind] += float(val)
 
     obj = solver.Objective()
     obj.SetMinimization()
-    obj_vec = np.asarray(hyperplanes).sum(axis=0) / len(hyperplanes)
+    obj_vec /= len(hyperplanes)
     for i in range(ambient_dim):
         obj.SetCoefficient(var[i], obj_vec[i])
 
@@ -171,7 +243,7 @@ def _ortools_feasibility(
     if status in (solver.FEASIBLE, solver.OPTIMAL):
         return np.array([x.solution_value() for x in var])
     if status == solver.INFEASIBLE:
-        return None
+        return _ppl_feasibility(hyperplanes, c, ambient_dim, lower_bound)
     names = [
         "OPTIMAL",
         "FEASIBLE",
@@ -230,7 +302,7 @@ def cpsat_feasibility(
     from ortools.sat.python import cp_model
 
     if len(hyperplanes) == 0:
-        return np.ones(ambient_dim)
+        return _unconstrained_point(ambient_dim, lower_bound)
 
     A = np.asarray(hyperplanes)
     if not np.all(A == np.rint(A)):

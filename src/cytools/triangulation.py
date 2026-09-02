@@ -36,6 +36,10 @@ from scipy.spatial import ConvexHull
 # CYTools imports
 from cytools._backends.engines import TRIANGULATE
 from cytools._backends.registry import RECOVERABLE, REGULAR
+
+#: Map historical public names to registry engines. CGAL and TOPCOM are linked
+#: inside ``triangulumancer``; QHull is provided by SciPy.
+_ENGINE_FOR_BACKEND = {"cgal": "heights", "qhull": "qhull", "topcom": "fine"}
 from cytools._compat import resolve_deprecated_bool
 from cytools._extensions import lazy_method
 from cytools._typing import (
@@ -180,7 +184,7 @@ class Triangulation:
         - `heights`: The heights specifying the regular triangulation. When not
             specified, construct based off of the backend:
                 - (CGAL) a Delaunay triangulation,
-                - (QHULL) triangulation from random heights near Delaunay, or
+                - (QHULL) a floating-point Delaunay triangulation, or
                 - (TOPCOM) placing triangulation.
             Heights can only be specified when using CGAL or QHull as the
             backend.
@@ -321,10 +325,9 @@ class Triangulation:
                     msg = "Simplices don't form valid triangulation."
                     raise ValueError(msg)
         else:
-            # No simplices were given: resolve the historical public names to
-            # the engines they actually meant. "cgal" and "topcom" are kept
-            # as drop-in API spellings even though neither library is called.
-            self._is_regular = True if backend == "cgal" else None
+            # No simplices were given: resolve historical public names to
+            # adapters. CGAL and TOPCOM run inside triangulumancer; keeping the
+            # public spellings preserves both provenance and compatibility.
             self._is_valid = True
 
             default_triang = heights is None
@@ -346,26 +349,31 @@ class Triangulation:
             triang_pts = self.points(optimal=not self._is_fulldim)
             problem = {"heights": heights_arr, "dim": self.dim()}
             if backend == "cgal":
+                # This is the automatic path because ``"cgal"`` is the
+                # historical default. A scoped registry override can replace
+                # it, but cannot silently weaken regularity.
                 engine = TRIANGULATE.resolve(
                     need=(REGULAR, RECOVERABLE), problem=problem
                 )
-                self._simplices = engine.run(triang_pts, heights_arr)
-            elif backend == "qhull":
-                engine = TRIANGULATE["qhull"]
-                if not engine.available():
-                    raise RuntimeError("The QHull triangulation engine is unavailable.")
-                self._simplices = engine.run(triang_pts, heights_arr)
             else:
-                engine = TRIANGULATE["fine"]
-                if not engine.available():
-                    raise RuntimeError(
-                        "The triangulumancer fine-triangulation engine is unavailable."
-                    )
-                self._simplices = engine.run(triang_pts)
+                # Established backend strings are explicit implementation
+                # choices. Preserve that API while sharing registry
+                # availability and applicability diagnostics.
+                engine = TRIANGULATE.select(_ENGINE_FOR_BACKEND[backend], problem)
+
+            # Regularity is a property of the engine, not of the spelling that
+            # selected it. `None` records "not established", which is the
+            # honest state for a floating-point lifted hull.
+            self._is_regular = True if REGULAR in engine.provides else None
+            self._simplices = engine.run(triang_pts, heights_arr)
+            if engine.name == "fine":
+                # TOPCOM did not consume the Delaunay heights prepared for the
+                # default path, so they are not a certificate for its output.
+                self._heights = None
 
             # a star can be obtained by pushing the origin far below the
             # others, which is cheaper than re-deriving one from the simplices
-            if make_star and backend == "cgal":
+            if make_star and engine.name == "heights":
                 if heights_arr is None:  # defensive; cgal always has heights
                     raise RuntimeError("The heights engine requires a height vector.")
                 origin_mask = np.zeros(heights_arr.size, dtype=bool)
@@ -389,7 +397,7 @@ class Triangulation:
                 [[self._labels[i] for i in s] for s in self._simplices]
             )
 
-            if make_star and backend != "cgal":
+            if make_star and engine.name != "heights":
                 before = {frozenset(s) for s in self._simplices}
                 _to_star(self)
                 if before != {frozenset(s) for s in self._simplices}:

@@ -55,9 +55,10 @@ CROSSOVERS: dict[str, Crossover] = {
     # NOT MEASURED. Inherited from upstream, where it gated the Mosek default
     # and printed a "this may not work" hint. Mosek is licence-gated and is
     # not installed in this environment, so the threshold cannot be checked
-    # here. It is retained only to order Mosek ahead of the open-source QP
-    # engines when a licence *is* present -- never to exclude anything, so a
-    # wrong value costs speed and not correctness.
+    # here. It is retained only to order the legacy Mosek and OSQP entries in
+    # problem-specific candidate lists. The certified HiGHS adapter remains
+    # the automatic engine on both sides, and this threshold never excludes an
+    # explicit choice, so a wrong value cannot change a mathematical result.
     "stretched_tip.osqp_to_mosek": Crossover(
         value=25,
         below="osqp",

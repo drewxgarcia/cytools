@@ -70,8 +70,9 @@ def ppl_hull(pts: Matrix) -> tuple[np.ndarray, np.ndarray]:
 def palp_hull(pts: Matrix) -> tuple[np.ndarray, np.ndarray]:
     """
     **Description:**
-    Exact convex hull via PALP. Integer arithmetic throughout; the faster of
-    the two exact engines above four dimensions.
+    Exact convex hull via PALP. Retained for reproduction of historical runs;
+    automatic selection uses the recoverable PPL adapter because PALP can
+    abort the interpreter above its compiled-in limits.
 
     **Arguments:**
     - `pts`: The input points, one per row.

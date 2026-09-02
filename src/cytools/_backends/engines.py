@@ -97,16 +97,8 @@ def _qpsolver(name: str):
     return check
 
 
-# applicability
-# -------------
-def _dim_at_least(key: str, threshold: float):
-    def applies(problem: Mapping[str, Any]) -> bool:
-        value = problem.get(key)
-        return value is None or value >= threshold
-
-    return applies
-
-
+# applicability and preference
+# ----------------------------
 def _dim_equals(key: str, wanted: int):
     def applies(problem: Mapping[str, Any]) -> bool:
         return problem.get(key) == wanted
@@ -121,6 +113,19 @@ def _dim_at_least_2(problem: Mapping[str, Any]) -> bool:
 
 
 _TIP_X = CROSSOVERS["stretched_tip.osqp_to_mosek"]
+
+
+def _tip_preference(engine: str, *, fallback: float = 0):
+    """Rank one side of the tip crossover without restricting support."""
+
+    def preference(problem: Mapping[str, Any]) -> float:
+        value = problem.get(_TIP_X.metric)
+        if value is None:
+            return fallback
+        preferred = _TIP_X.above if value >= _TIP_X.value else _TIP_X.below
+        return 0 if engine == preferred else 1
+
+    return preference
 
 
 # convex hull
@@ -175,10 +180,10 @@ CONVEX_HULL = Registry(
 
 # interior point / LP feasibility
 # ===============================
-# CP-SAT and SCIP search integer points over a bounded box, so neither can
-# certify that a *rational* cone is empty. They keep EXACT (integer
-# arithmetic) but not CERTIFIES_INFEASIBLE, which is exactly the distinction
-# that a single "is this backend better" ordering cannot express.
+# HiGHS, GLOP, and SCIP confirm every negative result with PPL before returning
+# ``None``. CP-SAT searches integer points in a fixed-width box, so it cannot
+# certify that a rational region is empty; it keeps EXACT integer arithmetic
+# but not CERTIFIES_INFEASIBLE.
 INTERIOR_POINT = Registry(
     task="interior_point",
     engines=(
@@ -199,7 +204,7 @@ INTERIOR_POINT = Registry(
         Engine(
             name="scip",
             run=lp.scip_feasibility,
-            provides=frozenset({EXACT, DETERMINISTIC, RECOVERABLE}),
+            provides=frozenset({CERTIFIES_INFEASIBLE, DETERMINISTIC, RECOVERABLE}),
             available=_installed("ortools"),
             why_unavailable="ortools is not installed",
         ),
@@ -216,20 +221,34 @@ INTERIOR_POINT = Registry(
 
 # tip of the stretched cone
 # =========================
-# Mosek first when licensed and the problem is large enough to want it; OSQP
-# otherwise. The LP engines are not registered here: they minimise a linear
-# functional and so return *a* point of the stretched cone rather than the
-# minimum-norm one, which is a different mathematical object. `Cone` reaches
-# for them explicitly, and says so.
+# HiGHS is first because it is a hard dependency and the only adapter here
+# whose negative result is confirmed exactly. Its primal-dual result is also
+# validated independently before it is returned. The other engines remain
+# useful explicit compatibility and differential-test choices, but ``None``
+# from them can mean that the solver gave up.
+#
+# The osqp/mosek crossover consequently no longer decides anything automatic,
+# which is the right outcome for a threshold that was inherited unmeasured.
+# It still records their relative order in problem-specific candidate lists.
+#
+# The LP engines are not registered here because they minimise a linear
+# functional and return *a* point of the stretched cone rather than its
+# minimum-norm point.
 STRETCHED_TIP = Registry(
     task="stretched_tip",
     engines=(
+        Engine(
+            name="highs",
+            run=qp.highs_tip,
+            provides=frozenset({CERTIFIES_INFEASIBLE, DETERMINISTIC, RECOVERABLE}),
+            available=_always,  # highspy is a hard dependency
+        ),
         Engine(
             name="mosek",
             run=qp.mosek_tip,
             provides=frozenset({DETERMINISTIC, RECOVERABLE}),
             available=lambda: _mosek_activated() and _qpsolver("mosek")(),
-            applies=_dim_at_least("dim", _TIP_X.value),
+            preference=_tip_preference("mosek"),
             why_unavailable="Mosek is not installed or its licence is not active",
         ),
         Engine(
@@ -237,6 +256,7 @@ STRETCHED_TIP = Registry(
             run=qp.osqp_tip,
             provides=frozenset({DETERMINISTIC, RECOVERABLE}),
             available=_qpsolver("osqp"),
+            preference=_tip_preference("osqp"),
             why_unavailable="osqp is not installed",
         ),
         Engine(
@@ -244,6 +264,7 @@ STRETCHED_TIP = Registry(
             run=qp.cvxopt_tip,
             provides=frozenset({DETERMINISTIC, RECOVERABLE}),
             available=_qpsolver("cvxopt"),
+            preference=lambda problem: 2,
             why_unavailable=(
                 "CVXOPT is unavailable; install the "
                 "`cytools-workbench[cvxopt]` optional extra"
@@ -255,10 +276,11 @@ STRETCHED_TIP = Registry(
 
 # triangulation
 # =============
-# Only `heights` is regular by construction. `fine` produces a fine
-# triangulation with no height certificate, and QHull's lifted hull is
-# floating point. The two names this replaces -- "cgal" and "topcom" -- named
-# libraries that this project does not use.
+# ``triangulumancer`` is the Python boundary for both native engines: its
+# height-induced triangulation uses CGAL and its fine triangulation uses
+# TOPCOM. Only ``heights`` carries a height certificate here. QHull performs
+# the lifted-hull construction in floating point and remains for explicit
+# compatibility and differential testing.
 TRIANGULATE = Registry(
     task="triangulate",
     engines=(

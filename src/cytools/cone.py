@@ -49,11 +49,13 @@ from cytools._backends.extremalrays import (
 from cytools._backends.extremalrays import (
     is_available as _extremalrays_available,
 )
+from cytools._backends.lp import SolverFailure
 from cytools._backends.normaliz import hilbert_basis as _normaliz_hilbert_basis
 from cytools._backends.ppl import ppl
 from cytools._backends.registry import (
     CERTIFIES_INFEASIBLE,
     RECOVERABLE,
+    EngineUnavailable,
 )
 
 # CYTools imports
@@ -1256,15 +1258,16 @@ class Cone:
         r"""
         **Description:**
         Finds the tip of the stretched cone. The stretched cone is defined as
-        the convex polyhedral region inside the cone that is at least a
-        distance `c` from any of its defining hyperplanes. Its tip is defined
-        as the point in this region with the smallest norm.
+        the region where pairing with every primitive integral facet normal is
+        at least `c`. Its tip is the point in this region with smallest norm.
+        This lattice-normal convention is not Euclidean distance to a facet,
+        which would additionally scale each constraint by the normal's norm.
 
         :::note
         This is a quadratic program: the norm of a vector is minimized subject
-        to linear constraints. OSQP solves it and is always installed; Mosek is
-        faster and more accurate at large ambient dimension but is closed
-        source and licence-gated, so it is used only when actually activated.
+        to linear constraints. HiGHS is the certified automatic engine. OSQP,
+        Mosek, and CVXOPT remain explicit compatibility and differential-test
+        choices.
 
         Both solve the stated problem. An LP over the same feasible region
         would be cheaper but returns *some* point of the stretched cone rather
@@ -1274,25 +1277,27 @@ class Cone:
 
         **Arguments:**
         - `c` *(float)*: A real positive number specifying the stretching of
-            the cone (i.e. the minimum distance to the defining hyperplanes).
+            the cone: the minimum pairing with each primitive facet normal.
         - `backend`: Optional compatibility selector. The quadratic engines
-            are `"mosek"`, `"osqp"`, and `"cvxopt"`; when omitted, the engine
-            registry selects one from the problem size and availability.
+            are `"highs"`, `"mosek"`, `"osqp"`, and `"cvxopt"`; when omitted,
+            the registry selects a recoverable engine whose negative result is
+            exactly verified.
         - `check` *(bool, optional, default=True)*: Flag that specifies whether
             to check if the output of the optimizer is consistent and satisfies
             `constraint_error_tol`.
-        - `constraint_error_tol` *(float, optional, default=1e-2)*: Error
+        - `constraint_error_tol` *(float, optional, default=5e-2)*: Error
             tolerance for the linear constraints.
-        - `max_iter` *(int, optional, default=10**6)*: The maximum number of
-            solver iterations. If this function is returning None, increasing
-            it (maximum permissible value: 2**31-1) might resolve the issue.
+        - `max_iter` *(int, optional, default=10**6)*: Maximum solver
+            iterations (maximum permissible value: 2**31-1).
         - `show_hints`: Whether to print diagnostic hints when no tip is found.
         - `verbose` *(boolean, optional)*: Whether to print extra diagnostic
             information (True) or not (False).
 
         **Returns:**
-        *(numpy.ndarray)* The vector specifying the location of the tip. If it
-            could not be found then None is returned.
+        *(numpy.ndarray)* The vector specifying the location of the tip.
+            Automatic selection returns `None` only when the stretched region
+            is exactly proved empty. An explicitly selected legacy solver may
+            also return `None` when it does not converge.
 
         **Example:**
         We construct two cones and find the locations of the tips of the
@@ -1313,37 +1318,38 @@ class Cone:
             return np.ones(self._ambient_dim)
 
         problem = {"dim": self.ambient_dim(), "rows": len(hp)}
-        if backend in ("highs", "glop"):
+        # "glop" names an LP engine, which minimises a linear functional and
+        # so returns *a* point of the stretched cone rather than its
+        # minimum-norm point. "highs" used to be refused alongside it, but
+        # that was a statement about how `lp.py` calls HiGHS: HiGHS solves
+        # convex QPs too, and `qp.highs_tip` is now the default engine here.
+        if backend == "glop":
             raise ValueError(
                 f"backend={backend!r} solves LP feasibility, not the "
                 "minimum-norm quadratic problem. Use find_interior_point() "
                 "for an arbitrary point in the stretched cone."
             )
         if backend is None:
-            engine = STRETCHED_TIP.resolve(need=(RECOVERABLE,), problem=problem)
+            engine = STRETCHED_TIP.resolve(
+                need=(CERTIFIES_INFEASIBLE, RECOVERABLE), problem=problem
+            )
         else:
-            engine = STRETCHED_TIP[backend]
-            if not engine.available():
+            try:
+                engine = STRETCHED_TIP.select(backend, problem)
+            except EngineUnavailable:
                 if backend == "cvxopt":
                     raise ImportError(
                         "The CVXOPT backend is optional. Install it with "
                         '`python -m pip install "cytools-workbench[cvxopt]"`.'
-                    )
-                raise RuntimeError(
-                    f"The {backend!r} stretched-tip engine is unavailable."
-                )
-            if not engine.applies(problem):
-                raise RuntimeError(
-                    f"The {backend!r} stretched-tip engine does not apply "
-                    f"to problem {problem}."
-                )
+                    ) from None
+                raise
 
         solution = engine.run(hp, c, max_iter, verbose)
         G = -1 * sparse.csc_matrix(hp, dtype=float)
 
         # parse solution
         if solution is None:
-            if show_hints:
+            if show_hints and CERTIFIES_INFEASIBLE not in engine.provides:
                 print("Calculated 'solution' was None...", end=" ")
                 print("some potential reasons why:")
 
@@ -1429,7 +1435,7 @@ class Cone:
 
         **Arguments:**
         - `c`: A real positive number specifying the stretching of the cone
-            (i.e. the minimum distance to the defining hyperplanes). Only used
+            (the minimum pairing with each primitive facet normal). Only used
             if rays are not known.
         - `lower`: A lower bound on the components of the interior point.
         - `integral`: A flag that specifies whether the point should have
@@ -1518,6 +1524,11 @@ class Cone:
                     )
             solution = engine.run(H, c, self._ambient_dim, lower, verbose)
         if solution is None:
+            if backend in ("mosek", "osqp", "cvxopt"):
+                raise SolverFailure(
+                    f"The {backend!r} quadratic solver returned no point; "
+                    "this is not a proof that the cone has empty interior."
+                )
             return None
 
         # Containment test for every hyperplane at once. Iterating the rows in
@@ -1536,8 +1547,10 @@ class Cone:
 
         # Make sure that the solution is valid
         if check and not all_positive(solution):
-            warnings.warn("The solution that was found is invalid.")
-            return None
+            raise SolverFailure(
+                "The interior-point engine returned a point outside the "
+                "strict interior."
+            )
 
         # Finally, round to an integer if necessary
         if integral:
@@ -1547,7 +1560,10 @@ class Cone:
                 if all_positive(int_sol):
                     break
                 if i == n_tries - 1:
-                    return None
+                    raise SolverFailure(
+                        "Could not convert the feasible point to a strict "
+                        "integral interior point after 999 rescalings."
+                    )
             solution = int_sol
 
         return solution
