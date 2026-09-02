@@ -251,3 +251,49 @@ it just does not cover construction.
 * **Python micro-optimization of the enumerate path is exhausted.** After the
   five changes above the profile is 38% native C++ enumerator and ~23%
   external LP solver; every remaining Python candidate measured 1-5%.
+
+## Status: what of Gendler's work is reproduced
+
+### arXiv:2310.06820 "Counting Calabi-Yau Threefolds"
+| result | status |
+|---|---|
+| Table 1: # polytopes / # FRSTs / # FRST classes, h11=1..5 (30 numbers) | **exact** |
+| Table 4: same three columns, h11=6,7 (6 numbers) | **exact** |
+| Table 1 "# CYs" (Wall classes), h11=1 | **exact** (5 = 4 + 1; `GL(1,Z)={-1,1}`) |
+| Table 1 "# CYs" (Wall classes), h11=2 | **matches** (29 = 27 + 2; stable over tested bounds) |
+| Table 1 "# CYs", h11=3 | upper bound only -- see below |
+
+The "# CYs" column is the paper's *headline* claim, and needs Wall data
+(`kappa_ijk`, `c_2`) rather than combinatorics -- `wall_classes.py`. Two
+geometries are equivalent iff some `Lambda` in `GL(h11,Z)` carries one pair to
+the other. At h11=1 the search is exhaustive. At h11=2 the answer stabilizes
+as the bound grows (30 -> 29 -> 29), which is strong reproduction evidence but
+not a proof of inequivalence: `GL(2,Z)` is infinite.
+
+**Why h11>=3 needs a different algorithm.** A bounded search can prove
+equivalence (by exhibiting `Lambda`) but never inequivalence, so it can only
+over-count. At h11=3, bound=1 gives 210 against the true 186. Brute force is
+also exponential in h11. The paper's actual method is to use *GV invariants* to
+guess candidate `Lambda` -- generators of the Mori cone with equal GV invariants
+must map to each other, which collapses the search to a handful of candidates.
+Implementing that is the next step for this column.
+
+Also worth noting: the bucketing here must use only genuinely basis-independent
+invariants. Sorted `kappa_iii`, `kappa.sum()`, `c2.sum()` are *not* invariant
+under `GL(n,Z)` -- an early version of this script used them and inflated the
+count by splitting equivalent geometries.
+
+### arXiv:2603.11173 "Holes in Calabi-Yau Effective Cones" -- complete range
+| h11 | geometries with non-trivial Hilbert basis elts | with a strictly-interior one | paper |
+|---|---|---|---|
+| 2 | 1 | 0 | 1 / 0 |
+| 3 | 13 | 0 | 13 / 0 |
+| 4 | 88 | 4 | 88 / 4 |
+| 5 | 434 | 4 | -- / 4 |
+| 6 | 1,587 | 9 | -- / 9 |
+
+Every count the paper states is matched, across its full h11 <= 6 range.
+
+### arXiv:2212.10573
+Ensemble size "1464 polytopes with 2 <= h11 <= 4" == our favorable counts
+36 + 243 + 1185. Independent confirmation of the favorability split.
