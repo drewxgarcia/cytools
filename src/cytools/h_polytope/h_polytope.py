@@ -190,9 +190,6 @@ def poly_h_to_v(
     """
     hypers = np.array(hypers)  # don't use .asarray so as to ensure we copy them
 
-    # preliminary
-    dim = len(hypers[0]) - 1
-
     # scale hyperplanes to be integral
     if hypers.dtype != int:
         if verbosity >= 1:
@@ -206,13 +203,13 @@ def poly_h_to_v(
         hypers = np.rint(hypers).astype(int)
 
     # do the work
+    # `ppl.Linear_Expression(coefficients, inhomogeneous)` rather than an
+    # object-dtype matmul over an array of `ppl.Variable`: numpy falls back to
+    # a Python loop of ppl arithmetic per entry, which measured ~2.7x the cost
+    # of building the expression directly. Same constraints either way.
     cs = ppl.Constraint_System()
-    vrs = np.array([ppl.Variable(i) for i in range(dim)])
-
-    # insert points to generator system
-    for linexp in hypers[:, :-1] @ vrs + hypers[:, -1]:
-        cs.insert(linexp >= 0)
-        # cs.insert(sum(c[i] * vrs[i] for i in range(dim)) + c[-1] >= 0)
+    for row in hypers.tolist():
+        cs.insert(ppl.Linear_Expression(row[:-1], row[-1]) >= 0)
 
     # find polytope, vertices
     # -----------------------

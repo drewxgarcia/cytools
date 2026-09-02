@@ -21,6 +21,7 @@ to discover whether it exists would defeat the point, and in one case
 
 from __future__ import annotations
 
+import functools
 import importlib.util
 from collections.abc import Mapping
 from typing import Any
@@ -39,6 +40,7 @@ from cytools._backends.registry import (
 
 __all__ = [
     "CONVEX_HULL",
+    "clear_availability_cache",
     "INTERIOR_POINT",
     "LINEAR_SOLVE",
     "STRETCHED_TIP",
@@ -49,16 +51,52 @@ __all__ = [
 
 # availability
 # ------------
+@functools.cache
+def _module_available(module: str) -> bool:
+    """Whether `module` can be imported, resolved once per process.
+
+    Memoised because the answer cannot change within a run and asking is not
+    cheap: `find_spec` re-walks the path finders and stats the filesystem,
+    measured at ~100 us per call. Uncached, that was paid for every engine on
+    every resolution -- `INTERIOR_POINT.resolve()` cost 514 us, of which ~400
+    was four engines re-deriving that ortools and highspy are still installed
+    -- and again for every engine in every registry each time
+    `cytools.provenance.fingerprint` built its record.
+
+    This preserves the property that matters: nothing is probed at *import*
+    time, so loading this module still does not touch an optional dependency.
+    The first ask happens at resolution, exactly as before; only the repeats
+    are free. A package installed midway through a live session will not be
+    picked up, which is a trade worth making explicit here rather than paying
+    for on every call.
+    """
+    try:
+        return importlib.util.find_spec(module) is not None
+    except (ImportError, ValueError):
+        return False
+
+
 def _installed(module: str):
     """A predicate reporting whether `module` can be imported."""
 
     def check() -> bool:
-        try:
-            return importlib.util.find_spec(module) is not None
-        except (ImportError, ValueError):
-            return False
+        return _module_available(module)
 
     return check
+
+
+def clear_availability_cache() -> None:
+    """Forget which optional dependencies are installed.
+
+    Availability is memoised, since it cannot change within a run and probing
+    costs ~100 us. Tests are the exception: several simulate a missing
+    dependency by stubbing `sys.modules`, and a verdict cached before the stub
+    was installed would silently outlive it -- which is exactly how the CHOLMOD
+    fallback test started passing a stale `True`. The suite clears this between
+    tests; see `tests/conftest.py`.
+    """
+    _module_available.cache_clear()
+    _qpsolver_available.cache_clear()
 
 
 def _always() -> bool:
@@ -71,7 +109,7 @@ def _mosek_activated() -> bool:
     Deferred import: `cytools.config` is domain-adjacent, and this is only
     reached at resolution time.
     """
-    if importlib.util.find_spec("mosek") is None:
+    if not _module_available("mosek"):
         return False
     import cytools.config as config
 
@@ -87,14 +125,20 @@ def _qpsolver(name: str):
     it for the engines it can use.
     """
 
-    def check() -> bool:
-        try:
-            import qpsolvers
-        except (ImportError, OSError):
-            return False
-        return name in qpsolvers.available_solvers
+    # `_qpsolver_available` owns the cache. Caching this closure as well would
+    # leave a stale outer verdict behind when `clear_availability_cache()`
+    # clears the shared cache (notably in tests that simulate a missing extra).
+    return lambda: _qpsolver_available(name)
 
-    return check
+
+@functools.cache
+def _qpsolver_available(name: str) -> bool:
+    """Whether qpsolvers can dispatch to `name`. Memoised, as for modules."""
+    try:
+        import qpsolvers
+    except (ImportError, OSError):
+        return False
+    return name in qpsolvers.available_solvers
 
 
 # applicability and preference

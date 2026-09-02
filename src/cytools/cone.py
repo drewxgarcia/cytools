@@ -1935,13 +1935,13 @@ class Cone:
 
         # we just have hyperplanes... a bit harder
         if backend == "ppl":
+            # One `Linear_Expression` per hyperplane, not a Python `sum` of
+            # ppl products: the generator-expression form pays an object
+            # multiply and add per coefficient, which is the ambient dimension
+            # times the number of hyperplanes.
             cs = ppl.Constraint_System()
-            variables = [ppl.Variable(i) for i in range(self._ambient_dim)]
-            for hyperplane in self.hyperplanes():
-                cs.insert(
-                    sum(hyperplane[i] * variables[i] for i in range(self._ambient_dim))
-                    >= 0
-                )
+            for hyperplane in self.hyperplanes().tolist():
+                cs.insert(ppl.Linear_Expression(hyperplane, 0) >= 0)
             polyhedron = ppl.C_Polyhedron(cs)
             self._is_solid = polyhedron.affine_dimension() == self._ambient_dim
         else:

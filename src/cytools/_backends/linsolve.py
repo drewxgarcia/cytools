@@ -71,10 +71,12 @@ def superlu_solve(M: sp.csr_matrix, C) -> np.ndarray | None:
     **Returns:**
     The solution, or None if the solve failed.
     """
+    # One transpose, reused. `M.transpose()` was called twice here, which also
+    # made this the only one of the two engines not to hoist it -- `cholmod_solve`
+    # already did.
+    Mt = M.transpose()
     try:
-        solution = sp.linalg.spsolve(
-            M.transpose() * M, -M.transpose() * C, permc_spec="MMD_ATA"
-        )
+        solution = sp.linalg.spsolve(Mt @ M, -Mt @ C, permc_spec="MMD_ATA")
     except Exception:
         return None
     return np.asarray(solution).ravel()

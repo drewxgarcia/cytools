@@ -49,6 +49,38 @@ def _integral(matrix: Matrix) -> list[list[int]]:
     if array.ndim != 2:
         raise ValueError(f"expected a 2-dimensional matrix, got shape {array.shape}")
 
+    kind = array.dtype.kind
+
+    # An integer dtype cannot hold a non-integer, so there is nothing to check
+    # and `tolist()` does the whole conversion in C. This is the case that
+    # matters: the callers are exact rank and determinant on lattice ray
+    # matrices, and every element measured reaching here was int64 -- 499,773
+    # of 499,773 across eight Mori cones. The elementwise loop below was
+    # spending 56% of `Cone.is_solid` re-deriving what the dtype already
+    # guarantees, half a million `int()` calls and list appends at a time.
+    if kind in "iu":
+        return array.tolist()
+
+    # A float dtype needs the check, but it vectorises: one pass instead of an
+    # `int()` and a comparison per element. `np.rint` rather than a cast, so
+    # the comparison is against the value itself and never against a truncation
+    # of it.
+    if kind == "f":
+        if not np.isfinite(array).all() or not (np.rint(array) == array).all():
+            bad = array[~np.isfinite(array) | (np.rint(array) != array)][0]
+            raise ValueError(
+                f"exact integer linear algebra needs an integral matrix; found {bad!r}"
+            )
+        # int64 covers any float64 that is exactly an integer up to 2**63;
+        # beyond that fall through to the exact per-element path, since the
+        # cast would wrap where Python's int would not.
+        if array.size and np.abs(array).max() < 2.0**62:
+            return array.astype(np.int64).tolist()
+        return [[int(value) for value in row] for row in array.tolist()]
+
+    # Object dtype is why the elementwise path stays: it is how integers wider
+    # than float64 are carried, which is precisely the regime this module
+    # exists for, and there is no vectorised check for it.
     rows = []
     for row in array:
         entries = []
@@ -114,6 +146,8 @@ def is_unimodular(matrix: Matrix) -> bool:
     *(bool)* Whether the matrix is unimodular.
     """
     rows = _integral(matrix)
-    if len(rows) != len(rows[0]):
+    if not rows or len(rows) != len(rows[0]):
+        # `not rows` first: an empty matrix used to reach `rows[0]` and raise
+        # IndexError instead of saying what was wrong.
         raise ValueError("unimodularity is a property of a square matrix")
     return abs(int(fmpz_mat(rows).det())) == 1

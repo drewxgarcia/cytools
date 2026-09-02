@@ -10,6 +10,7 @@ import pytest
 from flint import fmpz_mat
 
 from cytools import Cone
+from cytools._backends.arith import exact_rank, is_unimodular
 
 
 def unimodular(n: int, mixes: int = 3, seed: int = 0) -> np.ndarray:
@@ -87,3 +88,28 @@ def test_a_non_simplicial_cone_is_rejected_before_any_determinant():
     cone = Cone([[1, 0, 0], [0, 1, 0], [0, 0, 1], [1, 1, -1]])
     assert not cone.is_simplicial()
     assert cone.is_smooth() is False
+
+
+def test_exact_arithmetic_accepts_integral_float_matrices():
+    matrix = np.array([[1.0, 2.0], [3.0, 4.0]])
+
+    assert exact_rank(matrix) == 2
+    assert is_unimodular(matrix) is False
+
+
+@pytest.mark.parametrize(
+    "matrix",
+    [
+        np.array([[1.0, 0.5]]),
+        np.array([[1.0, np.inf]]),
+        np.array([[1.0, np.nan]]),
+    ],
+)
+def test_exact_arithmetic_rejects_non_integral_float_matrices(matrix):
+    with pytest.raises(ValueError, match="integral matrix"):
+        exact_rank(matrix)
+
+
+def test_unimodularity_rejects_an_empty_matrix_cleanly():
+    with pytest.raises(ValueError, match="square matrix"):
+        is_unimodular(np.empty((0, 0), dtype=np.int64))

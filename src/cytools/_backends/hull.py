@@ -46,12 +46,17 @@ def ppl_hull(pts: Matrix) -> tuple[np.ndarray, np.ndarray]:
     The inequalities and the vertices, both integer arrays.
     """
     pts = np.asarray(pts)
-    dim = pts.shape[1]
 
+    # `ppl.Linear_Expression(row, 0)` rather than an object-dtype `pts @ vrs`
+    # over an array of `ppl.Variable`. The matmul looks tidier but numpy has to
+    # fall back to a Python loop of ppl multiplications and additions for every
+    # entry: measured at 56 us of the 77 us spent building the generator system
+    # for a (12, 4) input, against 29 us for this. The two produce the same
+    # polyhedron -- checked with ppl's own equality -- and this is the spelling
+    # already used in `cone.py` and the LP adapters.
     gs = ppl.Generator_System()
-    vrs = np.array([ppl.Variable(i) for i in range(dim)])
-    for linexp in pts @ vrs:
-        gs.insert(ppl.point(linexp))
+    for row in pts.tolist():
+        gs.insert(ppl.point(ppl.Linear_Expression(row, 0)))
     poly = ppl.C_Polyhedron(gs)
 
     ineqs = np.array(

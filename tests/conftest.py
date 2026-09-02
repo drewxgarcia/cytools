@@ -86,6 +86,25 @@ def pytest_collection_modifyitems(config, items):
     items[:] = selected
 
 
+@pytest.fixture(autouse=True)
+def _fresh_engine_availability():
+    """Start every test with no memoised dependency-availability verdicts.
+
+    `cytools._backends.engines` caches whether each optional dependency is
+    importable, because probing costs ~100 us and the answer cannot change
+    within a run. Tests break that assumption on purpose: they stub
+    `sys.modules` to simulate an absent package. Without this, a verdict
+    cached by an earlier test outlives the stub and the simulation quietly does
+    nothing -- observed as the CHOLMOD fallback test seeing `True` for
+    scikit-sparse it had just hidden.
+    """
+    from cytools._backends.engines import clear_availability_cache
+
+    clear_availability_cache()
+    yield
+    clear_availability_cache()
+
+
 @pytest.fixture
 def experimental_features():
     """
