@@ -83,7 +83,7 @@ def scan_one(verts):
         interior.append(bool((A @ h > 0).all()))
     if not nt:
         return None
-    return (int(cy.h21()), nt, interior)
+    return (int(cy.h12()), nt, interior)
 
 
 def _worker(v):
@@ -138,7 +138,7 @@ def run(h11, workers):
     mine_int = defaultdict(list)
     for h21, nt, ii in hits:
         mine[h21].extend(nt)
-        mine_int[h21].extend(c for c, i in zip(nt, ii) if i)
+        mine_int[h21].extend(c for c, i in zip(nt, ii, strict=True) if i)
 
     if h11 == 2:
         paper, ours, what = PAPER_H11_2, mine, "all non-trivial HB elements"

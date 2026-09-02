@@ -1,0 +1,70 @@
+{
+  "n_cores": 11,
+  "platform": "darwin",
+  "vertex_counts": [
+    13,
+    14,
+    15,
+    16,
+    17
+  ],
+  "scan_s": 0.8100647919927724,
+  "results": [
+    {
+      "n_geometries": 1500,
+      "n_ok": 1500,
+      "workers": 1,
+      "wall_s": 62.39491779200034,
+      "startup_s": 0.0,
+      "cpu_s": 62.889637,
+      "geoms_per_s": 24.040419525840214,
+      "geoms_per_s_per_core": 24.040419525840214,
+      "cpu_s_per_geom": 0.04192642466666667,
+      "peak_rss_mb": 675.67616,
+      "polytopes_per_geom": 2.0,
+      "oversubscribed": false
+    },
+    {
+      "n_geometries": 1500,
+      "n_ok": 1500,
+      "workers": 2,
+      "wall_s": 31.915151334018447,
+      "startup_s": 1.2950468749622814,
+      "cpu_s": 0.03889100000000667,
+      "geoms_per_s": 46.99962047183357,
+      "geoms_per_s_per_core": 23.499810235916787,
+      "cpu_s_per_geom": 2.592733333333778e-05,
+      "peak_rss_mb": 675.67616,
+      "polytopes_per_geom": 2.0,
+      "oversubscribed": false
+    },
+    {
+      "n_geometries": 1500,
+      "n_ok": 1500,
+      "workers": 4,
+      "wall_s": 17.110172833956312,
+      "startup_s": 1.5187547079985961,
+      "cpu_s": 0.04951499999998532,
+      "geoms_per_s": 87.66714483579891,
+      "geoms_per_s_per_core": 21.916786208949727,
+      "cpu_s_per_geom": 3.300999999999021e-05,
+      "peak_rss_mb": 675.67616,
+      "polytopes_per_geom": 2.0,
+      "oversubscribed": false
+    },
+    {
+      "n_geometries": 1500,
+      "n_ok": 1500,
+      "workers": 8,
+      "wall_s": 11.056044041004498,
+      "startup_s": 1.9757991670048796,
+      "cpu_s": 0.07027299999998604,
+      "geoms_per_s": 135.67239732736425,
+      "geoms_per_s_per_core": 16.95904966592053,
+      "cpu_s_per_geom": 4.684866666665736e-05,
+      "peak_rss_mb": 675.67616,
+      "polytopes_per_geom": 2.0,
+      "oversubscribed": false
+    }
+  ]
+}

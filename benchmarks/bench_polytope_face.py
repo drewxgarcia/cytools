@@ -47,8 +47,7 @@ def _collect_faces(polys, dims=None):
             d = p.dimension()
             face_dims = dims if dims is not None else range(1, d)
             for fd in face_dims:
-                for f in p.faces(fd):
-                    results.append(f)
+                results.extend(p.faces(fd))
         except Exception:
             pass
     return results

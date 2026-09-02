@@ -126,7 +126,7 @@ def run(h11, workers, limit=None):
     if h11 in PAPER and not limit:
         print(f"  {'quantity':<16} {'this fork':>10} {'paper':>10}   status")
         allok = True
-        for lab, m, p in zip(labels, mine, PAPER[h11]):
+        for lab, m, p in zip(labels, mine, PAPER[h11], strict=True):
             ok = m == p
             allok &= ok
             print(f"  {lab:<16} {m:>10} {p:>10}   {'MATCH' if ok else 'DIFF'}")
@@ -146,7 +146,7 @@ def run(h11, workers, limit=None):
                 f"FRSTs={agg['frst_non']} cls={agg['cls_non']})"
             )
         else:
-            for lab, m in zip(labels, mine):
+            for lab, m in zip(labels, mine, strict=True):
                 print(f"  {lab:<16} {m:>10}")
     sys.stdout.flush()
     return agg

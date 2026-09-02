@@ -43,7 +43,10 @@ import argparse
 import json
 import os
 import resource
+import statistics
+import subprocess
 import sys
+import threading
 import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -85,16 +88,153 @@ def install_polytope_counter():
     # should object to, so the objection is acknowledged here rather than dodged
     # via `setattr`, which would hide the same thing without saying so.
     Polytope.__init__ = counting_init
-    _COUNTER_GET = lambda: state["n"]
-    return _COUNTER_GET
+
+    def _counter_get():
+        return state["n"]
+
+    return _counter_get
 
 
 def peak_rss_bytes() -> int:
-    """High-water RSS for this process and all reaped children."""
+    """High-water RSS for this process and all reaped children.
+
+    A *lifetime* maximum that only ever ratchets up. Reported for continuity,
+    but it is the wrong number to judge memory by, for three reasons that all
+    bit in practice:
+
+    - It includes the scan. `load_vertices` runs before any timing, and the
+      Arrow decode buffers it allocates reached 274 MB at `batch_size=32768`
+      while `pyarrow.total_allocated_bytes()` was 0 afterwards -- entirely
+      transient, and nothing to do with the compute pipeline.
+    - It never resets between worker counts, so every row after the first
+      reports the maximum of all rows before it. The committed 2026-08-27
+      baseline shows `peak_rss_mb` as exactly 675.67616 for workers=1, 2, 4
+      *and* 8: one number, repeated, conveying nothing per row.
+    - It ratchets with allocator high-water as N grows, in a way that tracks
+      churn rather than footprint. Measured across two library generations
+      whose steady-state RSS was 614 MB and 613 MB, this metric read 666 MB
+      and 708 MB and looked like a 6% regression.
+
+    `steady_rss_mb` is the number that matters, because `landscape` divides
+    available memory by a per-worker footprint to cap worker count.
+    """
     scale = 1 if sys.platform == "darwin" else 1024  # ru_maxrss units differ
     me = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss * scale
     kids = resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss * scale
     return max(me, kids)
+
+
+def tree_rss_bytes() -> int:
+    """*Current* RSS of this process plus its direct children.
+
+    Current, not high-water. Children are included because with a pool the
+    workers hold the footprint, and `ps` is used rather than psutil to avoid
+    adding a dependency to the harness.
+
+    Honest about what this does and does not isolate. Worker processes are
+    destroyed at pool teardown, so their footprint genuinely leaves the tree
+    and does not contaminate a later row -- which is the contamination
+    `ru_maxrss` cannot avoid. The *parent's* own arenas are stickier: CPython
+    does not promptly return freed memory to the OS, so freeing 100 MB inside
+    this process leaves RSS unchanged (measured). Read this as "what the
+    machine is holding for this run", not as an allocation total.
+    """
+    me = os.getpid()
+    out = subprocess.run(
+        ["ps", "-Ao", "rss=,pid=,ppid="], capture_output=True, text=True, timeout=10
+    )
+    total = 0
+    for line in out.stdout.splitlines():
+        parts = line.split()
+        if len(parts) != 3:
+            continue
+        try:
+            rss, pid, ppid = (int(x) for x in parts)
+        except ValueError:
+            continue
+        if pid == me or ppid == me:
+            total += rss * 1024  # ps reports KiB on both platforms
+    return total
+
+
+def arrow_pool_peak_bytes() -> float:
+    """Arrow's own allocation high-water, or nan when pyarrow is absent.
+
+    Recorded separately so the scan's decode buffers are attributable instead
+    of silently inflating a number labelled as the pipeline's memory.
+    """
+    try:
+        import pyarrow as pa
+
+        return float(pa.default_memory_pool().max_memory())
+    except Exception:
+        return float("nan")
+
+
+class RssSampler(threading.Thread):
+    """Samples process-tree RSS on an interval, for a steady-state figure.
+
+    A median over the timed region, not a maximum: one transient spike is not
+    the footprint that decides how many workers fit on a machine.
+    """
+
+    def __init__(self, interval: float = 0.1) -> None:
+        super().__init__(daemon=True)
+        self.interval = interval
+        self.samples: list[int] = []
+        self._stop = threading.Event()
+
+    def run(self) -> None:
+        while not self._stop.wait(self.interval):
+            try:
+                self.samples.append(tree_rss_bytes())
+            except Exception:  # sampling must never break a measurement
+                pass
+
+    def stop(self) -> None:
+        self._stop.set()
+        self.join(timeout=5)
+
+    def median_bytes(self) -> float:
+        return statistics.median(self.samples) if self.samples else float("nan")
+
+    def max_bytes(self) -> float:
+        return float(max(self.samples)) if self.samples else float("nan")
+
+
+def performance_cores() -> int:
+    """Cores worth scheduling a worker on, not every core the OS reports.
+
+    `os.cpu_count()` counts efficiency cores too. On this M3 Pro that is 11
+    against 5 performance cores, and the difference is not cosmetic: it decides
+    whether a row is oversubscribed. The 1500-geometry sweep ran 8 workers on 5
+    performance cores and reported `oversubscribed=False`, so a 67% scaling
+    figure looked like a parallelism defect rather than the expected result of
+    asking for more workers than there are fast cores.
+
+    `CYTOOLS_MAX_WORKERS` overrides, matching the environment variable the
+    library honours, so a constrained CI runner can state its own budget.
+    """
+    override = os.environ.get("CYTOOLS_MAX_WORKERS")
+    if override:
+        try:
+            return max(1, int(override))
+        except ValueError:
+            pass
+    if sys.platform == "darwin":
+        try:
+            out = subprocess.run(
+                ["sysctl", "-n", "hw.perflevel0.logicalcpu"],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            perf = int(out.stdout.strip())
+            if perf > 0:
+                return perf
+        except (OSError, ValueError, subprocess.SubprocessError):
+            pass
+    return os.cpu_count() or 1
 
 
 def cpu_seconds() -> float:
@@ -155,7 +295,7 @@ def compute_one_safe(vertices):
     before = _worker_counter()
     try:
         out = compute_one(vertices)
-    except Exception as e:  # noqa: BLE001 - a failed geometry must not kill the scan
+    except Exception as e:  # a failed geometry must not kill the scan
         out = {"error": f"{type(e).__name__}: {e}"}
     out["_n_polytopes"] = _worker_counter() - before
     return out
@@ -177,6 +317,16 @@ class Result:
     geoms_per_s: float
     geoms_per_s_per_core: float
     cpu_s_per_geom: float
+    #: Median process-tree RSS during the timed region. The headline memory
+    #: number: it is per-row comparable and is what caps worker count.
+    steady_rss_mb: float
+    #: Maximum of the same samples, to show how spiky the run was.
+    sampled_max_rss_mb: float
+    #: Steady footprint attributable to one worker. This is the quantity
+    #: `landscape._resolve_workers` divides available memory by when it caps
+    #: the pool, so it is the memory figure with a decision attached to it.
+    rss_per_worker_mb: float
+    #: Lifetime `ru_maxrss`. Ratchets across rows; see `peak_rss_bytes`.
     peak_rss_mb: float
     polytopes_per_geom: float
     oversubscribed: bool
@@ -192,15 +342,22 @@ def run_once(vertex_arrays, workers: int, chunksize: int = 8) -> Result:
     Both numbers are reported so neither can hide.
     """
     n = len(vertex_arrays)
-    n_cores = os.cpu_count() or 1
+    n_cores = performance_cores()
+
+    sampler = RssSampler()
+    # Tree RSS before the run, so the per-worker figure is an increment rather
+    # than including the parent's already-resident scan buffers.
+    rss_before = tree_rss_bytes()
 
     if workers == 1:
         worker_init()
         startup = 0.0
         cpu0 = cpu_seconds()
+        sampler.start()
         t0 = time.perf_counter()
         results = [compute_one_safe(v) for v in vertex_arrays]
         wall = time.perf_counter() - t0
+        sampler.stop()
         cpu = cpu_seconds() - cpu0
     else:
         import multiprocessing as mp
@@ -217,9 +374,14 @@ def run_once(vertex_arrays, workers: int, chunksize: int = 8) -> Result:
             startup = time.perf_counter() - t_start
 
             cpu0 = cpu_seconds()
+            sampler.start()
             t0 = time.perf_counter()
             results = list(ex.map(compute_one_safe, vertex_arrays, chunksize=chunksize))
             wall = time.perf_counter() - t0
+            # Stopped before shutdown, so the samples cover a period when the
+            # workers still existed. After teardown their RSS is gone and the
+            # figure would describe the parent alone.
+            sampler.stop()
         finally:
             # RUSAGE_CHILDREN only accounts for *reaped* children, so worker CPU
             # time is invisible until the pool is torn down. Sample after.
@@ -239,6 +401,9 @@ def run_once(vertex_arrays, workers: int, chunksize: int = 8) -> Result:
         geoms_per_s=n / wall if wall else float("nan"),
         geoms_per_s_per_core=(n / wall / workers) if wall else float("nan"),
         cpu_s_per_geom=cpu / n if n else float("nan"),
+        steady_rss_mb=sampler.median_bytes() / 1e6,
+        sampled_max_rss_mb=sampler.max_bytes() / 1e6,
+        rss_per_worker_mb=max(sampler.median_bytes() - rss_before, 0.0) / workers / 1e6,
         peak_rss_mb=peak_rss_bytes() / 1e6,
         polytopes_per_geom=polys / n if n else float("nan"),
         oversubscribed=workers > n_cores,
@@ -271,14 +436,27 @@ def load_vertices(n: int, vertex_counts, db_dir):
 # ---------------------------------------------------------------------------
 
 
-def report(results, scan_s, baseline=None):
-    n_cores = os.cpu_count() or 1
-    print(f"\nmachine: {n_cores} cores, {sys.platform}")
+def report(results, scan_s, baseline=None, scan_memory=None):
+    n_perf = performance_cores()
+    n_all = os.cpu_count() or 1
+    detail = f"{n_perf} performance cores of {n_all} logical"
+    print(f"\nmachine: {detail}, {sys.platform}")
     print(f"scan (Parquet -> vertex arrays): {scan_s * 1000:.0f} ms")
+
+    # Attributed separately, because it lands in `peak RSS` below and is not
+    # the pipeline's memory: Arrow's decode buffers are transient, and their
+    # size is set by `batch_size` rather than by any geometry.
+    if scan_memory:
+        print(
+            f"scan memory: {scan_memory['rss_mb']:.0f} MB RSS after scan"
+            f"  (arrow pool high-water {scan_memory['arrow_mb']:.0f} MB,"
+            f" live {scan_memory['arrow_live_mb']:.1f} MB)"
+        )
 
     head = (
         f"\n{'workers':>7}  {'geoms/s':>9}  {'/s/core':>8}  {'cpu-s/geom':>10}  "
-        f"{'peak RSS':>9}  {'Polytope/geom':>13}  {'scaling':>7}  {'startup':>8}"
+        f"{'steady RSS':>11}  {'MB/worker':>10}  {'lifetime':>9}  "
+        f"{'Polytope/geom':>13}  {'scaling':>7}  {'startup':>8}"
     )
     print(head)
     print("-" * (len(head) - 1))
@@ -293,7 +471,8 @@ def report(results, scan_s, baseline=None):
         flag = " *" if r.oversubscribed else ""
         print(
             f"{r.workers:>7}  {r.geoms_per_s:>9.2f}  {r.geoms_per_s_per_core:>8.2f}  "
-            f"{r.cpu_s_per_geom:>10.3f}  {r.peak_rss_mb:>7.0f}MB  "
+            f"{r.cpu_s_per_geom:>10.3f}  {r.steady_rss_mb:>9.0f}MB  "
+            f"{r.rss_per_worker_mb:>10.0f}  {r.peak_rss_mb:>7.0f}MB  "
             f"{r.polytopes_per_geom:>13.2f}  {scaling:>6.0%}{flag}  "
             f"{r.startup_s:>7.2f}s"
         )
@@ -308,7 +487,16 @@ def report(results, scan_s, baseline=None):
             )
 
     if any(r.oversubscribed for r in results):
-        print("\n  * more workers than cores; throughput/core is not meaningful there")
+        print(
+            f"\n  * more workers than the {n_perf} performance cores; throughput/core "
+            "is expected to fall there and is not a parallelism defect"
+        )
+
+    if len({round(r.peak_rss_mb) for r in results}) == 1 and len(results) > 1:
+        print(
+            "\n  note: 'lifetime' is ru_maxrss and only ratchets, so it is identical "
+            "in every row here and includes the scan. Judge memory by 'steady RSS'."
+        )
 
     failed = [r for r in results if r.n_ok != r.n_geometries]
     for r in failed:
@@ -332,6 +520,21 @@ def report(results, scan_s, baseline=None):
                 f"  workers={r.workers:>2}: {b['geoms_per_s']:.2f} -> "
                 f"{r.geoms_per_s:.2f} geoms/s  ({delta:.2f}x {arrow})"
             )
+            # `.get`, because baselines written before steady-state sampling
+            # existed carry only the ratcheting lifetime figure. Comparing
+            # against that is what produced a phantom 39% memory regression,
+            # so it is deliberately not compared at all.
+            base_steady = b.get("steady_rss_mb")
+            if base_steady:
+                print(
+                    f"                memory {base_steady:.0f} -> "
+                    f"{r.steady_rss_mb:.0f} MB steady"
+                )
+            else:
+                print(
+                    "                memory: not comparable; the baseline predates "
+                    "steady-state sampling and its peak_rss_mb includes the scan"
+                )
 
 
 def main(argv=None):
@@ -361,13 +564,28 @@ def main(argv=None):
         return 1
     print(f"loaded {n_loaded} geometries from vertex counts {vertex_counts}")
 
+    # Snapshot memory at the scan/compute boundary, so the scan's share of the
+    # lifetime high-water is attributable rather than folded into every row.
+    try:
+        import pyarrow as pa
+
+        arrow_live_mb = pa.total_allocated_bytes() / 1e6
+    except Exception:
+        arrow_live_mb = float("nan")
+    scan_memory = {
+        "rss_mb": tree_rss_bytes() / 1e6,
+        "peak_rss_mb": peak_rss_bytes() / 1e6,
+        "arrow_mb": arrow_pool_peak_bytes() / 1e6,
+        "arrow_live_mb": arrow_live_mb,
+    }
+
     results = [run_once(verts, w, args.chunksize) for w in worker_counts]
 
     baseline = None
     if args.compare:
         baseline = json.loads(Path(args.compare).read_text())
 
-    report(results, scan_s, baseline)
+    report(results, scan_s, baseline, scan_memory)
 
     if args.json:
         out = Path(args.json)
@@ -375,10 +593,12 @@ def main(argv=None):
         out.write_text(
             json.dumps(
                 {
-                    "n_cores": os.cpu_count(),
+                    "n_cores": performance_cores(),
+                    "n_logical_cores": os.cpu_count(),
                     "platform": sys.platform,
                     "vertex_counts": vertex_counts,
                     "scan_s": scan_s,
+                    "scan_memory": scan_memory,
                     "results": [asdict(r) for r in results],
                 },
                 indent=2,

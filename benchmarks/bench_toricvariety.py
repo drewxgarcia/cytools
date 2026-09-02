@@ -45,7 +45,7 @@ def tiny_tvs(tiny_polys):
             skipped += 1
             import warnings
 
-            warnings.warn(f"tiny_tvs: skipped polytope ({e})")
+            warnings.warn(f"tiny_tvs: skipped polytope ({e})", stacklevel=2)
     if not results:
         raise RuntimeError("tiny_tvs: all polytopes failed — check DB or pipeline")
     return results
@@ -61,7 +61,7 @@ def small_tvs(small_polys):
         except Exception as e:
             import warnings
 
-            warnings.warn(f"small_tvs: skipped polytope ({e})")
+            warnings.warn(f"small_tvs: skipped polytope ({e})", stacklevel=2)
     if not results:
         raise RuntimeError("small_tvs: all polytopes failed — check DB or pipeline")
     return results
@@ -78,7 +78,7 @@ def bulk_tvs(bulk_polys):
         except Exception as e:
             import warnings
 
-            warnings.warn(f"bulk_tvs: skipped polytope ({e})")
+            warnings.warn(f"bulk_tvs: skipped polytope ({e})", stacklevel=2)
     if not results:
         raise RuntimeError("bulk_tvs: all polytopes failed — check DB or pipeline")
     return results

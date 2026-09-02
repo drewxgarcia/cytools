@@ -249,7 +249,17 @@ class TestNTFEHypersCones:
 
     These are stages 2 and 3 of the NTFE pipeline.  Time grows as the
     combinatorial product of per-face triangulation counts.
-    N=1 limits to a single random NTFE cone (fast path).
+
+    `N=1` alone is *not* a fast path, which these tests used to assume. It
+    bounds only the final combination step; the 2-face triangulations are
+    enumerated first, and without `max_npts`/`N_face_triangs` that enumeration
+    runs through `all_triangulations` unbounded. One 5-vertex polytope took
+    30 s and the next never finished -- which is why the non-slow benchmark
+    suite had never once run to completion. It stopped at the same test every
+    time, and the flat progress was misread as the machine sleeping.
+
+    The bounding pair below is the one `TestTriangfaceIneqs` already used:
+    20 polytopes in 23 s, slowest 4.3 s.
     """
 
     def test_ntfe_hypers_N1_tiny(self, benchmark, tiny_poly_objects):
@@ -259,7 +269,9 @@ class TestNTFEHypersCones:
             results = []
             for p in tiny_poly_objects:
                 try:
-                    results.append(list(p.ntfe_hypers(N=1, seed=42)))
+                    results.append(
+                        list(p.ntfe_hypers(N=1, seed=42, N_face_triangs=10, max_npts=0))
+                    )
                 except Exception:
                     pass
             return results
@@ -273,7 +285,9 @@ class TestNTFEHypersCones:
             results = []
             for p in tiny_poly_objects:
                 try:
-                    results.append(list(p.ntfe_cones(N=1, seed=42)))
+                    results.append(
+                        list(p.ntfe_cones(N=1, seed=42, N_face_triangs=10, max_npts=0))
+                    )
                 except Exception:
                     pass
             return results
@@ -285,7 +299,9 @@ class TestNTFEHypersCones:
             results = []
             for p in small_poly_objects:
                 try:
-                    results.append(list(p.ntfe_hypers(N=1, seed=42)))
+                    results.append(
+                        list(p.ntfe_hypers(N=1, seed=42, N_face_triangs=10, max_npts=0))
+                    )
                 except Exception:
                     pass
             return results
@@ -328,7 +344,9 @@ class TestNTFETriangulations:
             results = []
             for p in tiny_poly_objects:
                 try:
-                    results.append(list(p.ntfe_frts(N=1, seed=42)))
+                    results.append(
+                        list(p.ntfe_frts(N=1, seed=42, N_face_triangs=10, max_npts=0))
+                    )
                 except Exception:
                     pass
             return results
@@ -342,7 +360,9 @@ class TestNTFETriangulations:
             results = []
             for p in tiny_poly_objects:
                 try:
-                    results.append(list(p.ntfe_frsts(N=1, seed=42)))
+                    results.append(
+                        list(p.ntfe_frsts(N=1, seed=42, N_face_triangs=10, max_npts=0))
+                    )
                 except Exception:
                     pass
             return results
@@ -356,7 +376,9 @@ class TestNTFETriangulations:
             results = []
             for p in small_poly_objects:
                 try:
-                    results.append(list(p.ntfe_frts(N=1, seed=42)))
+                    results.append(
+                        list(p.ntfe_frts(N=1, seed=42, N_face_triangs=10, max_npts=0))
+                    )
                 except Exception:
                     pass
             return results
@@ -370,7 +392,9 @@ class TestNTFETriangulations:
             results = []
             for p in small_poly_objects:
                 try:
-                    results.append(list(p.ntfe_frsts(N=1, seed=42)))
+                    results.append(
+                        list(p.ntfe_frsts(N=1, seed=42, N_face_triangs=10, max_npts=0))
+                    )
                 except Exception:
                     pass
             return results

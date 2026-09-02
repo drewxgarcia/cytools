@@ -8,6 +8,23 @@ import pytest
 
 from benchmarks._data import load_h11_sample, load_tier
 
+
+@pytest.fixture(scope="session", autouse=True)
+def _gv_subprocess_start_method():
+    """Measure the GV kernel rather than subprocess start-up.
+
+    `cygv.compute_gv` runs in a fresh process per call, and under the macOS
+    default (`spawn`) that costs ~137 ms of re-importing numpy/cygv -- which is
+    *independent of max_deg*, so `test_compute_gvs_5v` at max_deg=3 was ~92%
+    start-up. `configure_gv_subprocess()` switches to `forkserver`, measured
+    here at 12.8x / 11.9x / 9.0x for max_deg 1 / 3 / 6 with identical
+    invariants. Session-scoped because the start method is process-global.
+    """
+    from cytools.calabiyau import configure_gv_subprocess
+
+    configure_gv_subprocess()
+
+
 # Database records ---------------------------------------------------------
 
 

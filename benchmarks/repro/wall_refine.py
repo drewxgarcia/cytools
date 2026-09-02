@@ -24,7 +24,7 @@ from concurrent.futures import ProcessPoolExecutor
 import numpy as np
 
 os.environ.setdefault("CYTOOLS_DB_DIR", os.path.expanduser("~/Downloads/polytopes-4d"))
-from benchmarks.repro.wall_classes import (  # noqa: E402
+from benchmarks.repro.wall_classes import (  # after CYTOOLS_DB_DIR is set above
     gl_matrices,
     invariants,
     transform,

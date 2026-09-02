@@ -64,7 +64,7 @@ def wall_data(verts, favorable_only=True):
             for perm in set(itertools.permutations(idx)):
                 kappa[perm] = int(round(v))
         c2 = np.asarray(cy.second_chern_class(in_basis=True), dtype=np.int64)
-        out.append((int(cy.h11()), int(cy.h21()), kappa, c2))
+        out.append((int(cy.h11()), int(cy.h12()), kappa, c2))
     return out
 
 
@@ -142,7 +142,7 @@ def run(h11, bound):
 
     t0 = time.time()
     n_classes = 0
-    for key, group in buckets.items():
+    for group in buckets.values():
         reps = []
         for g in group:
             if not any(equivalent(g, rep, mats) for rep in reps):
