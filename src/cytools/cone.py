@@ -24,27 +24,25 @@ import itertools
 import warnings
 
 # 'standard' imports
-from collections.abc import Callable, Iterable, Mapping, Sequence
+from collections.abc import Callable, Iterable
 from copy import deepcopy
 from fractions import Fraction
 from multiprocessing import cpu_count
-from typing import TYPE_CHECKING, overload
+from typing import TYPE_CHECKING, cast, overload
 
-import highspy
 import joblib
 import latticepts
 import numpy as np
-import qpsolvers
 
 # 3rd party imports
 from flint import fmpq, fmpz, fmpz_mat
-from ortools.linear_solver import pywraplp
 from ortools.sat.python import cp_model
 from scipy import sparse
 from scipy.optimize import linprog, nnls
 
 import cytools.config as config
 import cytools.utils as utils
+from cytools._backends.engines import INTERIOR_POINT, STRETCHED_TIP
 from cytools._backends.extremalrays import (
     exhaustive_indices as _extremal_indices,
 )
@@ -53,13 +51,16 @@ from cytools._backends.extremalrays import (
 )
 from cytools._backends.normaliz import hilbert_basis as _normaliz_hilbert_basis
 from cytools._backends.ppl import ppl
+from cytools._backends.registry import (
+    CERTIFIES_INFEASIBLE,
+    RECOVERABLE,
+)
 
 # CYTools imports
 from cytools._extensions import lazy_method
 from cytools._typing import (
     ExtremalityMethod,
     ExtremalRaysMethod,
-    FeasibilityBackend,
     InteriorPointBackend,
     Matrix,
     PointednessBackend,
@@ -1260,36 +1261,32 @@ class Cone:
         as the point in this region with the smallest norm.
 
         :::note
-        This is a problem that requires quadratic programming since the norm of
-        a vector is being minimized. For dimensions up to around 25, this can
-        easily be done with open-source solvers like OSQP or CVXOPT, however
-        for higher dimensions this becomes a difficult task that only the Mosek
-        optimizer is able to handle. However, Mosek is closed-source and
-        requires a license. For this reason we preferentially use ORTools,
-        which is open-source, to solve a linear problem and find a good
-        approximation of the tip. Nevertheless, if Mosek is activated then it
-        uses Mosek as it is faster and more accurate.
+        This is a quadratic program: the norm of a vector is minimized subject
+        to linear constraints. OSQP solves it and is always installed; Mosek is
+        faster and more accurate at large ambient dimension but is closed
+        source and licence-gated, so it is used only when actually activated.
+
+        Both solve the stated problem. An LP over the same feasible region
+        would be cheaper but returns *some* point of the stretched cone rather
+        than the minimum-norm one, which is a different mathematical object;
+        that is why no LP engine is registered for this task.
         :::
 
         **Arguments:**
         - `c` *(float)*: A real positive number specifying the stretching of
             the cone (i.e. the minimum distance to the defining hyperplanes).
-        - `backend` *(str, optional, default=None)*: String that specifies the
-            optimizer to use. Options are "mosek", "osqp", "cvxopt", "highs",
-            and "glop". If it is not specified then for $d<25$ it uses "osqp" by
-            default. For $d\geq25$ it uses "mosek" if it is activated, or
-            "highs" otherwise.
+        - `backend`: Optional compatibility selector. The quadratic engines
+            are `"mosek"`, `"osqp"`, and `"cvxopt"`; when omitted, the engine
+            registry selects one from the problem size and availability.
         - `check` *(bool, optional, default=True)*: Flag that specifies whether
             to check if the output of the optimizer is consistent and satisfies
             `constraint_error_tol`.
         - `constraint_error_tol` *(float, optional, default=1e-2)*: Error
             tolerance for the linear constraints.
         - `max_iter` *(int, optional, default=10**6)*: The maximum number of
-            iterations allowed for the non-LP backends. If this function is
-            returning None, then increasing this parameter (maximum
-            permissible value: 2**31-1) might resolve the issue. For the LP
-            backends ("highs"/"glop"), this does nothing.
-        - `show_hints`: Whether to show hints about odd backend behavior.
+            solver iterations. If this function is returning None, increasing
+            it (maximum permissible value: 2**31-1) might resolve the issue.
+        - `show_hints`: Whether to print diagnostic hints when no tip is found.
         - `verbose` *(boolean, optional)*: Whether to print extra diagnostic
             information (True) or not (False).
 
@@ -1309,77 +1306,40 @@ class Cone:
         # array([8., 5.])
         ```
         """
-        # set the backend
-        backends = (None, "mosek", "osqp", "cvxopt", "highs", "glop")
-        if backend not in backends:
-            raise ValueError(f"Invalid backend. The options are: {backends}.")
-        if backend == "cvxopt" and "cvxopt" not in qpsolvers.available_solvers:
-            raise ImportError(
-                "The CVXOPT backend is optional. Install it with "
-                '`python -m pip install "cytools-workbench[cvxopt]"`.'
-            )
-
-        if backend is None:
-            if self.ambient_dim() < 25:
-                backend = "osqp"
-            else:
-                backend = (
-                    "mosek"
-                    if config.mosek_is_activated() and self.ambient_dim() >= 25
-                    else "highs"
-                )
-        elif backend == "mosek" and not config.mosek_is_activated():
-            raise Exception(
-                "Mosek is not activated. See the advanced usage "
-                "page on our website to see how to activate it."
-            )
-
-        # check backend
-        if (self.ambient_dim() >= 25) and (backend != "mosek") and verbose:
-            print(f"The backend {backend} may not work given the large ")
-            print(f"dimension ({self.ambient_dim()}) of the problem...")
-
         # find the tip of the stretched cone
         hp = self.hyperplanes()
         if len(hp) == 0:
             # trivial
             return np.ones(self._ambient_dim)
 
-        if backend in ("glop", "highs"):
-            solution = self.find_interior_point(c, backend=backend, verbose=verbose)
-            G = -1 * sparse.csc_matrix(hp, dtype=float)
+        problem = {"dim": self.ambient_dim(), "rows": len(hp)}
+        if backend in ("highs", "glop"):
+            raise ValueError(
+                f"backend={backend!r} solves LP feasibility, not the "
+                "minimum-norm quadratic problem. Use find_interior_point() "
+                "for an arbitrary point in the stretched cone."
+            )
+        if backend is None:
+            engine = STRETCHED_TIP.resolve(need=(RECOVERABLE,), problem=problem)
         else:
-            # The problem is defined as:
-            # Minimize (1/2) x.P.x + q.x
-            # Subject to G.x <= h
-            P = 2 * sparse.identity(hp.shape[1], dtype=float, format="csc")
-            q = np.zeros(hp.shape[1], dtype=float)
-            h = np.full(hp.shape[0], -c, dtype=float)
-            G = -1 * sparse.csc_matrix(hp, dtype=float)
-            if backend == "osqp":
-                solution = qpsolvers.solve_qp(
-                    P,
-                    q,
-                    G,
-                    h,
-                    solver=backend,
-                    max_iter=max_iter,
-                    verbose=verbose,
-                    scaling=50,
-                    eps_abs=1e-4,
-                    eps_rel=1e-4,
-                    polishing=True,
+            engine = STRETCHED_TIP[backend]
+            if not engine.available():
+                if backend == "cvxopt":
+                    raise ImportError(
+                        "The CVXOPT backend is optional. Install it with "
+                        '`python -m pip install "cytools-workbench[cvxopt]"`.'
+                    )
+                raise RuntimeError(
+                    f"The {backend!r} stretched-tip engine is unavailable."
                 )
-            else:
-                solution = qpsolvers.solve_qp(
-                    P,
-                    q,
-                    G,
-                    h,
-                    solver=backend,
-                    max_iter=max_iter,
-                    verbose=verbose,
+            if not engine.applies(problem):
+                raise RuntimeError(
+                    f"The {backend!r} stretched-tip engine does not apply "
+                    f"to problem {problem}."
                 )
+
+        solution = engine.run(hp, c, max_iter, verbose)
+        G = -1 * sparse.csc_matrix(hp, dtype=float)
 
         # parse solution
         if solution is None:
@@ -1387,21 +1347,19 @@ class Cone:
                 print("Calculated 'solution' was None...", end=" ")
                 print("some potential reasons why:")
 
-                # max_iter
-                if backend not in ("glop", "highs"):
-                    print(f"-) maybe max_iter={max_iter} was too low?")
+                print(f"-) maybe max_iter={max_iter} was too low?")
 
-                # bad solver
-                if (self.ambient_dim() >= 25) and (backend != "mosek"):
+                if (self.ambient_dim() >= 25) and (engine.name != "mosek"):
                     print(
-                        f"-) given the high dimension, {self.ambient_dim()}",
+                        f"-) given the high dimension, {self.ambient_dim()},",
                         end=" ",
                     )
                     print(
-                        f"and backend={backend}, this could be a numerical",
+                        f"and engine={engine.name}, this could be a numerical",
                         end=" ",
                     )
-                    print("issue. Try Mosek...")
+                    print("issue. Mosek handles these better; see")
+                    print("   cytools.config.available_engines().")
 
                 # scaling
                 print(
@@ -1435,9 +1393,8 @@ class Cone:
         cones. This function returns an integer grading vector.
 
         **Arguments:**
-        - `backend` *(str, optional, default=None)*: String that specifies the
-            optimizer to use. The options are the same as for the
-            [`find_interior_point`](#find_interior_point) function.
+        - `backend`: Optional compatibility selector for the interior-point
+            computation. Automatic engine selection is preferred.
 
         **Returns:**
         *(numpy.ndarray)* A grading vector. If it could not be found then None
@@ -1453,7 +1410,7 @@ class Cone:
         """
         if not self.is_pointed():
             raise Exception("Grading vectors are only defined for pointed cones.")
-        return self.dual().find_interior_point(backend=backend, integral=True)
+        return self.dual().find_interior_point(integral=True, backend=backend)
 
     def find_interior_point(
         self,
@@ -1477,18 +1434,19 @@ class Cone:
         - `lower`: A lower bound on the components of the interior point.
         - `integral`: A flag that specifies whether the point should have
             integral coordinates.
-        - `backend`: String that specifies the optimizer to use. The LP options
-            are "highs" (LP via HiGHS) and "glop" (LP via ORTools); the others
-            are "scip", "cpsat", "mosek", "osqp", and "cvxopt". If it is not
-            specified then "highs" is used by default. For $d\geq25$ it uses
-            "mosek" if it is activated.
+        - `backend`: Optional compatibility selector. Automatic selection
+            chooses an engine that can distinguish solver failure from proved
+            infeasibility.
         - `check`: Whether to verify that the point is inside the cone.
-        - `show_hints`: Whether to show hints about odd backend behavior.
+        - `show_hints`: Unused; retained for call compatibility.
         - `verbose`: Whether to print diagnostic information.
 
         **Returns:**
-        A point in the strict interior of the cone. If no point is found then
-        None is returned.
+        A point in the strict interior of the cone. `None` means the cone was
+        *proved* to have empty interior, never that a solver gave up: the
+        engine is resolved with `CERTIFIES_INFEASIBLE`, and one that cannot
+        reach a conclusion raises `SolverFailure` instead. `Cone.is_solid`
+        depends on that distinction.
 
         **Example:**
         We construct a cone and find some interior points.
@@ -1500,10 +1458,6 @@ class Cone:
         # array([8, 5])
         ```
         """
-        backends = (None, "highs", "glop", "scip", "cpsat", "mosek", "osqp", "cvxopt")
-        if backend not in backends:
-            raise ValueError(f"Invalid backend. The options are: {backends}.")
-
         # If the rays are already computed then this is a simple task
         if (self._rays is not None) and (backend is None) and (lower is None):
             if np.linalg.matrix_rank(self._rays) != self._ambient_dim:
@@ -1532,29 +1486,37 @@ class Cone:
         # Otherwise we need to do a harder computation...
         H = self.hyperplanes()
 
-        if backend is None:
-            if config.mosek_is_activated() and (self.ambient_dim() >= 25):
-                backend = "mosek"
-            else:
-                backend = "highs"
-
-        if backend in ("highs", "glop", "scip", "cpsat"):
-            solution = feasibility(
-                hyperplanes=H,
-                c=c,
-                ambient_dim=self._ambient_dim,
+        # CERTIFIES_INFEASIBLE is required, not preferred. `is_solid` reads a
+        # None return from here as "the cone has empty interior", so an engine
+        # that cannot tell infeasibility from its own failure would turn a
+        # numerical problem into a false geometric claim.
+        if backend in ("mosek", "osqp", "cvxopt"):
+            if lower is not None:
+                raise ValueError(
+                    f"Cannot set a custom lower bound for backend={backend!r}."
+                )
+            solution = self.tip_of_stretched_cone(
+                c,
                 backend=backend,
-                lower_bound=lower,
+                show_hints=show_hints,
                 verbose=verbose,
             )
         else:
-            if lower is not None:
-                raise ValueError(
-                    f"Cannot set custom lower bound for backend = {backend}"
+            problem = {"dim": self._ambient_dim, "rows": len(H)}
+            if backend is None:
+                engine = INTERIOR_POINT.resolve(
+                    need=(CERTIFIES_INFEASIBLE, RECOVERABLE), problem=problem
                 )
-            solution = self.tip_of_stretched_cone(
-                c, backend=backend, show_hints=show_hints, verbose=verbose
-            )
+            else:
+                # Resolve explicit compatibility choices through the same
+                # guarantee gate as automatic selection. In particular, SCIP
+                # and CP-SAT cannot turn "no integer point in this box" into a
+                # proof that a rational cone has empty interior.
+                with config.engines(interior_point=backend):
+                    engine = INTERIOR_POINT.resolve(
+                        need=(CERTIFIES_INFEASIBLE, RECOVERABLE), problem=problem
+                    )
+            solution = engine.run(H, c, self._ambient_dim, lower, verbose)
         if solution is None:
             return None
 
@@ -1906,29 +1868,30 @@ class Cone:
 
         return np.vstack(out)
 
-    def is_solid(self, backend=None):
+    def is_solid(self, backend: InteriorPointBackend | str | None = None) -> bool:
         """
         **Description:**
         Returns True if the cone is solid, i.e. if it is full-dimensional.
 
         :::note
-        If the generating rays are known then this can simply be checked by
-        computing the dimension of the linear space that they span. However,
-        when only the hyperplane inequalities are known this can be a difficult
-        problem. When using PPL as the backend, the convex hull is explicitly
-        constructed and checked. The other backends try to find a point in the
-        strict interior of the cone, which fails if the cone is not solid. The
-        latter approach is much faster, but there could be extremely narrow
-        cones where the optimization fails and this function returns a false
-        negative.
+        If the generating rays are known this is the rank of the span. When
+        only the hyperplanes are known, solidity is decided by searching for a
+        point in the strict interior: none exists precisely when the cone is
+        not full-dimensional.
+
+        That inference is only sound because
+        [`find_interior_point`](#find_interior_point) resolves an engine that
+        certifies infeasibility. A solver that merely failed would otherwise
+        report a narrow cone as degenerate -- the false negative this note
+        used to warn about. Such an engine now raises rather than returning
+        None, so the failure is visible instead of silently becoming a claim
+        about the geometry.
         :::
 
         **Arguments:**
-        - `backend` *(str, optional)*: Specifies which backend to use. Available
-            options are "ppl", and any backends available for the
-            [`find_interior_point`](#find_interior_point) function. If not
-            specified, it uses the default backend of the
-            [`find_interior_point`](#find_interior_point) function.
+        - `backend`: Optional compatibility selector. `"ppl"` performs the
+            exact polyhedral dimension check; optimizer names are forwarded to
+            `find_interior_point`. Automatic certified selection is preferred.
 
         **Returns:**
         *(bool)* The truth value of the cone being solid.
@@ -1954,35 +1917,24 @@ class Cone:
             return bool(np.linalg.matrix_rank(self._rays) == self._ambient_dim)
 
         # we just have hyperplanes... a bit harder
-        backends = (
-            None,
-            "ppl",
-            "highs",
-            "glop",
-            "scip",
-            "cpsat",
-            "mosek",
-            "osqp",
-            "cvxopt",
-        )
-        if backend not in backends:
-            raise ValueError(f"Invalid backend. The options are: {backends}.")
-
-        # solve according to backend
         if backend == "ppl":
             cs = ppl.Constraint_System()
-
-            vrs = [ppl.Variable(i) for i in range(self._ambient_dim)]
-            for h in self.hyperplanes():
-                cs.insert(sum(h[i] * vrs[i] for i in range(self._ambient_dim)) >= 0)
-            cone = ppl.C_Polyhedron(cs)
-
-            self._is_solid = cone.affine_dimension() == self._ambient_dim
+            variables = [ppl.Variable(i) for i in range(self._ambient_dim)]
+            for hyperplane in self.hyperplanes():
+                cs.insert(
+                    sum(hyperplane[i] * variables[i] for i in range(self._ambient_dim))
+                    >= 0
+                )
+            polyhedron = ppl.C_Polyhedron(cs)
+            self._is_solid = polyhedron.affine_dimension() == self._ambient_dim
         else:
-            # Otherwise we check this by trying to find an interior point
-            interior_point = self.find_interior_point(show_hints=False, backend=backend)
-            self._is_solid = interior_point is not None
-
+            self._is_solid = (
+                self.find_interior_point(
+                    show_hints=False,
+                    backend=cast("InteriorPointBackend | None", backend),
+                )
+                is not None
+            )
         return self._is_solid
 
     # aliases
@@ -1996,26 +1948,26 @@ class Cone:
         Returns True if the cone is pointed (i.e. strongly convex). A cone is
         pointed if no x exists such that both x and -x are in the cone.
 
-        If one has hyperplanes, this check is as simple as `not full_rank(H)`
-        since, if H is not full rank, then some x has H@x==0. I.e., H@(+x)>=0
-        and H@(-x)>=0.
+        Decided by duality: a cone is pointed exactly when its dual is
+        full-dimensional. That reduces to a rank computation when the rays are
+        known and to a certified LP otherwise, both handled by
+        [`is_solid`](#is_solid).
 
-        If one has rays, this check can be done either via
-            1) finding some psi such that psi.r > 0 for all rays r
-            2) checking if some lmbda!=0 exist such that R.T@lmbda = 0
-
-
-        The backends are, in order of preference,
-            1) (backend='dual') check if dual is solid
-            2) (backend='null') hyperplane rank
-            3) (backend='lp')   rays@lmbda=0 via LP
-            4) (backend='nnls') rays@lmbda=0 via nnls
+        :::note
+        Three further algorithms used to be selectable here -- a hyperplane
+        rank test, an LP, and an NNLS residual against a tolerance. Each was
+        valid for only one of the two representations and raised for the
+        other, none was reachable without naming it explicitly, and the NNLS
+        variant decided an exact question (is a rank deficient?) by comparing
+        a floating-point residual to 1e-7. They have been removed; the duality
+        route is exact and representation-agnostic.
+        :::
 
         **Arguments:**
-        - `backend`: Specifies which backend to use. Available options are
-            "dual", "null", "lp", and "nnls".
-        - `tol`: The tolerance for determining when a linear subspace is found.
-            This is only used for the NNLS backend.
+        - `backend`: Compatibility selector. All values now use the exact,
+            representation-independent duality test; the historical numerical
+            implementations are no longer separate code paths.
+        - `tol`: Retained for call compatibility; unused by the exact test.
 
         **Returns:**
         The truth value of the cone being pointed.
@@ -2034,45 +1986,19 @@ class Cone:
         # False
         ```
         """
-        if self._is_pointed is not None:
-            return self._is_pointed
-
-        # duality based check
-        if backend.lower() == "dual":
+        valid: tuple[PointednessBackend, ...] = ("dual", "null", "lp", "nnls")
+        if backend not in valid:
+            raise ValueError(f"Invalid backend. The options are {valid}.")
+        if backend != "dual":
+            warnings.warn(
+                f"backend={backend!r} is deprecated; pointedness is now "
+                "computed by the exact duality test for every representation.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+        del tol
+        if self._is_pointed is None:
             self._is_pointed = self.dual().is_solid()
-
-        # ray-based analysis (only if we have no hyperplanes)
-        elif self._hyperplanes is None:
-            # check if some lmbda!=0 exists such that R.T@lmbda==0
-            # N.B.: this is equiv to [R; 1]@lmbda=[0; 1] for any lmbda>=0
-            #       (akin to homogenization...)
-            R = self.rays().T
-            R = np.vstack((R, np.ones((1, R.shape[1]), dtype=int)))
-            b = [0] * (R.shape[0] - 1) + [1]
-
-            # allow different backends
-            if backend.lower() == "nnls":
-                self._is_pointed = nnls(R, b)[1] > tol
-            elif backend.lower() == "lp":
-                res = linprog(
-                    c=np.zeros(R.shape[0], dtype=int),  # no objective
-                    A_eq=R,
-                    b_eq=b,  # [R; 1] lmbda = [0;1]
-                    bounds=[(0, None)],  # lmbda >= 0
-                    method="highs",
-                )
-                self._is_pointed = not res.success
-            else:
-                raise ValueError(f"backend '{backend.lower()}' not known for V-cones")
-
-        # hyperplane-based analyis (likely easiest...)
-        else:
-            if backend.lower() == "null":
-                H_rank = np.linalg.matrix_rank(self.hyperplanes())
-                self._is_pointed = bool(H_rank == self.ambient_dim())
-            else:
-                raise ValueError(f"backend '{backend.lower()}' not known for H-cones")
-
         return self._is_pointed
 
     # aliases
@@ -2475,184 +2401,6 @@ def is_extremal(
         raise ValueError(f"Unknown method '{method}'; expected 'lp' or 'nnls'.")
     except Exception as e:
         return (i, None, e)
-
-
-def feasibility(
-    hyperplanes: Matrix | Sequence[Mapping[int, float]],
-    c: float,
-    ambient_dim: int,
-    backend: FeasibilityBackend,
-    lower_bound: float | None = None,
-    verbose: bool = False,
-) -> np.ndarray | None:
-    """
-    **Description:**
-    Solve a feasibility problem Ax>=c.
-
-    **Arguments:**
-    - `hyperplanes`: The constraining hyperplanes, A.
-    - `c`: The 'stretching'.
-    - `ambient_dim`: The ambient dimension... A.shape[1].
-    - `backend`: The backend to use. Options are "highs" (LP, on HiGHS),
-        "glop" (LP, on ORTools), "scip", or "cpsat".
-    - `verbose`: Whether to print extra diagnostic info.
-
-    **Returns:**
-    A feasible point, if it exists. Else, None.
-    """
-    if isinstance(hyperplanes, (list, np.ndarray)):
-        hyperplanes = np.asarray(hyperplanes)
-        hp_iter = enumerate
-    else:
-        hp_iter = lambda hp: hp.items()
-
-    # accommodate trivial hyperplanes
-    if len(hyperplanes) == 0:
-        return np.ones(ambient_dim)
-
-    if backend == "highs":
-        # LP feasibility via HiGHS
-        n = ambient_dim
-        if isinstance(hyperplanes, np.ndarray):
-            # dense: assemble the CSR structure with numpy instead of a Python
-            # double loop over every (row, column) entry
-            m = len(hyperplanes)
-            grading = hyperplanes.sum(axis=0) / m
-            starts = np.arange(m, dtype=np.int32) * n
-            index = np.tile(np.arange(n, dtype=np.int32), m)
-            value = hyperplanes.ravel().astype(float)
-        else:
-            # sparse rows (e.g. LIL): iterate only the stored entries
-            starts, index, value = [], [], []
-            grading = np.zeros(n)
-            for v in hyperplanes:
-                starts.append(len(index))
-                for ind, val in hp_iter(v):
-                    index.append(int(ind))
-                    value.append(float(val))
-                    grading[int(ind)] += float(val)
-
-            grading /= len(starts)
-            starts = np.asarray(starts, dtype=np.int32)
-            index = np.asarray(index, dtype=np.int32)
-            value = np.asarray(value, dtype=float)
-
-        inf = highspy.kHighsInf
-        lb = -inf if lower_bound is None else float(lower_bound)
-        h = highspy.Highs()
-        if not verbose:
-            h.silent()
-        h.addVars(n, np.full(n, lb), np.full(n, inf))
-        h.changeColsCost(n, np.arange(n, dtype=np.int32), grading)
-        h.addRows(
-            len(starts),
-            np.full(len(starts), float(c)),
-            np.full(len(starts), inf),
-            len(index),
-            starts,
-            index,
-            value,
-        )
-        h.run()
-        status = h.getModelStatus()
-        if status == highspy.HighsModelStatus.kOptimal:
-            return np.asarray(h.getSolution().col_value, dtype=float)
-        if verbose and status != highspy.HighsModelStatus.kInfeasible:
-            warnings.warn(f"Solver returned status {status!r}.")
-        return None
-
-    if backend in ("glop", "scip"):
-        solver = pywraplp.Solver.CreateSolver(backend.upper())
-
-        if verbose:
-            # enable solver to print output
-            solver.EnableOutput()
-
-        # define variables
-        var_type = solver.NumVar if backend == "glop" else solver.IntVar
-        if lower_bound is None:
-            lower = -solver.infinity()
-        else:
-            lower = lower_bound
-        var = [
-            (var_type)(lower, solver.infinity(), f"x_{i}") for i in range(ambient_dim)
-        ]
-
-        # define constraints
-        cons_list = []
-        for v in hyperplanes:
-            cons_list.append(solver.Constraint(c, solver.infinity()))
-            for ind, val in hp_iter(v):
-                cons_list[-1].SetCoefficient(var[ind], float(val))
-
-        # define objective
-        obj = solver.Objective()
-        obj.SetMinimization()
-
-        obj_vec = np.asarray(hyperplanes).sum(axis=0) / len(hyperplanes)
-        for i in range(ambient_dim):
-            obj.SetCoefficient(var[i], obj_vec[i])
-
-        # solve and parse solution
-        status = solver.Solve()
-        if status in (solver.FEASIBLE, solver.OPTIMAL):
-            solution = np.array([x.solution_value() for x in var])
-        elif status == solver.INFEASIBLE:
-            if verbose:
-                warnings.warn("Solver returned status INFEASIBLE.")
-            return None
-        else:
-            status_list = [
-                "OPTIMAL",
-                "FEASIBLE",
-                "INFEASIBLE",
-                "UNBOUNDED",
-                "ABNORMAL",
-                "MODEL_INVALID",
-                "NOT_SOLVED",
-            ]
-            warnings.warn(f"Solver returned status {status_list[status]}.")
-            return None
-
-    elif backend == "cpsat":
-        solver = cp_model.CpSolver()
-        model = cp_model.CpModel()
-
-        # define variables
-        var = []
-        if lower_bound is None:
-            lower = cp_model.INT32_MIN
-        else:
-            lower = lower_bound
-        for i in range(ambient_dim):
-            var.append(
-                model.new_int_var(cp_model.INT32_MIN, cp_model.INT32_MAX, f"x_{i}")
-            )
-
-        # define constraints
-        for v in hyperplanes:
-            model.add(sum(int(ii) * var[i] for i, ii in enumerate(v)) >= c)
-
-        # define objective
-        obj_vec = np.asarray(hyperplanes).sum(axis=0)
-        obj_vec //= utils.gcd_list(obj_vec)
-
-        obj = 0
-        for i in range(ambient_dim):
-            obj += var[i] * obj_vec[i]
-
-        model.minimize(obj)
-
-        # solve and parse solution
-        status = solver.solve(model)
-        if status in (cp_model.FEASIBLE, cp_model.OPTIMAL):
-            solution = np.array([solver.value(x) for x in var])
-        elif status == cp_model.INFEASIBLE:
-            return None
-        else:
-            warnings.warn(f"Solver returned status {solver.status_name(status)}.")
-
-    return solution
 
 
 # cone degeneracy

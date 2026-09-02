@@ -131,16 +131,12 @@ def test_cvxopt_backend_when_installed():
 
 
 def test_missing_cvxopt_extra_is_actionable(monkeypatch):
-    import cytools.cone as cone_module
+    import qpsolvers
 
     monkeypatch.setattr(
-        cone_module.qpsolvers,
+        qpsolvers,
         "available_solvers",
-        [
-            solver
-            for solver in cone_module.qpsolvers.available_solvers
-            if solver != "cvxopt"
-        ],
+        [solver for solver in qpsolvers.available_solvers if solver != "cvxopt"],
     )
     with pytest.raises(ImportError, match=r"cytools-workbench\[cvxopt\]"):
         Cone([[1, 0], [0, 1]]).tip_of_stretched_cone(backend="cvxopt")

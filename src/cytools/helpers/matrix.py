@@ -21,8 +21,7 @@
 
 # 'standard' imports
 # 3rd party imports
-from collections.abc import Iterable, Sequence
-from typing import Literal, overload
+from collections.abc import Sequence
 
 import numpy as np
 import scipy.sparse as sp
@@ -31,58 +30,6 @@ import scipy.sparse as sp
 from cytools.helpers import misc
 
 numeric = int | float | np.number
-
-
-# helpers
-# -------
-@overload
-def flatten_top(arr: Iterable, as_list: Literal[True] = True, N: int = 1) -> list: ...
-
-
-@overload
-def flatten_top(arr: Iterable, as_list: Literal[False], N: int = 1) -> np.ndarray: ...
-
-
-def flatten_top(arr: Iterable, as_list: bool = True, N: int = 1) -> list | np.ndarray:
-    """
-    **Description:**
-    Flatten the top level (axis=0) of an array.
-
-    **Arguments:**
-    - `arr`: The array to flatten. Can be ragged/have unequal depths.
-    - `as_list`: Whether to return a list of elements (True) or a numpy array
-        (False).
-    - `N`: How many levels to flatten, from the top.
-
-    **Returns:**
-    *(list or np.array)* lis, but with the top level flattened.
-
-    **Examples:**
-    >>> A = np.asarray(range(2**3)).reshape(2,2,2)
-    >>> flatten_top(A)
-    flatten_top: You really should use .reshape instead...
-    [[0, 1], [2, 3], [4, 5], [6, 7]]
-    >>> flatten_top(A.tolist())
-    [[0, 1], [2, 3], [4, 5], [6, 7]]
-    >>> flatten_top(A.tolist(), N=2)
-    [0, 1, 2, 3, 4, 5, 6, 7]
-    """
-    if N > 1:
-        return flatten_top(
-            flatten_top(arr, as_list=as_list, N=1), as_list=as_list, N=N - 1
-        )
-    if isinstance(arr, np.ndarray):
-        print("flatten_top: You really should use .reshape instead...")
-
-    # we convert elements to lists if they are np arrays
-    flattened = [
-        ele.tolist() if isinstance(ele, np.ndarray) else ele
-        for row in arr
-        for ele in row
-    ]
-    if as_list:
-        return flattened
-    return np.asarray(flattened)
 
 
 # Secondary cone hyperplanes are sparse: a row has <= d+2 nonzeros over an
@@ -178,6 +125,9 @@ def csr_unique_rows(mat):
     if mat.shape[0] < 2:
         return mat
 
+    # sum_duplicates() also sorts each row's indices, which the keys below rely
+    # on: two identical rows stored in a different column order must produce the
+    # same key.
     mat.sum_duplicates()
     keys = [
         (tuple(mat.indices[a:b]), tuple(mat.data[a:b]))
@@ -313,21 +263,21 @@ class CSR_stack:
         **Description:**
         Return a dense version of the stack, with duplicate rows removed.
 
+        The result is cached, and the cached array is marked read-only. With
+        `tocopy=False` -- the default, and what `__array__` uses -- the caller
+        receives the cache itself, so `np.asarray(stack)[0, 0] = x` used to
+        silently rewrite what every later call returned. Writing now raises
+        instead. Pass `tocopy=True` for an array you intend to modify.
+
         **Arguments:**
-        - `tocopy`: Whether to return a copy.
+        - `tocopy`: Whether to return a writable copy.
 
         **Returns:**
-        The dense array.
+        The dense array. Read-only unless *tocopy* is set.
         """
         if not hasattr(self, "_arr_dense"):
-            mat = self.tocsr()
-            mat.sum_duplicates()
-            keys, seen, keep = [], set(), []
-            for a, b in zip(mat.indptr[:-1], mat.indptr[1:]):
-                keys.append((tuple(mat.indices[a:b]), tuple(mat.data[a:b])))
-            for i, k in enumerate(keys):
-                if k not in seen:
-                    seen.add(k)
-                    keep.append(i)
-            self._arr_dense = mat[keep].toarray()
-        return self._arr_dense.copy() if tocopy else self._arr_dense
+            # de-duplication is `csr_unique_rows`; it was restated inline here
+            arr = csr_unique_rows(self.tocsr()).toarray()
+            arr.setflags(write=False)
+            self._arr_dense = arr
+        return np.array(self._arr_dense) if tocopy else self._arr_dense

@@ -1,4 +1,5 @@
 import numpy as np
+import pytest
 
 from cytools import Polytope
 
@@ -68,13 +69,13 @@ def test_restricted_simps_pads_label_simplices():
     """
     fan = fan_fixture()
 
-    unpadded = fan.restricted_simps(to_dim=1, padded=False, as_face_inds=False)
+    unpadded = fan.restricted_simps(to_dim=1, padded=False, as_indices=False)
     assert any(len(simp) == 2 for face in unpadded for simp in face), (
         "fixture no longer produces 2-point restricted simplices, "
         "so this test would pass vacuously"
     )
 
-    padded = fan.restricted_simps(to_dim=1, padded=True, as_face_inds=False)
+    padded = fan.restricted_simps(to_dim=1, padded=True, as_indices=False)
     assert all(len(simp) >= 3 for face in padded for simp in face)
 
     # padding duplicates the last entry rather than inventing a new point
@@ -86,9 +87,23 @@ def test_restricted_simps_pads_label_simplices():
 def test_restricted_simps_label_and_index_paths_agree():
     """Both output spaces must describe the same simplices."""
     fan = fan_fixture()
-    by_label = fan.restricted_simps(to_dim=2, padded=False, as_face_inds=False)
-    by_index = fan.restricted_simps(to_dim=2, padded=False, as_face_inds=True)
+    by_label = fan.restricted_simps(to_dim=2, padded=False, as_indices=False)
+    by_index = fan.restricted_simps(to_dim=2, padded=False, as_indices=True)
 
     assert len(by_label) == len(by_index)
     for labels, inds in zip(by_label, by_index):
         assert [len(s) for s in labels] == [len(s) for s in inds]
+
+
+def test_index_flag_aliases_warn_and_preserve_results():
+    fan = fan_fixture()
+
+    canonical_cones = fan.cones(as_indices=True)
+    with pytest.warns(DeprecationWarning, match="as_inds"):
+        legacy_cones = fan.cones(as_inds=True)
+    assert canonical_cones == legacy_cones
+
+    canonical_simps = fan.restricted_simps(as_indices=True)
+    with pytest.warns(DeprecationWarning, match="as_face_inds"):
+        legacy_simps = fan.restricted_simps(as_face_inds=True)
+    assert canonical_simps == legacy_simps

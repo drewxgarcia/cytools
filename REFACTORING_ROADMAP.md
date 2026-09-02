@@ -88,9 +88,13 @@ flags themselves (Phase 6) depends on it.
 
 - [x] **3.1** Canonicalise the numpy-array flag on `as_np_array`; alias
       `as_np_arr` / `as_np_array_output` with a `DeprecationWarning`.
-- [ ] **3.2** Canonicalise the indices flags on `as_indices` where the meaning is
-      plain "indices"; keep the qualified ones (`as_poly_indices`) only where
-      they genuinely name a *different index space*, and rename the rest.
+- [x] **3.2** Canonicalised plain index flags on `as_indices` across
+      triangulations, fans, restricted face simplices, and F-theory trilayer
+      helpers. The historical `as_triang_indices`, `as_inds`, `as_face_inds`,
+      `as_index`, and `as_vertex_index` spellings warn for one release through
+      one shared compatibility primitive. `as_poly_indices` remains qualified:
+      it genuinely selects a different, ambient-polytope index space, and
+      conflicting index spaces now raise an explicit error.
 - [ ] **3.3** Settle on the `as_*` prefix; alias the five `return_*` names.
       *Done when:* one spelling per concept, old names warn for one release.
 

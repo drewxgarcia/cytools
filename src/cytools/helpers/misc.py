@@ -46,7 +46,20 @@ def to_base10(c: Sequence[int], B: Sequence[int]) -> int:
 
     **Returns:**
     The integer in base-10.
+
+    :::warning
+    `c` and `B` must be the same length. `zip` stops at the shorter one, and
+    since both are reversed, a mismatch dropped the *leading* components
+    silently -- `to_base10([1, 2, 3], [10, 10])` returned 23, exactly as
+    `to_base10([2, 3], [10, 10])` does. That is a wrong answer with no
+    indication, so it is now an error.
+    :::
     """
+    if len(c) != len(B):
+        raise ValueError(
+            f"got {len(c)} components for {len(B)} bases; they must match "
+            "(a shorter component list would silently drop leading digits)"
+        )
     result = 0
     multiplier = 1
     for c_i, B_i in zip(reversed(c), reversed(B)):
@@ -99,15 +112,28 @@ def load_zipped_pickle(fname, path=cache_dir):
         fname += ".p"
     file = os.path.join(path, fname)
 
-    if os.path.isfile(file):
+    if not os.path.isfile(file):
+        return None
+
+    try:
+        with gzip.open(file, "rb") as f:
+            return pickle.load(f)
+    except Exception as e:
+        # Broadly, on purpose. The narrow `(EOFError, UnpicklingError)` this
+        # replaces covered a truncated or empty file but not a corrupt one: a
+        # partially overwritten cache raises `gzip.BadGzipFile`, which escaped
+        # and left the caller permanently unable to read its own cache. The
+        # docstring's own caveat -- "custom/atypical classes may fail to load"
+        # -- names still more ways in (AttributeError, ImportError, ...). A
+        # cache is by definition reconstructible, so anything unreadable should
+        # be discarded rather than raised.
+        print(
+            f"Warning: cache {file} is broken ({type(e).__name__}: {e}), removing it..."
+        )
         try:
-            with gzip.open(file, "rb") as f:
-                return pickle.load(f)
-        except (EOFError, pickle.UnpicklingError) as e:
-            print(f"Warning: cache {file} is broken ({e}), removing it...")
             os.remove(file)
-            return None
-    else:
+        except OSError:
+            pass
         return None
 
 
@@ -125,7 +151,8 @@ def save_zipped_pickle(
     - `obj`: The object to save.
     - `fname`: Filename.
     - `path`: Path to file.
-    - `protocol`: Protocol to use for saving the file. Defaults to -1.
+    - `protocol`: Protocol to use for saving the file. Defaults to
+        `pickle.DEFAULT_PROTOCOL`.
 
     **Returns:**
     Nothing.

@@ -35,6 +35,7 @@ from sympy.matrices.normalforms import smith_normal_decomp
 import cytools.h_polytope as h_polytope
 
 # CYTools imports
+from cytools._compat import resolve_deprecated_bool
 from cytools.cone import Cone
 from cytools.helpers.arithmetic import primitive
 from cytools.polytope import Polytope
@@ -400,7 +401,9 @@ def points_from_glsm(glsm):
     return (UU[rank_D:].astype(int)).T
 
 
-def find_trilayer_vertex_polytope(p, as_index=False):
+def find_trilayer_vertex_polytope(
+    p, as_indices: bool = False, *, as_index: bool | None = None
+):
     """
     **Description:**
 
@@ -410,22 +413,28 @@ def find_trilayer_vertex_polytope(p, as_index=False):
 
     - `p (Polytope)`: The trilayer polytope.
 
-    - `as_index (bool)`: Whether to return the vertex index rather than the vertex coordinates. Defaults to `False`.
+    - `as_indices (bool)`: Whether to return the vertex index rather than the vertex coordinates. Defaults to `False`.
+    - `as_index (bool)`: Deprecated spelling of `as_indices`.
 
     **Returns:**
 
-    - `numpy.ndarray` or `int`: The distinguished vertex, or its index if `as_index=True`.
+    - `numpy.ndarray` or `int`: The distinguished vertex, or its index if `as_indices=True`.
 
     """
+    as_indices = resolve_deprecated_bool(
+        as_indices, as_index, name="as_indices", legacy_name="as_index"
+    )
     glsm_vert = glsm_from_points(p.vertices())
     half_anticanon = np.sum(glsm_vert, axis=1) // 2
     index = get_indices(glsm_vert.T, np.array([half_anticanon]))[0]
-    if as_index:
+    if as_indices:
         return index
     return p.vertices()[index]
 
 
-def find_trilayer_vertex_vertices(V, as_vertex_index=False):
+def find_trilayer_vertex_vertices(
+    V, as_indices: bool = False, *, as_vertex_index: bool | None = None
+):
     """
     **Description:**
 
@@ -434,18 +443,25 @@ def find_trilayer_vertex_vertices(V, as_vertex_index=False):
     **Arguments:**
 
     - `V (array-like)`: The vertices of a trilayer polytope.
-    - `as_vertex_index (bool)`: Whether to return the vertex index rather than the vertex coordinates. Defaults to `False`.
+    - `as_indices (bool)`: Whether to return the vertex index rather than the vertex coordinates. Defaults to `False`.
+    - `as_vertex_index (bool)`: Deprecated spelling of `as_indices`.
 
     **Returns:**
 
-    - `numpy.ndarray` or `int`: The distinguished vertex, or its index if `as_vertex_index=True`.
+    - `numpy.ndarray` or `int`: The distinguished vertex, or its index if `as_indices=True`.
 
     """
 
+    as_indices = resolve_deprecated_bool(
+        as_indices,
+        as_vertex_index,
+        name="as_indices",
+        legacy_name="as_vertex_index",
+    )
     glsm_vert = glsm_from_points(V)
     half_anticanon = np.sum(glsm_vert, axis=1) // 2
     index = get_indices(glsm_vert.T, np.array([half_anticanon]))[0]
-    if as_vertex_index:
+    if as_indices:
         return index
     return V[index]
 
@@ -466,7 +482,7 @@ def trilayer_normal_form(p):
 
     """
     verts = p.vertices()
-    index = find_trilayer_vertex_vertices(verts, as_vertex_index=True)
+    index = find_trilayer_vertex_vertices(verts, as_indices=True)
     verts[[0, index]] = verts[[index, 0]]
     aa, ss, tt = smith_normal_decomp(Matrix(verts), domain=ZZ)
     a = np.array(aa, dtype=int)

@@ -119,6 +119,25 @@ def _resolve_root(root: Path | str | None) -> Path:
     return Path(root).expanduser()
 
 
+def _conform(table: pa.Table, schema: pa.Schema) -> pa.Table:
+    """Re-shape *table* to *schema*, filling columns it does not have with nulls.
+
+    `pa.Table.cast` cannot do this on its own: it requires the field count to
+    match already. Parts legitimately differ in their columns, because `write()`
+    derives them from whatever keys the payload returned -- a batch of ordinary
+    results and a batch of error rows do not carry the same ones.
+    """
+    if table.schema == schema:
+        return table
+    arrays = []
+    for field in schema:
+        if field.name in table.schema.names:
+            arrays.append(table.column(field.name).cast(field.type))
+        else:
+            arrays.append(pa.chunked_array([pa.nulls(table.num_rows, field.type)]))
+    return pa.Table.from_arrays(arrays, schema=schema)
+
+
 class DerivedStore:
     """
     **Description:**
@@ -349,11 +368,29 @@ class DerivedStore:
 
         Every `materialize` batch appends a part file, so a store written over
         many runs accumulates small files and `known_ids` slows down in
-        proportion. Compaction is safe to run at any time: the merged file is
-        written under a temporary name and renamed into place before the old
+        proportion. Compaction is crash-safe to run at any time: the merged file
+        is written under a temporary name and renamed into place before the old
         parts are removed, so an interruption leaves a readable store either
         way -- at worst with the merged file present alongside the originals,
         which de-duplicates on read.
+
+        It is also *memory*-safe, which it previously was not. The old
+        implementation called `read()`, concatenating every column of every part
+        into one table before writing it back, so peak memory was the entire
+        quantity -- on a store this module's own preamble sizes in terabytes,
+        that is not a merge anyone can run. This walks the parts instead: one
+        pass over the id columns alone to decide which rows survive, then one
+        part at a time through a `ParquetWriter`. Peak memory is the id index
+        (8 bytes per stored row) plus a single part.
+
+        The cost is that the merged file is no longer *globally* sorted by
+        `ks_id`; each part's surviving rows are sorted, and the runs are
+        concatenated in part order. Global order needs the whole quantity
+        resident, which is the thing being fixed. Nothing measurable is lost:
+        `write()` already records that sorting bought nothing here, because
+        content-hash ids spread uniformly over int64 and a sorted run of them
+        spans nearly the full range either way, so row-group statistics prune
+        no better sorted than not.
 
         **Returns:**
         The merged part file, or `None` if there was nothing to compact.
@@ -362,15 +399,71 @@ class DerivedStore:
         if len(parts) <= 1:
             return None
 
-        table = self.read(quantity, version)
-        if not table.num_rows:
+        # Pass one: the id column of each readable part, in write order. Only
+        # ids, so this stays proportional to the row count and not to how many
+        # columns the quantity has.
+        readable: list[Path] = []
+        schemas: list[pa.Schema] = []
+        id_chunks: list[np.ndarray] = []
+        for path in parts:
+            try:
+                ids = (
+                    pq.read_table(path, columns=[_ID_COLUMN])
+                    .column(_ID_COLUMN)
+                    .to_numpy(zero_copy_only=False)
+                    .astype(np.int64)
+                )
+                schema = pq.read_schema(path)
+            except Exception:
+                # a partially written file from a killed run; it contributes no
+                # rows, and is removed with the rest below
+                continue
+            readable.append(path)
+            schemas.append(schema)
+            id_chunks.append(ids)
+
+        if not id_chunks:
             return None
-        table = table.sort_by(_ID_COLUMN)
+
+        # Which rows survive: the last occurrence of each id, parts ordered
+        # oldest to newest, so a successful recomputation supersedes the prior
+        # value exactly as `read()` resolves it.
+        bounds = np.cumsum([0] + [len(c) for c in id_chunks])
+        all_ids = np.concatenate(id_chunks)
+        _, latest_from_end = np.unique(all_ids[::-1], return_index=True)
+        keep = np.zeros(len(all_ids), dtype=bool)
+        keep[len(all_ids) - 1 - latest_from_end] = True
+        if not keep.any():
+            return None
+
+        # `promote_options="default"`, matching `read()`. A store whose parts
+        # carry genuinely incompatible types for one column should fail here in
+        # the same way it already fails to be read, rather than be silently
+        # widened by compaction into something `read()` would not have produced.
+        schema = pa.unify_schemas(schemas, promote_options="default")
 
         d = self.quantity_dir(quantity, version)
+        d.mkdir(parents=True, exist_ok=True)
         final = self._part_path(d)
         tmp = final.with_suffix(".parquet.tmp")
-        pq.write_table(table, tmp)
+
+        try:
+            writer = pq.ParquetWriter(tmp, schema)
+            try:
+                for i, path in enumerate(readable):
+                    local = np.flatnonzero(keep[bounds[i] : bounds[i + 1]])
+                    if not len(local):
+                        continue
+                    table = pq.read_table(path).take(local).sort_by(_ID_COLUMN)
+                    writer.write_table(_conform(table, schema))
+            finally:
+                writer.close()
+        except BaseException:
+            # Do not leave a half-written temporary behind. The original parts
+            # are all still in place, so the store is exactly as it was.
+            tmp.unlink(missing_ok=True)
+            raise
+
         tmp.replace(final)
 
         for p in parts:
@@ -492,11 +585,15 @@ def _make_pool(workers, fn):
     Spawned workers re-import the library. Keeping the pool alive across source
     batches pays that startup cost once per materialization rather than once per
     batch.
+
+    The payload is *not* validated here. `materialize` creates the pool lazily,
+    on the first batch that has work, so a check at this point would not run
+    until after the scan had already opened Parquet files and skipped rows --
+    which is not what `_check_parallel_payload` promises. `materialize` calls it
+    up front instead.
     """
     if workers <= 1:
         return None
-
-    _check_parallel_payload(fn)
 
     import multiprocessing as mp
     from concurrent.futures import ProcessPoolExecutor
@@ -609,6 +706,13 @@ def materialize(
     known = (
         np.empty(0, dtype=np.int64) if recompute else store.known_ids(quantity, version)
     )
+
+    # Before the scan, not on the first batch with work. The pool is built
+    # lazily, so checking it there meant an unpicklable payload was reported
+    # only after the scan had opened files and resolved downloads -- and not at
+    # all for a run whose every row was already stored.
+    if workers > 1:
+        _check_parallel_payload(fn)
 
     pool = None
     try:

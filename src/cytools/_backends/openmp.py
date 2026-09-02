@@ -46,6 +46,20 @@ class OpenMPRuntimeConflict(RuntimeError):
     """Loading an optional backend would register a second OpenMP runtime."""
 
 
+# Basenames of the OpenMP runtimes that register with LLVM's startup guard and
+# therefore abort on a duplicate. `libiomp5` is Intel's, reached through MKL and
+# through some numpy/scipy builds; matching only `libomp` missed it, which is
+# the most common source of a second runtime after PyTorch's bundled copy.
+# `libgomp` is deliberately absent: GCC's runtime tolerates duplicates and does
+# not participate in the registration that aborts.
+_OPENMP_BASENAMES = (b"libomp", b"libiomp5")
+
+
+def _is_openmp_runtime(basename: bytes) -> bool:
+    """Whether a dyld image basename names an abort-on-duplicate OpenMP runtime."""
+    return any(name in basename for name in _OPENMP_BASENAMES)
+
+
 def loaded_runtimes() -> set[str]:
     """
     **Description:**
@@ -68,7 +82,7 @@ def loaded_runtimes() -> set[str]:
         found = set()
         for i in range(libc._dyld_image_count()):
             raw = libc._dyld_get_image_name(i)
-            if raw and b"libomp" in raw.rsplit(b"/", 1)[-1]:
+            if raw and _is_openmp_runtime(raw.rsplit(b"/", 1)[-1]):
                 found.add(os.path.realpath(os.fsdecode(raw)))
         return found
     except (AttributeError, OSError):
@@ -138,7 +152,7 @@ def ensure_compatible() -> None:
         "Python traceback.\n"
         f"  already loaded: {other}\n"
         f"  about to load:  {bundled}\n"
-        "Both are LLVM builds, so the usual fix is to make PyTorch share the "
+        "When both are LLVM builds, the usual fix is to make PyTorch share the "
         "one already loaded:\n"
         f'  ln -sf "{other}" "{bundled}"\n'
         "Re-apply that after any reinstall of PyTorch, which restores its "

@@ -62,6 +62,20 @@ at this boundary: all PPL consumers import the engine through
 `cytools._backends.ppl`, which restores the native floating-point rounding mode
 once after the engine loads.
 
+Mathematical tasks with interchangeable implementations are owned by an
+engine registry. A domain call states the guarantees its result depends on
+(for example, exact arithmetic, certified infeasibility, or regularity by
+construction); the registry then selects the cheapest available engine that
+provides all of them. Engine order is a measured performance policy, never a
+correctness policy. Advanced users can scope a reproducibility or differential
+test with `cytools.config.engines(...)`; overrides cannot silently weaken a
+call site's guarantees.
+
+Historical `backend=` arguments remain at established public entry points for
+drop-in compatibility, but they resolve into the same adapters. New internal
+code must not thread backend strings through the domain graph or import an
+optional implementation directly.
+
 ## Extension modules
 
 Domain classes declare their entire method surface. Methods implemented by
@@ -77,6 +91,8 @@ dependencies into the supported namespace.
 ## Change checklist
 
 - Put optional third-party APIs behind `_backends`.
+- Resolve interchangeable implementations by required guarantees, not by a
+  package name selected deep in a call chain.
 - Keep imports and filesystem/network/process work out of module initialization.
 - Declare methods on their owning classes; do not attach them from another
   module at runtime.

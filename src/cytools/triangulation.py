@@ -34,6 +34,9 @@ import triangulumancer
 from scipy.spatial import ConvexHull
 
 # CYTools imports
+from cytools._backends.engines import TRIANGULATE
+from cytools._backends.registry import RECOVERABLE, REGULAR
+from cytools._compat import resolve_deprecated_bool
 from cytools._extensions import lazy_method
 from cytools._typing import (
     InteriorPointBackend,
@@ -215,14 +218,15 @@ class Triangulation:
         elif not pts_set.issubset(poly.labels):
             raise ValueError("All point labels must exist in the polytope.")
 
-        # backend
-        normalized_backend = backend.lower()
-        if normalized_backend not in ("qhull", "cgal", "topcom"):
+        valid_backends: tuple[TriangulationBackend, ...] = (
+            "cgal",
+            "qhull",
+            "topcom",
+        )
+        if backend not in valid_backends:
             raise ValueError(
-                f"Invalid backend, {normalized_backend}. "
-                + f"Options: {['qhull', 'cgal', 'topcom']}."
+                f"Invalid backend, {backend!r}. Options: {valid_backends}."
             )
-        backend = normalized_backend
 
         # initialize attributes
         # ---------------------
@@ -230,11 +234,11 @@ class Triangulation:
 
         # process the inputs
         # ------------------
-        # backend
-        self._backend = backend
-
         # polytope
         self._poly = poly
+        # Retained for compatibility with serialized/notebook objects. Engine
+        # implementations themselves remain behind the registry boundary.
+        self._backend = backend
 
         # points
         # (ordered to match poly.label ordering...)
@@ -317,101 +321,82 @@ class Triangulation:
                     msg = "Simplices don't form valid triangulation."
                     raise ValueError(msg)
         else:
-            # no simplices were given... construct them from heights
-
-            self._is_regular = None if (backend == "qhull") else True
+            # No simplices were given: resolve the historical public names to
+            # the engines they actually meant. "cgal" and "topcom" are kept
+            # as drop-in API spellings even though neither library is called.
+            self._is_regular = True if backend == "cgal" else None
             self._is_valid = True
 
             default_triang = heights is None
-            if heights is None:
-                # construct the heights
-                if backend is None:
-                    raise ValueError(
-                        "Simplices must be specified when working without a backend"
-                    )
+            if backend == "topcom" and heights is not None:
+                raise ValueError("Heights cannot be specified with backend='topcom'.")
+            if heights is None and backend != "topcom":
+                # Delaunay heights. These were perturbed by Gaussian noise for
+                # the QHull engine, which made construction non-reproducible:
+                # the same polytope could yield different triangulations on
+                # different runs. The engine resolved below is deterministic,
+                # so the unperturbed heights are used.
+                heights = [np.dot(p, p) for p in self.points()]
+            elif heights is not None and len(heights) != len(pts):
+                raise ValueError("Need same number of heights as points.")
 
-                # Heights need to be perturbed around the Delaunay heights for
-                # QHull or the triangulation might not be regular. If using
-                # CGAL then they are not perturbed.
-                if backend == "qhull":
-                    heights = [
-                        np.dot(p, p) + np.random.normal(0, 0.05) for p in self.points()
-                    ]
-                elif backend == "cgal":
-                    heights = [np.dot(p, p) for p in self.points()]
-                else:  # TOPCOM
-                    heights = None
-            else:
-                # check the heights
-                if len(heights) != len(pts):
-                    raise ValueError("Need same number of heights as points.")
-
-            # only TOPCOM triangulates without heights
             heights_arr = None if heights is None else np.asarray(heights)
             self._heights = heights_arr
-            # Now run the appropriate triangulation function
+
             triang_pts = self.points(optimal=not self._is_fulldim)
-            if backend == "qhull":
-                if heights_arr is None:
-                    raise ValueError("The qhull backend requires heights.")
-                self._simplices = _qhull_triangulate(triang_pts, heights_arr)
-
-                # map to labels
-                self._simplices = np.asarray(
-                    [[self._labels[i] for i in s] for s in self._simplices]
+            problem = {"heights": heights_arr, "dim": self.dim()}
+            if backend == "cgal":
+                engine = TRIANGULATE.resolve(
+                    need=(REGULAR, RECOVERABLE), problem=problem
                 )
+                self._simplices = engine.run(triang_pts, heights_arr)
+            elif backend == "qhull":
+                engine = TRIANGULATE["qhull"]
+                if not engine.available():
+                    raise RuntimeError("The QHull triangulation engine is unavailable.")
+                self._simplices = engine.run(triang_pts, heights_arr)
+            else:
+                engine = TRIANGULATE["fine"]
+                if not engine.available():
+                    raise RuntimeError(
+                        "The triangulumancer fine-triangulation engine is unavailable."
+                    )
+                self._simplices = engine.run(triang_pts)
 
-                # convert to star
-                if make_star:
-                    pre_star = {frozenset(s) for s in self._simplices}
-                    _to_star(self)
-                    if pre_star != {frozenset(s) for s in self._simplices}:
-                        # the star-ification changed the triangulation, so the
-                        # heights no longer generate what we store in
-                        # self._simplices. Drop them (they get recomputed via
-                        # an LP whenever heights() is called).
-                        self._heights = None
-            elif backend == "cgal":
-                if heights_arr is None:
-                    raise ValueError("The cgal backend requires heights.")
-                self._simplices = _cgal_triangulate(triang_pts, heights_arr)
+            # a star can be obtained by pushing the origin far below the
+            # others, which is cheaper than re-deriving one from the simplices
+            if make_star and backend == "cgal":
+                if heights_arr is None:  # defensive; cgal always has heights
+                    raise RuntimeError("The heights engine requires a height vector.")
+                origin_mask = np.zeros(heights_arr.size, dtype=bool)
+                origin_mask[self._origin_index] = True
+                heights_masked = np.ma.array(heights_arr, mask=origin_mask)
 
-                # can obtain star more quickly than in QHull by setting height
-                # of origin to be much lower than others
-                # (can't do this in QHull since it sometimes causes errors...)
-                if make_star:
-                    # get max/min of all heights other than the origin...
-                    origin_mask = np.zeros(heights_arr.size, dtype=bool)
-                    origin_mask[self._origin_index] = True
-                    heights_masked = np.ma.array(heights_arr, mask=origin_mask)
+                # (don't assume that the origin sits at index 0!)
+                other_heights = heights_masked.compressed()
+                if len(other_heights):
+                    origin_step = max(10, other_heights.max() - other_heights.min())
+                else:
+                    origin_step = 10
 
-                    # (don't assume that the origin sits at index 0!)
-                    other_heights = heights_masked.compressed()
-                    if len(other_heights):
-                        origin_step = max(10, other_heights.max() - other_heights.min())
-                    else:
-                        origin_step = 10
+                # reduce height of origin until it's in all simplices
+                while any(self._origin_index not in s for s in self._simplices):
+                    heights_arr[self._origin_index] -= origin_step
+                    self._simplices = engine.run(triang_pts, heights_arr)
 
-                    # reduce height of origin until it's in all simplices
-                    while any(self._origin_index not in s for s in self._simplices):
-                        heights_arr[self._origin_index] -= origin_step
-                        self._simplices = _cgal_triangulate(triang_pts, heights_arr)
-                # map to labels
-                self._simplices = np.asarray(
-                    [[self._labels[i] for i in s] for s in self._simplices]
-                )
+            # map to labels
+            self._simplices = np.asarray(
+                [[self._labels[i] for i in s] for s in self._simplices]
+            )
 
-            else:  # Use TOPCOM
-                self._simplices = _topcom_triangulate(triang_pts)
-
-                # map to labels
-                self._simplices = np.asarray(
-                    [[self._labels[i] for i in s] for s in self._simplices]
-                )
-
-                # convert to star
-                if make_star:
-                    _to_star(self)
+            if make_star and backend != "cgal":
+                before = {frozenset(s) for s in self._simplices}
+                _to_star(self)
+                if before != {frozenset(s) for s in self._simplices}:
+                    # Starification changed the triangulation, so the original
+                    # height certificate (when QHull had one) no longer
+                    # describes the stored simplices.
+                    self._heights = None
 
             # check that the heights uniquely define this triangulation
             if check_heights and (self._heights is not None):
@@ -877,8 +862,10 @@ class Triangulation:
         which=None,
         optimal: bool = False,
         as_poly_indices: bool = False,
-        as_triang_indices: bool = False,
+        as_indices: bool = False,
         check_labels: bool = True,
+        *,
+        as_triang_indices: bool | None = None,
     ) -> np.ndarray:
         """
         **Description:**
@@ -889,8 +876,11 @@ class Triangulation:
         - `which`: Which points to return. Specified by a (list of) labels.
             NOT INDICES!!!
         - `optimal`: Whether to return the points in their optimal coordinates.
-        - `as_indices`: Return the points as indices of the full list of points
-            of the polytope.
+        - `as_poly_indices`: Return indices in the ambient polytope's point
+            list. This remains qualified because it names a distinct index
+            space.
+        - `as_indices`: Return indices in this triangulation's point list.
+        - `as_triang_indices`: Deprecated spelling of `as_indices`.
 
         **Returns:**
         The points of the triangulation.
@@ -915,9 +905,16 @@ class Triangulation:
         #        [ 0,  0, -2, -3]])
         ```
         """
-        if as_poly_indices and as_triang_indices:
+        as_indices = resolve_deprecated_bool(
+            as_indices,
+            as_triang_indices,
+            name="as_indices",
+            legacy_name="as_triang_indices",
+        )
+        if as_poly_indices and as_indices:
             raise ValueError(
-                "Both as_poly_indices and as_triang_indices " + "can't be set to True."
+                "as_poly_indices and as_indices select different index spaces; "
+                "only one can be True."
             )
 
         # get the labels of the relevant points
@@ -929,21 +926,19 @@ class Triangulation:
             if (not isinstance(which, Iterable)) and (which in self.labels):
                 which = [which]
 
-            # check if the input labels
-            if check_labels:
-                try:
-                    if not set(which).issubset(self.labels):
-                        raise ValueError(
-                            f"Specified labels ({which}) aren't "
-                            "subset of triangulation labels "
-                            f"({self.labels})..."
-                        )
-                except Exception:
-                    # print(f"Specified labels, {which}, likely aren't hashable.")
-                    raise
+            # check that the input labels are ones we know about. Unhashable
+            # input raises from `set(which)` on its own; it used to be wrapped
+            # in a `try/except Exception: raise`, which caught every exception
+            # only to re-raise it unchanged and so did nothing at all.
+            if check_labels and not set(which).issubset(self.labels):
+                raise ValueError(
+                    f"Specified labels ({which}) aren't "
+                    "subset of triangulation labels "
+                    f"({self.labels})..."
+                )
 
         # return
-        if as_triang_indices:
+        if as_indices:
             if self._labels2inds is None:
                 self._labels2inds = {v: i for i, v in enumerate(self._labels)}
             return np.array([self._labels2inds[label] for label in which])
@@ -1053,7 +1048,7 @@ class Triangulation:
         inds = self.points(
             which=labels,
             as_poly_indices=as_poly_indices,
-            as_triang_indices=not as_poly_indices,
+            as_indices=not as_poly_indices,
         )
 
         # get/return the indices
@@ -1117,7 +1112,7 @@ class Triangulation:
 
         # calculate the answer
         simps = self.simplices()
-        # simps = np.array([self.points(s, as_triang_indices=True) for s in simps])
+        # simps = np.array([self.points(s, as_indices=True) for s in simps])
 
         if simps.shape[1] != self.dim() + 1:
             self._is_valid = False
@@ -1905,7 +1900,7 @@ class Triangulation:
                 ):
                     tmp_labels = [self.poly.labels[j], self.poly.labels[jj]]
                     idx_j, idx_jj = self.points(
-                        tmp_labels, as_triang_indices=True, check_labels=False
+                        tmp_labels, as_indices=True, check_labels=False
                     )
                     temp[idx_j] = idx_jj
             autos[i] = temp
@@ -2788,122 +2783,6 @@ def _to_star(triang: Triangulation) -> None:
     triang._simplices = np.array(sorted([sorted(s) for s in star_triang]))
 
 
-def _qhull_triangulate(points: Matrix, heights: Vector) -> np.ndarray:
-    """
-    **Description:**
-    Computes a regular triangulation using QHull.
-
-    :::note
-    This function is not intended to be called by the end user. Instead, it is
-    used by the [`Triangulation`](./triangulation) class when using QHull as
-    the backend.
-    :::
-
-    **Arguments:**
-    - `points`: A list of points.
-    - `heights`: A list of heights defining the regular triangulation.
-
-    **Returns:**
-    A list of simplices defining a regular triangulation.
-
-    **Example:**
-    This function is not intended to be directly used, but it is used in the
-    following example. We construct a triangulation using QHull.
-    ```python {2}
-    p = Polytope([[1,0,0,0],[0,1,0,0],[0,0,1,0],[0,0,0,1],[-1,-1,-6,-9]])
-    p.triangulate(backend="qhull")
-    # A fine, star triangulation of a 4-dimensional point configuration with 7
-    # points in ZZ^4
-    ```
-    """
-    lifted_points = [tuple(points[i]) + (heights[i],) for i in range(len(points))]
-    hull = ConvexHull(lifted_points)
-
-    # We first pick the lower facets of the convex hull
-    low_fac = [
-        hull.simplices[n] for n, nn in enumerate(hull.equations) if nn[-2] < 0
-    ]  # The -2 component is the lifting dimension
-
-    # Then we only take the faces that project to full-dimensional simplices
-    # in the original point configuration
-    lifted_points = [pt[:-1] + (1,) for pt in lifted_points]
-    simp = [
-        s
-        for s in low_fac
-        if int(round(np.linalg.det([lifted_points[i] for i in s]))) != 0
-    ]
-
-    return np.array(sorted([sorted(s) for s in simp]))
-
-
-def _cgal_triangulate(points: Matrix, heights: Vector) -> np.ndarray:
-    """
-    **Description:**
-    Computes a regular triangulation using CGAL.
-
-    :::note
-    This function is not intended to be called by the end user. Instead, it is
-    used by the [`Triangulation`](./triangulation) class when using CGAL as the
-    backend.
-    :::
-
-    **Arguments:**
-    - `points`: A list of points.
-    - `heights`: A list of heights defining the regular triangulation.
-
-    **Returns:**
-    A list of simplices defining a regular triangulation.
-
-    **Example:**
-    This function is not intended to be directly used, but it is used in the
-    following example. We construct a triangulation using CGAL.
-    ```python {2}
-    p = Polytope([[1,0,0,0],[0,1,0,0],[0,0,1,0],[0,0,0,1],[-1,-1,-6,-9]])
-    p.triangulate(backend="cgal")
-    # A fine, star triangulation of a 4-dimensional point configuration with 7
-    # points in ZZ^4
-    ```
-    """
-
-    pc = triangulumancer.PointConfiguration(points)
-    simp = pc.triangulate_with_heights(heights).simplices
-
-    return np.array(sorted([sorted(s) for s in simp]))
-
-
-def _topcom_triangulate(points: Matrix) -> np.ndarray:
-    """
-    **Description:**
-    Computes the placing/pushing triangulation using TOPCOM.
-
-    :::note
-    This function is not intended to be called by the end user. Instead, it is
-    used by the [`Triangulation`](./triangulation) class when using TOPCOM as
-    the backend.
-    :::
-
-    **Arguments:**
-    - `points`: A list of points.
-
-    **Returns:**
-    A list of simplices defining a triangulation.
-
-    **Example:**
-    This function is not intended to be directly used, but it is used in the
-    following example. We construct a triangulation using TOPCOM.
-    ```python {2}
-    p = Polytope([[1,0,0,0],[0,1,0,0],[0,0,1,0],[0,0,0,1],[-1,-1,-6,-9]])
-    p.triangulate(backend="topcom")
-    # A fine, star triangulation of a 4-dimensional point configuration with 7
-    # points in ZZ^4
-    ```
-    """
-    pc = triangulumancer.PointConfiguration(points)
-    simp = pc.fine_triangulation().simplices
-
-    return np.array(sorted([sorted(s) for s in simp]))
-
-
 def all_triangulations(
     poly: Polytope,
     pts: Sequence,
@@ -2994,25 +2873,37 @@ def all_triangulations(
     pc = triangulumancer.PointConfiguration(optimal_pts)
     triangs = pc.all_triangulations(only_fine=only_fine)
 
-    # map the triangulations to labels
-    triangs = [[[pts[x] for x in i] for i in t.simplices] for t in triangs]
-
-    # sort the triangs
-    srt_triangs = [
-        np.array(sorted([sorted(s) for s in t]))
-        for t in triangs
-        if (not only_star or all(star_origin in ss for ss in t))
-    ]
+    # The star condition depends only on *which* points each simplex uses, so
+    # it can be tested on the raw indices, before mapping them to labels. That
+    # matters: at h11=5 about 96% of the fine triangulations are non-star, and
+    # label-mapping them first was pure waste. Streaming the filter also keeps
+    # only one triangulation materialized at a time instead of all of them.
+    if only_star:
+        pts_list = list(pts)
+        if star_origin not in pts_list:
+            return
+        star_idx = pts_list.index(star_origin)
 
     # return the output
-    for t in srt_triangs:
+    for t in triangs:
+        simps = t.simplices
+
+        # Vectorized: `x in <numpy row>` is ~27x slower than on a Python
+        # list, so test the whole triangulation in one numpy op instead of
+        # doing a membership test per simplex.
+        if only_star and not (simps == star_idx).any(axis=1).all():
+            continue
+
+        # map to labels and sort
+        srt = np.array(sorted([sorted([pts[x] for x in i]) for i in simps]))
+
         if raw_output:
-            yield t
+            yield srt
             continue
         tri = Triangulation(
             poly,
             pts,
-            simplices=t,
+            simplices=srt,
             make_star=False,
             check_input_simplices=False,
         )

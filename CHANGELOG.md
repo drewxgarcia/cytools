@@ -61,6 +61,11 @@ are occasionally published a day or two later.
   managing temporary files and shelling out to the Normaliz executable.
 - Third-party engine calls now have an internal adapter boundary, and internal
   modules import concrete implementation modules instead of the public facade.
+- Convex-hull, cone optimization, triangulation, and sparse-solve adapters now
+  use guarantee-aware engine registries. Automatic selection cannot substitute
+  a solver that changes the mathematical meaning of failure; scoped overrides
+  are available through `cytools.config.engines(...)`, while established
+  `backend=` arguments remain compatible at public entry points.
 - PPL now loads through one compatibility boundary that restores the process
   floating-point rounding mode once, replacing three scattered `ctypes` calls.
 - NTFE and vector-configuration methods are now declared by their owning
@@ -75,6 +80,11 @@ are occasionally published a day or two later.
   invariant, and NTFE sampling choices now use operation-specific constrained
   type aliases, giving notebooks exact autocomplete instead of bare `str`
   parameters. Dynamically installed solver plugin names remain open strings.
+- Index-return flags now use the canonical `as_indices` spelling.
+  `as_triang_indices`, `as_inds`, `as_face_inds`, `as_index`, and
+  `as_vertex_index` remain as one-release aliases and emit a
+  `DeprecationWarning`; qualified `as_poly_indices` remains distinct because it
+  selects the ambient polytope's index space.
 - Landscape auto-parallelism now follows measured payload scaling: up to four
   workers for combinatorial geometry and one for BLAS-bound volume columns.
   An explicit `workers=` value remains an expert override.

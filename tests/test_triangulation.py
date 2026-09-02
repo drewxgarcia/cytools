@@ -91,6 +91,22 @@ def test_heights():
     assert t == t2
 
 
+def test_points_index_vocabulary_and_legacy_alias():
+    p = Polytope(
+        [[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1], [-1, -1, -1, -1]]
+    )
+    t = p.triangulate()
+    labels = t.labels[:3]
+
+    canonical = t.points(which=labels, as_indices=True)
+    with pytest.warns(DeprecationWarning, match="as_triang_indices"):
+        legacy = t.points(which=labels, as_triang_indices=True)
+    assert canonical.tolist() == legacy.tolist() == [0, 1, 2]
+
+    with pytest.raises(ValueError, match="different index spaces"):
+        t.points(which=labels, as_indices=True, as_poly_indices=True)
+
+
 def test_heights_are_signed():
     # heights used to be stored in an *unsigned* dtype, so height differences
     # (the natural operation, e.g. for secondary-cone tests) wrapped around

@@ -93,13 +93,30 @@ def load_tier(
     return records
 
 
+#: How many rows to draw per row wanted when filtering on favorability, which
+#: is not a database column and so cannot be pushed down. Measured on the
+#: sampled bands: 2/96 non-favorable at h11 1-8, but 7/20 at h11 20-35, so the
+#: factor is set for the worse case with headroom.
+_FAVORABLE_OVERFETCH = 4
+
+
 def load_h11_sample(
     values: range,
     n: int,
     *,
     seed: int = 42,
+    favorable: bool | None = None,
 ) -> list[PolytopeRecord]:
-    """Sample evenly across N-lattice/CY ``h11`` values."""
+    """Sample evenly across N-lattice/CY ``h11`` values.
+
+    *favorable* restricts the sample to polytopes whose CY hypersurface is (or
+    is not) favorable. Fixtures that go on to call ``get_cy()`` must set it:
+    a non-favorable polytope raises "the experimental features must be enabled
+    to construct non-favorable CYs" from ``get_cy``, which surfaces as an error
+    at *fixture setup* and takes down every benchmark in the class -- not as a
+    skip of the one geometry. Favorability is not a database column, so the
+    filter costs an over-fetch and an ``is_favorable`` call per drawn row.
+    """
     h11_values = list(values)
     if not h11_values or n <= 0:
         return []
@@ -108,7 +125,12 @@ def load_h11_sample(
     for h11 in h11_values:
         # The Parquet database stores the mirror/M-lattice convention, so its
         # h12 column is CYTools' default N-lattice h11.
-        records.extend(load_polytopes(h12=h11, n=per_value, seed=seed))
+        if favorable is None:
+            records.extend(load_polytopes(h12=h11, n=per_value, seed=seed))
+            continue
+        drawn = load_polytopes(h12=h11, n=per_value * _FAVORABLE_OVERFETCH, seed=seed)
+        kept = [r for r in drawn if r.polytope.is_favorable(lattice="N") is favorable]
+        records.extend(kept[:per_value])
     return records[:n]
 
 

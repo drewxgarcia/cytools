@@ -322,29 +322,34 @@ class PolytopeFace:
         The face's (all, interior, boundary) point labels.
         """
         _labels = []
-        _saturating = []
-
-        # inherit the calculation from the ambient polytope
-        for label in self.ambient_poly.labels:
-            saturating = self.ambient_poly._pts_saturating[label]
-
-            if self._saturated_ineqs.issubset(saturating):
-                _labels.append(label)
-                _saturating.append(saturating)
-
-        # save it!
-        self._labels = tuple(_labels)
-
-        # get interior, boundary points
         _labels_int = []
         _labels_bdry = []
 
-        for label, sat in zip(self._labels, _saturating):
-            if len(sat) == len(self._saturated_ineqs):
-                _labels_int.append(label)
-            elif len(sat) > len(self._saturated_ineqs):
-                _labels_bdry.append(label)
+        # This runs once per face and scans every point of the ambient
+        # polytope, so it is O(#faces * #points) subset tests on the hot path
+        # of every Hodge-number computation. Hoist the property, the dict and
+        # the bound method out of the loop, and classify interior/boundary in
+        # the same pass instead of materializing the saturating sets twice.
+        ineqs = self._saturated_ineqs
+        n_ineqs = len(ineqs)
+        issubset = ineqs.issubset
+        poly = self.ambient_poly
+        pts_saturating = poly._pts_saturating
 
+        # inherit the calculation from the ambient polytope
+        for label in poly.labels:
+            saturating = pts_saturating[label]
+
+            if issubset(saturating):
+                _labels.append(label)
+                n_sat = len(saturating)
+                if n_sat == n_ineqs:
+                    _labels_int.append(label)
+                elif n_sat > n_ineqs:
+                    _labels_bdry.append(label)
+
+        # save it!
+        self._labels = tuple(_labels)
         self._labels_int = tuple(_labels_int)
         self._labels_bdry = tuple(_labels_bdry)
 

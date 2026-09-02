@@ -20,6 +20,7 @@
 # -----------------------------------------------------------------------------
 
 # 'standard' imports
+import collections
 import copy
 import fractions
 import functools
@@ -41,6 +42,8 @@ import scipy.sparse as sp
 
 # CYTools imports
 import cytools.config as config
+from cytools._backends.engines import LINEAR_SOLVE
+from cytools._backends.registry import get_overrides
 from cytools._typing import (
     IntnumFormat,
     Lattice,
@@ -212,6 +215,63 @@ def gcd_list(arr):
             return math.gcd(*arr)
 
     return functools.reduce(gcd_float, arr)
+
+
+def mori_rays_from_intersection_numbers(intnums, dim: int, num_divs: int) -> np.ndarray:
+    """
+    **Description:**
+    Assemble Mori-cone rays from a dictionary of intersection numbers.
+
+    Shared by `ToricVariety._compute_mori_rays_from_intersections` and
+    `Fan.mori_rays`, which held byte-identical copies of this loop -- the
+    second carrying a `# COPIED FROM THE ToricVariety CLASS` comment. The two
+    differ only in how they obtain `intnums`, `dim` and `num_divs`, so those
+    are the parameters and the body is stated once.
+
+    **Arguments:**
+    - `intnums`: Mapping from an index tuple to an intersection number, in the
+        out-of-basis (`in_basis=False`) convention, so index 0 is the origin.
+    - `dim`: Dimension of the toric variety.
+    - `num_divs`: Number of divisors, i.e. the width of a returned ray.
+
+    **Returns:**
+    *(numpy.ndarray)* The generating rays, one per row, with column 0 holding
+        the origin's coefficient.
+
+    :::note
+    A curve whose intersection numbers are all zero gives `gcd_list(...) == 0`
+    and raises `ZeroDivisionError` below. That behaviour predates this
+    extraction and is preserved deliberately: the right response (drop the row,
+    or keep it unnormalized) is not derivable from the code, and intersection
+    number dictionaries do not normally carry explicit zeros.
+    :::
+    """
+    curve_dict = collections.defaultdict(lambda: [[], []])
+    for ii in intnums:
+        if 0 in ii:
+            continue
+        ctr = collections.Counter(ii)
+        if len(ctr) < dim - 1:
+            continue
+        for comb in set(itertools.combinations(ctr.keys(), dim - 1)):
+            crv = tuple(sorted(comb))
+            curve_dict[crv][0].append(
+                int(sum([i * (ctr[i] - (i in crv)) for i in ctr]))
+            )
+            curve_dict[crv][1].append(intnums[ii])
+
+    row_set = set()
+    for crv in curve_dict:
+        g = gcd_list(curve_dict[crv][1])
+        row = np.zeros(num_divs, dtype=int)
+        for j, jj in enumerate(curve_dict[crv][0]):
+            row[jj] = int(round(curve_dict[crv][1][j] / g))
+        row_set.add(tuple(row))
+
+    mori_rays = np.array(list(row_set), dtype=int)
+    # Compute column corresponding to the origin
+    mori_rays[:, 0] = -np.sum(mori_rays, axis=1)
+    return mori_rays
 
 
 # linear algebra
@@ -827,24 +887,32 @@ def solve_linear_system(
     **Description:**
     Solves the sparse linear system M*x + C = 0.
 
+    The system is symmetric positive definite, so CHOLMOD's supernodal
+    Cholesky is used when SuiteSparse is installed and SciPy's SuperLU
+    otherwise. Engines are tried in order and the first result passing the
+    residual check is returned: a numerically failed factorization is not a
+    wrong answer, so falling through is correct here.
+
+    Automatic selection is preferred because both engines solve the same
+    problem to the same tolerance and differ only in speed. The historical
+    `backend` argument remains supported for drop-in compatibility and for
+    differential tests; new code can scope an explicit choice with
+    `cytools.config.engines(linear_solve=...)`.
+
     **Arguments:**
     - `M`: The matrix.
     - `C`: The constant term.
-    - `backend`: The solver to use. Options are "all", "sksparse" and "scipy".
-        When set to "all" it tries the installed backends in order and returns
-        the first solution that passes the residual check. "sksparse" uses an
-        optional CHOLMOD Cholesky factorization of the normal equations and is
-        the faster of the two; install it with
-        ``cytools-workbench[performance]``.
-        "scipy" uses SuperLU and is always available as the fallback.
-    - `check`: Whether to explicitly check the solution to the linear system.
-    - `backend_error_tol`: Error tolerance for the solution.
+    - `backend`: Compatibility selector. `"all"` uses the engine registry;
+        `"sksparse"` selects CHOLMOD and `"scipy"` selects SuperLU.
+    - `check`: Whether to verify the residual of the returned solution.
+    - `backend_error_tol`: Residual tolerance for the solution.
     - `verbosity`: The verbosity level.
         - verbosity = 0: Do not print anything.
-        - verbosity = 1: Print warnings when backends fail.
+        - verbosity = 1: Print when an engine fails.
 
     **Returns:**
-    Floating-point solution to the linear system.
+    Floating-point solution to the linear system, or None if no engine
+    produced one within `error_tol`.
 
     **Example:**
     We solve a very simple linear equation.
@@ -857,106 +925,87 @@ def solve_linear_system(
     # array([-1., -1., -1., -1., -1.])
     ```
     """
-    # input checking
-    backends: tuple[LinearSolverBackend, ...] = ("all", "sksparse", "scipy")
-    if backend not in backends:
-        raise ValueError(f"Invalid backend... options are {backends}.")
+    choices: tuple[LinearSolverBackend, ...] = ("all", "sksparse", "scipy")
+    if backend not in choices:
+        raise ValueError(f"Invalid backend. The options are {choices}.")
 
-    # solve the system
-    solution = None
+    explicit = backend != "all"
+    names = {"sksparse": "cholmod", "scipy": "superlu"}
+    if explicit:
+        name = names[backend]
+        engine = LINEAR_SOLVE[name]
+        if not engine.available():
+            if backend == "sksparse":
+                raise ImportError(
+                    "The 'sksparse' backend requires scikit-sparse and "
+                    "SuiteSparse; install the "
+                    "'cytools-workbench[performance]' extra or use "
+                    "backend='scipy'."
+                )
+            raise RuntimeError(f"Linear-solve engine {name!r} is unavailable.")
+        engines = (engine,)
+    else:
+        engines = LINEAR_SOLVE.candidates()
 
-    if backend == "all":
-        for s in backends[1:]:
-            try:
-                solution = solve_linear_system(
-                    M,
-                    C,
-                    backend=s,
-                    check=check,
-                    backend_error_tol=backend_error_tol,
-                    verbosity=verbosity,
-                )
-            except ImportError:
-                if s != "sksparse":
-                    raise
-                # Falling back is correct but expensive, and it used to be
-                # silent: CHOLMOD solves these normal equations roughly 20x
-                # faster than SuperLU, which is ~3x on the whole per-geometry
-                # payload. Warn rather than print, so it surfaces once per
-                # process without a verbosity flag nobody sets in a sweep.
-                warnings.warn(
-                    "CHOLMOD is unavailable, so sparse solves fall back to "
-                    "SciPy's SuperLU. This is correct but roughly 20x slower "
-                    "on the intersection-number systems, about 3x on the "
-                    "whole per-geometry payload. Install it with "
-                    '`pip install "cytools-workbench[performance]"` (needs SuiteSparse '
-                    "headers). Pass backend='scipy' to silence this.",
-                    PerformanceWarning,
-                    stacklevel=2,
-                )
+    # Falling back is correct but expensive, and it used to be silent: CHOLMOD
+    # solves these normal equations roughly 20x faster than SuperLU, which is
+    # ~3x on the whole per-geometry payload. Warn rather than print, so it
+    # surfaces once per process without a verbosity flag nobody sets in a
+    # sweep. An explicit override is a deliberate choice, not a degraded
+    # environment, so it is not warned about.
+    overrides = get_overrides()
+    automatic_fallback = (
+        not explicit
+        and "linear_solve" not in overrides
+        and not LINEAR_SOLVE.engines[0].available()
+    )
+    if automatic_fallback:
+        warnings.warn(
+            "CHOLMOD is unavailable, so sparse solves fall back to SciPy's "
+            "SuperLU. This is correct but roughly 20x slower on the "
+            "intersection-number systems, about 3x on the whole per-geometry "
+            "payload. Install it with "
+            '`pip install "cytools-workbench[performance]"` (needs SuiteSparse '
+            "headers). Silence this with "
+            '`cytools.config.engines(linear_solve="superlu")`.',
+            PerformanceWarning,
+            stacklevel=2,
+        )
+
+    for engine in engines:
+        try:
+            solution = engine.run(M, C)
+        except (ImportError, OSError) as error:
+            if explicit:
+                if backend == "sksparse":
+                    raise ImportError(
+                        "The 'sksparse' backend requires scikit-sparse and "
+                        "SuiteSparse; install the "
+                        "'cytools-workbench[performance]' extra or use "
+                        "backend='scipy'."
+                    ) from error
+                raise
+            if verbosity >= 1:
+                print(f"Linear solve: {engine.name} could not load ({error}).")
+            continue
+        if solution is None:
+            if verbosity >= 1:
+                print(f"Linear solve: {engine.name} failed.")
+            continue
+
+        if check:
+            max_error = np.abs(M.dot(solution) + C).max()
+            if max_error > backend_error_tol:
+                if verbosity >= 1:
+                    print(
+                        f"Linear solve: {engine.name} residual {max_error:.3e} "
+                        f"exceeds {backend_error_tol:.3e}."
+                    )
                 continue
-            if solution is not None:
-                return solution
 
-    elif backend == "sksparse":
-        # Solve the normal equations (M^T M) x = -M^T C with a CHOLMOD
-        # Cholesky factorization.
-        #
-        # Import errors stay visible when the optional backend was requested
-        # explicitly. The automatic waterfall above catches only this case and
-        # continues to SciPy.
-        try:
-            from sksparse.cholmod import (  # ty: ignore[unresolved-import]  # compiled extension, no stubs
-                CholmodError,
-                cho_factor,
-            )
-        except ImportError as e:
-            raise ImportError(
-                "The 'sksparse' backend requires scikit-sparse and SuiteSparse; "
-                "install the 'cytools-workbench[performance]' extra or use "
-                "backend='scipy'."
-            ) from e
+        return solution
 
-        Mt = M.transpose()
-
-        try:
-            solution = cho_factor((Mt @ M).tocsc()).solve(-Mt.dot(C))
-            solution = np.asarray(solution).ravel()
-        except (CholmodError, ArithmeticError, ValueError) as e:
-            solution = None
-            if verbosity >= 1:
-                print(f"Linear backend error: sksparse failed ({e}).")
-
-    elif backend == "scipy":
-        # SuperLU LU on a symmetric positive-definite system -- the wrong tool,
-        # but the only one always available. Measured on real intersection-number
-        # systems (h11(N)=150 and 300), "MMD_ATA" beats the COLAMD default by
-        # ~1.2x at equal residual, while "MMD_AT_PLUS_A" and "NATURAL" are 45x
-        # and 100x *slower*. Do not "improve" this ordering without measuring.
-        try:
-            solution = np.asarray(
-                sp.linalg.spsolve(
-                    M.transpose() * M, -M.transpose() * C, permc_spec="MMD_ATA"
-                )
-            ).ravel()
-        except Exception:
-            if verbosity >= 1:
-                print("Linear backend error: scipy failed.")
-
-    # check/return solution
-    if solution is None:
-        return None
-
-    if check:
-        res = M.dot(solution) + C
-        max_error = np.abs(res).max()
-
-        if max_error > backend_error_tol:
-            if verbosity >= 1:
-                print("Linear backend error: numerical error.")
-            solution = None
-
-    return solution
+    return None
 
 
 # set algebraic geometric bases

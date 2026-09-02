@@ -30,6 +30,7 @@ import regfans.fan
 from numba import njit
 
 import cytools.utils as utils
+from cytools._compat import resolve_deprecated_bool
 
 # core CYTools imports
 from cytools.cone import Cone
@@ -142,17 +143,18 @@ class Fan(regfans.fan.Fan):
         dim: int | None = None,
         as_rays: bool = False,
         as_hyps: bool = False,
-        as_inds: bool = False,
+        as_inds: bool | None = None,
         ind_offset: int = 0,
         *,
         formal: bool = False,
+        as_indices: bool = False,
     ) -> tuple | list:
         """
         **Description:**
         Returns the cones in the fan, each cone specified either by
             - (default) a tuple of labels
             - (formal=True) as a formal Cone object.
-            - (as_inds=True) as a tuple of indices
+            - (as_indices=True) as a tuple of indices
 
         By default the maximal cones are returned. If `dim` is set, then return
         the `dim`-dimensional cones (faces of the maximal ones). Only
@@ -164,12 +166,20 @@ class Fan(regfans.fan.Fan):
                         currently.
         - `formal`:     Whether to return the cones as formal Cone objects.
         - `as_hyps`:    Whether to return the cones as their hyperplanes.
-        - `as_inds`:    Whether to return the cones as indices (not labels).
+        - `as_indices`: Whether to return the cones as indices (not labels).
+        - `as_inds`:    Deprecated spelling of `as_indices`.
         - `ind_offset`: Additive offset to the indices
 
         **Returns:**
         The cones in the fan (maximal, or `dim`-dimensional if `dim` is set).
         """
+        as_indices = resolve_deprecated_bool(
+            as_indices,
+            as_inds,
+            name="as_indices",
+            legacy_name="as_inds",
+        )
+
         # regfans annotates `dim` as int but defaults it to None, so omit it
         if formal:
             raw = super().cones() if dim is None else super().cones(dim=dim)
@@ -177,13 +187,16 @@ class Fan(regfans.fan.Fan):
 
         if dim is None:
             return super().cones(
-                as_rays=as_rays, as_hyps=as_hyps, as_inds=as_inds, ind_offset=ind_offset
+                as_rays=as_rays,
+                as_hyps=as_hyps,
+                as_inds=as_indices,
+                ind_offset=ind_offset,
             )
         return super().cones(
             dim=dim,
             as_rays=as_rays,
             as_hyps=as_hyps,
-            as_inds=as_inds,
+            as_inds=as_indices,
             ind_offset=ind_offset,
         )
 
@@ -192,7 +205,12 @@ class Fan(regfans.fan.Fan):
     simps = cones
 
     def restricted_simps(
-        self, to_dim: int = 2, padded: bool = False, as_face_inds: bool = False
+        self,
+        to_dim: int = 2,
+        padded: bool = False,
+        as_indices: bool = False,
+        *,
+        as_face_inds: bool | None = None,
     ):
         """
         **Description:**
@@ -202,12 +220,19 @@ class Fan(regfans.fan.Fan):
         - `to_dim`:       The dimension of the faces to restrict to.
         - `padded`:       Whether to pad simplices that have <=to_dim points in
                           the restriction
-        - `as_face_inds`: Whether to return the simplices as face-inds, not
-                          labels.
+        - `as_indices`: Whether to return each simplex in its face's local
+                        index space rather than as labels.
+        - `as_face_inds`: Deprecated spelling of `as_indices`.
 
         **Returns:**
         The restricted simplices
         """
+        as_indices = resolve_deprecated_bool(
+            as_indices,
+            as_face_inds,
+            name="as_indices",
+            legacy_name="as_face_inds",
+        )
         p = self.vc.conv()
         simps = self.simps()
 
@@ -234,7 +259,7 @@ class Fan(regfans.fan.Fan):
                         face_simps_reduced.append(sorted(simp))
 
             # map to face indices
-            if as_face_inds:
+            if as_indices:
                 face_simps_reduced = [
                     [face.labels.index(i) for i in simp] for simp in face_simps_reduced
                 ]
@@ -626,7 +651,7 @@ class Fan(regfans.fan.Fan):
 
         # (formally add the origin to ease indexing)
         vecs = np.vstack([np.zeros((1, dim), dtype=int), self.vectors()])
-        simps = self.cones(as_inds=True, ind_offset=1)
+        simps = self.cones(as_indices=True, ind_offset=1)
         simps_np = np.array(simps)
 
         # face-to-neighbor map for each codim
@@ -838,35 +863,11 @@ class Fan(regfans.fan.Fan):
         **Returns:**
         The rays defining the Mori cone.
         """
-        intnums = self.intersection_numbers(in_basis=False)
-        dim = self.dim
-        num_divs = self.vc.gale().shape[0] + 1
-
-        # COPIED FROM THE ToricVariety CLASS
-        curve_dict = collections.defaultdict(lambda: [[], []])
-        for ii in intnums:
-            if 0 in ii:
-                continue
-            ctr = collections.Counter(ii)
-            if len(ctr) < dim - 1:
-                continue
-            for comb in set(itertools.combinations(ctr.keys(), dim - 1)):
-                crv = tuple(sorted(comb))
-                curve_dict[crv][0].append(
-                    int(sum([i * (ctr[i] - (i in crv)) for i in ctr]))
-                )
-                curve_dict[crv][1].append(intnums[ii])
-        row_set = set()
-        for crv in curve_dict:
-            g = utils.gcd_list(curve_dict[crv][1])
-            row = np.zeros(num_divs, dtype=int)
-            for j, jj in enumerate(curve_dict[crv][0]):
-                row[jj] = int(round(curve_dict[crv][1][j] / g))
-            row_set.add(tuple(row))
-        mori_rays = np.array(list(row_set), dtype=int)
-        # Compute column corresponding to the origin
-        mori_rays[:, 0] = -np.sum(mori_rays, axis=1)
-        return mori_rays
+        return utils.mori_rays_from_intersection_numbers(
+            self.intersection_numbers(in_basis=False),
+            dim=self.dim,
+            num_divs=self.vc.gale().shape[0] + 1,
+        )
 
     def mori_cone(
         self, pushed_down: bool = False, in_basis: bool = False, verbosity: int = 0
@@ -876,14 +877,19 @@ class Fan(regfans.fan.Fan):
         Compute the Mori cone of the toric variety defined by the fan.
 
         **Arguments:**
-        - `pushed_down`: Whether to push down the Mori cone.
+        - `pushed_down`: Whether to push down the Mori cone. This selects
+                         whether the origin's column is kept, so it has no
+                         effect when `in_basis` is set -- a ray in the divisor
+                         basis has one entry per basis element either way.
         - `in_basis`:    Whether to put the Mori cone in basis.
-        - `verbosity`:   The verbosity level. Higher is more verbose.
+        - `verbosity`:   Accepted for signature compatibility with
+                         `ToricVariety.mori_cone` and currently unused; nothing
+                         on this path reports progress.
 
         **Returns:**
         The Mori cone.
         """
-        include_origin = pushed_down == False
+        include_origin = not pushed_down
 
         rays = self.mori_rays()
         basis = self.vc.divisor_basis

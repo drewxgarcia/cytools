@@ -1,5 +1,6 @@
 """Public choice types stay aligned with the runtime contracts they describe."""
 
+from inspect import Parameter, signature
 from typing import get_args, get_type_hints
 
 from cytools._typing import (
@@ -7,7 +8,6 @@ from cytools._typing import (
     ExtremalityMethod,
     ExtremalRaysMethod,
     FaceTriangulationMethod,
-    FeasibilityBackend,
     InteriorPointBackend,
     IntnumFormat,
     InvariantFormat,
@@ -27,7 +27,11 @@ from cytools._typing import (
     TriangulationBackend,
 )
 from cytools.calabiyau import CalabiYau, configure_gv_subprocess
-from cytools.cone import Cone, feasibility, is_extremal
+from cytools.cone import Cone, is_extremal
+from cytools.f_theory.Uplift_functions import (
+    find_trilayer_vertex_polytope,
+    find_trilayer_vertex_vertices,
+)
 from cytools.ntfe.face_triangulations import face_triangs
 from cytools.ntfe.ntfe import triangface_ineqs
 from cytools.polytope import Polytope
@@ -35,6 +39,7 @@ from cytools.polytopeface import PolytopeFace
 from cytools.toricvariety import ToricVariety
 from cytools.triangulation import Triangulation
 from cytools.utils import fetch_polytopes, read_polytopes, solve_linear_system
+from cytools.vector_config.fan import Fan
 
 
 def test_choice_aliases_are_exact():
@@ -74,7 +79,6 @@ def test_choice_aliases_are_exact():
         "osqp",
         "cvxopt",
     )
-    assert get_args(FeasibilityBackend) == ("highs", "glop", "scip", "cpsat")
     assert get_args(FaceTriangulationMethod) == (
         "fast",
         "fair",
@@ -130,7 +134,6 @@ def test_domain_annotations_use_operation_specific_aliases():
     )
     assert choice(Cone.find_interior_point, "backend") == (InteriorPointBackend | None)
     assert choice(is_extremal, "method") is ExtremalityMethod
-    assert choice(feasibility, "backend") is FeasibilityBackend
     assert choice(ToricVariety.intersection_numbers, "format") is IntnumFormat
     assert choice(ToricVariety.intersection_numbers, "backend") is LinearSolverBackend
     assert choice(CalabiYau.intersection_numbers, "format") is IntnumFormat
@@ -138,3 +141,23 @@ def test_domain_annotations_use_operation_specific_aliases():
     assert choice(configure_gv_subprocess, "method") is ProcessStartMethod
     assert choice(face_triangs, "triang_method") is FaceTriangulationMethod
     assert choice(triangface_ineqs, "triang_method") is FaceTriangulationMethod
+
+
+def test_index_flags_have_one_canonical_spelling():
+    migrated = {
+        Triangulation.points: "as_triang_indices",
+        Fan.cones: "as_inds",
+        Fan.restricted_simps: "as_face_inds",
+        find_trilayer_vertex_polytope: "as_index",
+        find_trilayer_vertex_vertices: "as_vertex_index",
+    }
+
+    for function, legacy_name in migrated.items():
+        parameters = signature(function).parameters
+        assert "as_indices" in parameters
+        if function is Fan.cones:
+            # regfans' virtual method contract fixes the legacy positional
+            # slot; the canonical spelling is therefore the keyword-only one.
+            assert parameters["as_indices"].kind is Parameter.KEYWORD_ONLY
+        else:
+            assert parameters[legacy_name].kind is Parameter.KEYWORD_ONLY

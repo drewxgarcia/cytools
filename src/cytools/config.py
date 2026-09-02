@@ -139,6 +139,99 @@ def set_mosek_path(path):
     check_mosek_license()
 
 
+def engines(*, allow_weaker: bool = False, **choices: str):
+    """
+    **Description:**
+    Force specific computational engines for the duration of a `with` block.
+
+    CYTools normally selects engines itself. A call site declares the
+    mathematical guarantees it depends on -- exact arithmetic, a certified
+    infeasibility answer, a regular-by-construction triangulation -- and the
+    cheapest available engine providing them is used. That decision is not a
+    user preference: `Cone.is_solid` reads a missing interior point as "the
+    cone is not full-dimensional", so an optimizer that cannot distinguish
+    "infeasible" from "I gave up" returns a *different answer* there, not a
+    slower one.
+
+    This function exists for the cases where the choice really is the user's:
+    reproducing a published run bit for bit, cross-checking two independent
+    implementations against each other, and bisecting a numerical
+    disagreement.
+
+    An engine that cannot provide what a call site requires raises
+    `GuaranteeViolation` rather than silently returning a weaker result. Pass
+    `allow_weaker=True` to downgrade that to a warning, which is what a
+    differential test comparing a strong engine against a weak one needs.
+
+    :::note
+    The setting is scoped to the current context, so it does not leak into
+    other threads and does not cross a process boundary. Worker processes
+    resolve engines from their own capabilities. A pool that must inherit the
+    parent's choices should pass `cytools.config.engine_overrides()` to its
+    workers and apply it there with `cytools.config.set_engine_overrides()`.
+    :::
+
+    **Arguments:**
+    - `allow_weaker`: Permit an engine whose guarantees are weaker than the
+        call site requires.
+    - `**choices`: Task name to engine name. Task names are `convex_hull`,
+        `interior_point`, `stretched_tip`, `triangulate` and `linear_solve`.
+
+    **Returns:**
+    A context manager.
+
+    **Example:**
+    Check that the exact and floating-point convex hulls agree on a polytope.
+    ```python {4}
+    import cytools
+    p = cytools.Polytope([[1,0,0,0],[0,1,0,0],[0,0,1,0],[0,0,0,1],[-1,-1,-1,-1]])
+    exact = p.inequalities()
+    with cytools.config.engines(convex_hull="qhull", allow_weaker=True):
+        approx = cytools.Polytope(p.points()).inequalities()
+    ```
+    """
+    from cytools._backends.registry import override
+
+    return override(allow_weaker=allow_weaker, **choices)
+
+
+def available_engines() -> dict[str, tuple[str, ...]]:
+    """
+    **Description:**
+    The engines usable in this process, per task, in preference order.
+
+    Useful for reporting what a given machine actually ran with: an engine
+    absent here was never a candidate, whatever the documentation says.
+
+    **Returns:**
+    A mapping of task name to the available engine names.
+
+    **Example:**
+    ```python {2}
+    import cytools
+    cytools.config.available_engines()
+    # {'convex_hull': ('interval', 'palp', 'ppl', 'qhull'), ...}
+    ```
+    """
+    from cytools._backends.engines import all_registries
+
+    return {r.task: r.available() for r in all_registries()}
+
+
+def engine_overrides() -> dict[str, str]:
+    """The engine overrides active in this context. See `engines`."""
+    from cytools._backends.registry import get_overrides
+
+    return get_overrides()
+
+
+def set_engine_overrides(mapping) -> None:
+    """Apply engine overrides in this process. See `engines`."""
+    from cytools._backends.registry import set_overrides
+
+    set_overrides(mapping)
+
+
 # Lock experimental features by default.
 _exp_features_enabled: bool = False
 

@@ -80,23 +80,35 @@ def cone_polys_large():
 
 @pytest.fixture(scope="module")
 def cy_polys():
-    """Records with CY ``h11 <= 4`` for the standard CY pipeline."""
+    """Records with CY ``h11 <= 4`` for the standard CY pipeline.
+
+    Favorable only: these feed ``get_cy()``, which rejects a non-favorable
+    polytope outright, and a single such row errors the whole fixture.
+    """
     n = int(os.environ.get("CYTOOLS_BENCH_N_CY", "20"))
-    return load_h11_sample(range(1, 5), n)
+    return load_h11_sample(range(1, 5), n, favorable=True)
 
 
 @pytest.fixture(scope="module")
 def cy_polys_large():
-    """Records with CY ``h11 <= 8`` for slow CY sweeps."""
+    """Records with CY ``h11 <= 8`` for slow CY sweeps.
+
+    Favorable only: these feed ``get_cy()``, which rejects a non-favorable
+    polytope outright, and a single such row errors the whole fixture.
+    """
     n = int(os.environ.get("CYTOOLS_BENCH_N_CY_LARGE", "100"))
-    return load_h11_sample(range(1, 9), n)
+    return load_h11_sample(range(1, 9), n, favorable=True)
 
 
 @pytest.fixture(scope="module")
 def cy_polys_median():
-    """Records in the representative ``20 <= h11 <= 35`` range."""
+    """Records in the representative ``20 <= h11 <= 35`` range.
+
+    Favorable only: these feed ``get_cy()``, which rejects a non-favorable
+    polytope outright, and a single such row errors the whole fixture.
+    """
     n = int(os.environ.get("CYTOOLS_BENCH_N_CY_MEDIAN", "20"))
-    return load_h11_sample(range(20, 36), n)
+    return load_h11_sample(range(20, 36), n, favorable=True)
 
 
 @pytest.fixture(scope="module")

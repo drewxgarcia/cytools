@@ -1,0 +1,468 @@
+{
+  "measured_utc": "2026-09-02T01:17:15+00:00",
+  "repeat": 3,
+  "python": "3.14.3",
+  "tasks": {
+    "convex_hull": {
+      "1x0": {
+        "interval": {
+          "status": "ok",
+          "seconds": 5.625071935355663e-06
+        },
+        "ppl": {
+          "status": "ok",
+          "seconds": 0.0001768340589478612
+        },
+        "palp": {
+          "status": "ok",
+          "seconds": 0.022387292003259063
+        },
+        "qhull": {
+          "status": "n/a"
+        }
+      },
+      "1x12": {
+        "interval": {
+          "status": "ok",
+          "seconds": 4.542060196399689e-06
+        },
+        "ppl": {
+          "status": "ok",
+          "seconds": 8.545804303139448e-05
+        },
+        "palp": {
+          "status": "ok",
+          "seconds": 0.018132749944925308
+        },
+        "qhull": {
+          "status": "n/a"
+        }
+      },
+      "1x30": {
+        "interval": {
+          "status": "ok",
+          "seconds": 5.790963768959045e-06
+        },
+        "ppl": {
+          "status": "ok",
+          "seconds": 0.00014666607603430748
+        },
+        "palp": {
+          "status": "ok",
+          "seconds": 0.014850709005258977
+        },
+        "qhull": {
+          "status": "n/a"
+        }
+      },
+      "2x0": {
+        "interval": {
+          "status": "n/a"
+        },
+        "ppl": {
+          "status": "ok",
+          "seconds": 5.512498319149017e-05
+        },
+        "palp": {
+          "status": "ok",
+          "seconds": 0.010160667006857693
+        },
+        "qhull": {
+          "status": "ok",
+          "seconds": 0.000128875020891428
+        }
+      },
+      "2x12": {
+        "interval": {
+          "status": "n/a"
+        },
+        "ppl": {
+          "status": "ok",
+          "seconds": 0.0001818749587982893
+        },
+        "palp": {
+          "status": "ok",
+          "seconds": 0.03235591703560203
+        },
+        "qhull": {
+          "status": "ok",
+          "seconds": 0.0001248749904334545
+        }
+      },
+      "2x30": {
+        "interval": {
+          "status": "n/a"
+        },
+        "ppl": {
+          "status": "ok",
+          "seconds": 0.0006332079647108912
+        },
+        "palp": {
+          "status": "ok",
+          "seconds": 0.013956959010101855
+        },
+        "qhull": {
+          "status": "ok",
+          "seconds": 0.00038174993824213743
+        }
+      },
+      "3x0": {
+        "interval": {
+          "status": "n/a"
+        },
+        "ppl": {
+          "status": "ok",
+          "seconds": 7.375003769993782e-05
+        },
+        "palp": {
+          "status": "ok",
+          "seconds": 0.014005333068780601
+        },
+        "qhull": {
+          "status": "ok",
+          "seconds": 0.00031599996145814657
+        }
+      },
+      "3x12": {
+        "interval": {
+          "status": "n/a"
+        },
+        "ppl": {
+          "status": "ok",
+          "seconds": 0.0006624589441344142
+        },
+        "palp": {
+          "status": "ok",
+          "seconds": 0.031011916929855943
+        },
+        "qhull": {
+          "status": "ok",
+          "seconds": 0.00021195795852690935
+        }
+      },
+      "3x30": {
+        "interval": {
+          "status": "n/a"
+        },
+        "ppl": {
+          "status": "ok",
+          "seconds": 0.0012795829679816961
+        },
+        "palp": {
+          "status": "ok",
+          "seconds": 0.05661054200027138
+        },
+        "qhull": {
+          "status": "ok",
+          "seconds": 0.0005956249078735709
+        }
+      },
+      "4x0": {
+        "interval": {
+          "status": "n/a"
+        },
+        "ppl": {
+          "status": "ok",
+          "seconds": 0.00022579100914299488
+        },
+        "palp": {
+          "status": "ok",
+          "seconds": 0.026492916978895664
+        },
+        "qhull": {
+          "status": "ok",
+          "seconds": 0.0001718329731374979
+        }
+      },
+      "4x12": {
+        "interval": {
+          "status": "n/a"
+        },
+        "ppl": {
+          "status": "ok",
+          "seconds": 0.0005943749565631151
+        },
+        "palp": {
+          "status": "ok",
+          "seconds": 0.03462729195598513
+        },
+        "qhull": {
+          "status": "ok",
+          "seconds": 0.0008367080008611083
+        }
+      },
+      "4x30": {
+        "interval": {
+          "status": "n/a"
+        },
+        "ppl": {
+          "status": "ok",
+          "seconds": 0.0029245419427752495
+        },
+        "palp": {
+          "status": "ok",
+          "seconds": 0.01230229192879051
+        },
+        "qhull": {
+          "status": "ok",
+          "seconds": 0.0016378340078517795
+        }
+      },
+      "5x0": {
+        "interval": {
+          "status": "n/a"
+        },
+        "ppl": {
+          "status": "ok",
+          "seconds": 0.00014899997040629387
+        },
+        "palp": {
+          "status": "ok",
+          "seconds": 0.0074057080782949924
+        },
+        "qhull": {
+          "status": "ok",
+          "seconds": 0.00013591698370873928
+        }
+      },
+      "5x12": {
+        "interval": {
+          "status": "n/a"
+        },
+        "ppl": {
+          "status": "ok",
+          "seconds": 0.0011375000467523932
+        },
+        "palp": {
+          "status": "ok",
+          "seconds": 0.008768042083829641
+        },
+        "qhull": {
+          "status": "ok",
+          "seconds": 0.0010648330207914114
+        }
+      },
+      "5x30": {
+        "interval": {
+          "status": "n/a"
+        },
+        "ppl": {
+          "status": "ok",
+          "seconds": 0.0068902920465916395
+        },
+        "palp": {
+          "status": "ok",
+          "seconds": 0.010541082941927016
+        },
+        "qhull": {
+          "status": "ok",
+          "seconds": 0.003434792044572532
+        }
+      },
+      "6x0": {
+        "interval": {
+          "status": "n/a"
+        },
+        "ppl": {
+          "status": "ok",
+          "seconds": 0.0001937909983098507
+        },
+        "palp": {
+          "status": "ok",
+          "seconds": 0.007896624971181154
+        },
+        "qhull": {
+          "status": "ok",
+          "seconds": 0.0007070000283420086
+        }
+      },
+      "6x12": {
+        "interval": {
+          "status": "n/a"
+        },
+        "ppl": {
+          "status": "ok",
+          "seconds": 0.0016739580314606428
+        },
+        "palp": {
+          "status": "ok",
+          "seconds": 0.006544790929183364
+        },
+        "qhull": {
+          "status": "ok",
+          "seconds": 0.0017817920306697488
+        }
+      },
+      "6x30": {
+        "interval": {
+          "status": "n/a"
+        },
+        "ppl": {
+          "status": "ok",
+          "seconds": 0.03412533400114626
+        },
+        "palp": {
+          "status": "ok",
+          "seconds": 0.01897304190788418
+        },
+        "qhull": {
+          "status": "ok",
+          "seconds": 0.024489791016094387
+        }
+      },
+      "8x0": {
+        "interval": {
+          "status": "n/a"
+        },
+        "ppl": {
+          "status": "ok",
+          "seconds": 0.000278791063465178
+        },
+        "palp": {
+          "status": "ok",
+          "seconds": 0.012105582980439067
+        },
+        "qhull": {
+          "status": "ok",
+          "seconds": 0.00017745804507285357
+        }
+      },
+      "8x12": {
+        "interval": {
+          "status": "n/a"
+        },
+        "ppl": {
+          "status": "ok",
+          "seconds": 0.0250935839721933
+        },
+        "palp": {
+          "status": "ok",
+          "seconds": 0.11599233304150403
+        },
+        "qhull": {
+          "status": "ok",
+          "seconds": 0.02299291593953967
+        }
+      },
+      "8x30": {
+        "interval": {
+          "status": "n/a"
+        },
+        "ppl": {
+          "status": "ok",
+          "seconds": 0.6191601660102606
+        },
+        "palp": {
+          "status": "aborted",
+          "returncode": -6
+        },
+        "qhull": {
+          "status": "ok",
+          "seconds": 0.12192233302630484
+        }
+      },
+      "9x0": {
+        "interval": {
+          "status": "n/a"
+        },
+        "ppl": {
+          "status": "ok",
+          "seconds": 0.00032004108652472496
+        },
+        "palp": {
+          "status": "ok",
+          "seconds": 0.03580441698431969
+        },
+        "qhull": {
+          "status": "ok",
+          "seconds": 0.00020337500609457493
+        }
+      },
+      "9x12": {
+        "interval": {
+          "status": "n/a"
+        },
+        "ppl": {
+          "status": "ok",
+          "seconds": 0.05394420900847763
+        },
+        "palp": {
+          "status": "aborted",
+          "returncode": -6
+        },
+        "qhull": {
+          "status": "ok",
+          "seconds": 0.03472958295606077
+        }
+      },
+      "9x30": {
+        "interval": {
+          "status": "n/a"
+        },
+        "ppl": {
+          "status": "ok",
+          "seconds": 3.131908957962878
+        },
+        "palp": {
+          "status": "aborted",
+          "returncode": -6
+        },
+        "qhull": {
+          "status": "ok",
+          "seconds": 0.22561641596257687
+        }
+      },
+      "10x0": {
+        "interval": {
+          "status": "n/a"
+        },
+        "ppl": {
+          "status": "ok",
+          "seconds": 0.0003754999488592148
+        },
+        "palp": {
+          "status": "ok",
+          "seconds": 0.02372737496625632
+        },
+        "qhull": {
+          "status": "ok",
+          "seconds": 0.000999749987386167
+        }
+      },
+      "10x12": {
+        "interval": {
+          "status": "n/a"
+        },
+        "ppl": {
+          "status": "ok",
+          "seconds": 0.06361012498382479
+        },
+        "palp": {
+          "status": "aborted",
+          "returncode": -6
+        },
+        "qhull": {
+          "status": "ok",
+          "seconds": 0.03547970799263567
+        }
+      },
+      "10x30": {
+        "interval": {
+          "status": "n/a"
+        },
+        "ppl": {
+          "status": "ok",
+          "seconds": 7.345988709013909
+        },
+        "palp": {
+          "status": "aborted",
+          "returncode": -6
+        },
+        "qhull": {
+          "status": "ok",
+          "seconds": 0.4959109580377117
+        }
+      }
+    }
+  }
+}

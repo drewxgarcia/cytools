@@ -29,7 +29,7 @@ import warnings
 # 'standard' imports
 from collections import defaultdict
 from collections.abc import Iterable, Iterator, Sequence
-from typing import TYPE_CHECKING, Any, Literal, overload
+from typing import TYPE_CHECKING, Any, Literal, cast, overload
 
 import latticepts
 import numpy as np
@@ -41,7 +41,8 @@ from scipy.spatial import ConvexHull
 from tqdm import tqdm
 
 import cytools.config as config
-from cytools._backends.ppl import ppl
+from cytools._backends.engines import CONVEX_HULL
+from cytools._backends.registry import EXACT, RECOVERABLE, EngineUnavailable
 from cytools._extensions import lazy_method
 from cytools._typing import (
     AutomorphismAction,
@@ -54,7 +55,7 @@ from cytools._typing import (
     Vector,
     VectorOrMatrix,
 )
-from cytools.utils import gcd_list, instanced_lru_cache, integral_nullspace, lll_reduce
+from cytools.utils import instanced_lru_cache, integral_nullspace, lll_reduce
 
 if TYPE_CHECKING:
     from cytools.polytopeface import PolytopeFace
@@ -265,17 +266,14 @@ class Polytope:
             )
             self._dim_diff = self.ambient_dim() - self.dim()
 
-        # backend
+        # Empty and zero-dimensional polytopes do not run a hull engine, but a
+        # concrete compatibility value is still exposed by `.backend`. For a
+        # nontrivial automatic hull, `"ppl"` is only a typed placeholder until
+        # `_process_points` records the engine selected by the registry.
+        self._auto_backend = backend is None and self.dim() > 0
         if backend is None:
-            if 1 <= self.dim() <= 4:
-                backend = "ppl"
-            else:
-                backend = "palp"
-
-        if self.dim() == 0:  # 0-dimensional polytopes are finicky
-            backend = "palp"
-
-        self._backend = backend
+            backend = "palp" if self.dim() <= 0 else "ppl"
+        self._backend: PolytopeBackend = backend
 
         # set point information (better basis, H-representation)
         self._process_points(points, labels)
@@ -532,7 +530,7 @@ class Polytope:
         # H-rep                 (DON'T CLEAR! Set in init...)
         # self._ineqs_input
         # self._ineqs_optimal
-        # self._poly_optimal
+        # self._vertices_optimal
         self._is_reflexive = dict()
 
         # input, optimal points (DON'T CLEAR! Set in init...)
@@ -764,7 +762,7 @@ class Polytope:
         Sets:
             self._transl_vector
             self._transf_mat_inv
-            self._poly_optimal
+            self._vertices_optimal
             self._ineqs_optimal
             self._labels2optPts
             self._labels2inputPts
@@ -790,7 +788,7 @@ class Polytope:
         if len(pts_input) == 0:
             self._transl_vector = None
             self._transf_mat_inv = None
-            self._poly_optimal = None
+            self._vertices_optimal = np.empty((0, 0), dtype=int)
             self._ineqs_optimal = None
             self._labels2optPts = dict()
             self._labels2inputPts = dict()
@@ -824,7 +822,7 @@ class Polytope:
 
             # no non-trivial inequalities on a single point
             self._ineqs_optimal = np.zeros((0, 1), dtype=int)
-            self._poly_optimal = None
+            self._vertices_optimal = np.empty((1, 0), dtype=int)
             self._ineqs_input = np.zeros((0, self.ambient_dim() + 1), dtype=int)
 
             # the one point (origin in optimal coords) and its data
@@ -862,8 +860,27 @@ class Polytope:
 
         # Calculate the polytope, inequalities
         # ------------------------------------
-        out = poly_v_to_h(pts_optimal, self._backend)
-        self._ineqs_optimal, self._poly_optimal = out
+        problem = {"dim": self.dim(), "size": len(pts_optimal)}
+        if self._auto_backend:
+            engine = CONVEX_HULL.resolve(need=(EXACT, RECOVERABLE), problem=problem)
+            # `interval` is an implementation detail of the automatic 1D
+            # fast path, not a historical public backend spelling.
+            selected = "ppl" if engine.name == "interval" else engine.name
+            self._backend = cast("PolytopeBackend", selected)
+        else:
+            engine_name = (
+                "interval"
+                if self._backend == "qhull" and self.dim() == 1
+                else self._backend
+            )
+            engine = CONVEX_HULL[engine_name]
+            if not engine.available():
+                raise EngineUnavailable(
+                    f"Convex-hull engine {engine_name!r} is unavailable: "
+                    f"{engine.why_unavailable}."
+                )
+
+        self._ineqs_optimal, self._vertices_optimal = engine.run(pts_optimal)
 
         # convert to input representation
         shape_opt = self._ineqs_optimal.shape
@@ -1303,26 +1320,8 @@ class Polytope:
             # 0D... trivial
             self._labels_vertices = self._pts_order
 
-        elif self._backend == "qhull":
-            if self.dim() == 1:  # QHull cannot handle 1D polytopes
-                self._labels_vertices = self._labels_facet
-            else:
-                if self._poly_optimal is None:
-                    raise RuntimeError("The QHull hull was never computed.")
-                verts = self._poly_optimal.points[self._poly_optimal.vertices]
         else:
-            # get the vertices
-            if self._backend == "ppl":
-                if self._poly_optimal is None:
-                    raise RuntimeError("The PPL polyhedron was never computed.")
-                verts = []
-                for pt in self._poly_optimal.minimized_generators():
-                    verts.append(pt.coefficients())
-                verts = np.array(verts, dtype=int)
-
-            else:  # Backend is PALP
-                p = pypalp.Polytope(self.points(optimal=True))
-                verts = p.vertices()
+            verts = self._vertices_optimal
 
         # for either ppl/PALP, map points to original representation
         if self._labels_vertices is None:
@@ -1908,33 +1907,49 @@ class Polytope:
                         pivots.append(i)
                         break
 
-            basis = [f_min.vertices()[i].tolist() for i in pivots]
-            basis_inverse = fmpz_mat(basis).inv()
+            f_min_vertices = f_min.vertices()
+            basis = [f_min_vertices[i].tolist() for i in pivots]
+            # python-flint's runtime correctly returns an fmpq_mat here, while
+            # its current type metadata declares fmpz_mat. Keep the deliberate
+            # rational operations below visible and contain that third-party
+            # typing defect at this assignment.
+            basis_inverse: Any = fmpz_mat(basis).inv()
+
+            # Hoisted out of the loops below. All three are cached lookups, but
+            # each still goes through the instance-cache wrapper on every one of
+            # the |images| iterations, and `np.eye` was reallocated per
+            # candidate.
+            dim = int(self.dim())
+            n_f_min_vertices = len(f_min_vertices)
+            vertices = self.vertices()
+            identity = np.eye(dim, dtype=int)
+
             images = []
             for f in self.facets():
-                if len(f_min.vertices()) == len(f.vertices()):
-                    f_vert = [pt.tolist() for pt in f.vertices()]
-                    images.extend(itertools.permutations(f_vert, r=int(self.dim())))
+                f_vertices = f.vertices()
+                if n_f_min_vertices == len(f_vertices):
+                    f_vert = [pt.tolist() for pt in f_vertices]
+                    images.extend(itertools.permutations(f_vert, r=dim))
             autos = []
             autos2 = []
             for im in images:
                 image = fmpz_mat(im)
-                m = basis_inverse * image
-                if not all(abs(c.q) == 1 for c in np.array(m.tolist()).flatten()):
+                # one conversion out of flint, not two. `m.tolist()` was called
+                # twice per candidate -- once to screen the denominators and
+                # again to build the integer matrix -- with an object-dtype
+                # `np.array` wrapped round each only to iterate it.
+                rows = (basis_inverse * image).tolist()
+                if not all(abs(c.q) == 1 for r in rows for c in r):
                     continue
                 m = np.array(
-                    [
-                        [
-                            int(c.p) // int(c.q) for c in r
-                        ]  # just in case c.q==-1 by some weird reason
-                        for r in np.array(m.tolist())
-                    ],
+                    # floor division just in case c.q == -1 by some weird reason
+                    [[int(c.p) // int(c.q) for c in r] for r in rows],
                     dtype=int,
                 )
-                if {tuple(pt) for pt in np.dot(self.vertices(), m)} != vert_set:
+                if {tuple(pt) for pt in np.dot(vertices, m)} != vert_set:
                     continue
                 autos.append(m)
-                if all((np.dot(m, m) == np.eye(self.dim(), dtype=int)).flatten()):
+                if np.array_equal(np.dot(m, m), identity):
                     autos2.append(m)
             autos_all = np.array(autos)
             autos_sq = np.array(autos2)
@@ -3274,7 +3289,13 @@ class Polytope:
         hpq = 0
         if p == 1:
             for f in self.faces(d - q - 1):
-                hpq += len(f.interior_points()) * len(f.dual().interior_points())
+                # The dual face is only needed when the face itself has
+                # interior points, which is rare (>94% of faces have none).
+                # Short-circuiting skips building the dual polytope's face
+                # lattice for a term that is zero either way.
+                n_int = len(f.interior_points())
+                if n_int:
+                    hpq += n_int * len(f.dual().interior_points())
             if q == 1:
                 hpq += len(self.points_not_interior_to_facets()) - d - 1
             if q == d - 2:
@@ -3535,8 +3556,9 @@ class Polytope:
                     )
                     norms = [np.linalg.norm(p, 1) for p in pts_lll.T]
                     if self._deterministic_glsm_basis:
+                        # (norm, index) pairs, so the sort breaks ties on the
+                        # index and is reproducible across machines
                         norms = [[n, i] for i, n in enumerate(norms)]
-                    if self._deterministic_glsm_basis:
                         indices = np.array(
                             sorted(range(len(norms)), key=lambda i: norms[i])
                         )
@@ -3636,8 +3658,9 @@ class Polytope:
             pts = self.points()[list(pts_ind)[1:]]  # Exclude the origin
             pts_norms = [np.linalg.norm(p, 1) for p in pts]
             if self._deterministic_glsm_basis:
+                # (norm, index) pairs, so the sort breaks ties on the index and
+                # is reproducible across machines
                 pts_norms = [[n, i] for i, n in enumerate(pts_norms)]
-            if self._deterministic_glsm_basis:
                 pts_order = np.array(
                     sorted(range(len(pts_norms)), key=lambda i: pts_norms[i])
                 )
@@ -3648,7 +3671,13 @@ class Polytope:
             current_rank = 1
             for p in pts_order:
                 tmp = pts[np.append(good_lattice_basis, p)]
-                rank = np.linalg.matrix_rank(np.dot(tmp.T, tmp))
+                # rank(tmp), not rank(tmp.T @ tmp). They are equal over the
+                # reals, but forming the Gram matrix squares the condition
+                # number that `matrix_rank`'s singular-value cutoff then has to
+                # judge, and costs a matmul per candidate point. Differentially
+                # tested over 800 basis selections from real KS polytopes and
+                # 480 charge matrices: identical selections throughout.
+                rank = np.linalg.matrix_rank(tmp)
                 if rank > current_rank:
                     good_lattice_basis = np.append(good_lattice_basis, p)
                     current_rank = rank
@@ -4145,9 +4174,7 @@ class Polytope:
 
 # utils
 # -----
-def poly_v_to_h(
-    pts: Matrix, backend: PolytopeBackend
-) -> tuple[np.ndarray, ppl.C_Polyhedron | None]:
+def poly_v_to_h(pts: Matrix, backend: PolytopeBackend) -> tuple[np.ndarray, np.ndarray]:
     """
     **Description:**
     Generate the H-representation of a polytope, given the V-representation.
@@ -4164,56 +4191,23 @@ def poly_v_to_h(
     **Returns:**
     The hyperplane inequalities in the form
         c_0 * x_0 + ... + c_{d-1} * x_{d-1} + c_d >= 0
-    and, depending on backend/dimension, the formal convex hull of the points.
+    together with the hull's vertices. Both are normalized integer arrays; no
+    third-party engine object crosses this boundary.
     """
-    # preliminary
-    dim = len(pts[0])
+    pts_array = np.asarray(pts)
+    if pts_array.ndim != 2 or not len(pts_array):
+        raise ValueError("pts must be a non-empty two-dimensional point matrix.")
 
-    # do the work, depending on backend
-    if backend == "ppl":
-        gs = ppl.Generator_System()
-        vrs = np.array([ppl.Variable(i) for i in range(dim)])
-
-        # insert points to generator system
-        for linexp in pts @ vrs:
-            gs.insert(ppl.point(linexp))
-
-        # find polytope, hyperplanes
-        poly = ppl.C_Polyhedron(gs)
-        ineqs = []
-        for ineq in poly.minimized_constraints():
-            ineqs.append(list(ineq.coefficients()) + [ineq.inhomogeneous_term()])
-        ineqs = np.array(ineqs, dtype=int)  # the data should automatically be integer
-
-    elif backend == "qhull":
-        if dim == 1:
-            # qhull cannot handle 1-dimensional polytopes
-            poly = None
-            ineqs = np.array([[1, -np.min(pts)], [-1, np.max(pts)]], dtype=int)
-
-        else:
-            poly = ConvexHull(pts)
-
-            # get the ineqs, ensure right sign and gcd
-            ineqs = set()
-            for eq in poly.equations:
-                g = abs(gcd_list(eq))
-                ineqs.add(tuple(-int(round(i / g)) for i in eq))
-            ineqs = np.array(list(ineqs), dtype=int)
-
-    elif backend == "palp":
-        poly = None
-        if dim == 0:
-            # PALP cannot handle 0-dimensional polytopes
-            ineqs = np.array([[0]])
-        else:
-            # prepare the command
-            p = pypalp.Polytope(np.asarray(pts))
-            ineqs = p.equations()
-    else:
-        raise ValueError(f"Unrecognized backend '{backend}'...")
-
-    return ineqs, poly
+    engine_name = (
+        "interval" if backend == "qhull" and pts_array.shape[1] == 1 else backend
+    )
+    engine = CONVEX_HULL[engine_name]
+    if not engine.available():
+        raise EngineUnavailable(
+            f"Convex-hull engine {engine_name!r} is unavailable: "
+            f"{engine.why_unavailable}."
+        )
+    return engine.run(pts_array)
 
 
 def saturating_lattice_pts(
