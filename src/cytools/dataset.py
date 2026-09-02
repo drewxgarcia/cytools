@@ -94,11 +94,23 @@ __all__ = [
 # Environment-variable-based database locations
 # ---------------------------------------------------------------------------
 
+
+def _as_dir(value: Path | str) -> Path:
+    """Interpret *value* as a directory path, expanding a leading ``~``.
+
+    `Path` does not expand `~` itself, and a shell does not expand it inside
+    `env CYTOOLS_DB_DIR=~/dir cmd` either -- the variable arrives as the
+    literal string. Without this, such an invocation reports the database as
+    missing rather than reading it. Same treatment as `store._resolve_root`.
+    """
+    return Path(value).expanduser()
+
+
 _db_dir_env = os.environ.get("CYTOOLS_DB_DIR")
-DB_DIR: Path | None = Path(_db_dir_env) if _db_dir_env else None
+DB_DIR: Path | None = _as_dir(_db_dir_env) if _db_dir_env else None
 
 _db_5d_dir_env = os.environ.get("CYTOOLS_5D_DB_DIR")
-DB_5D_DIR: Path | None = Path(_db_5d_dir_env) if _db_5d_dir_env else None
+DB_5D_DIR: Path | None = _as_dir(_db_5d_dir_env) if _db_5d_dir_env else None
 
 # ---------------------------------------------------------------------------
 # Record types
@@ -115,7 +127,7 @@ class PolytopeRecord(NamedTuple):
        ``lattice="N"`` default.  Verified against the database, for every row::
 
            record.h11                  == polytope.h11(lattice="M")
-                                       == polytope.h21(lattice="N")
+                                       == polytope.h12(lattice="N")
            record.h12                  == polytope.h11(lattice="N")
            record.euler_characteristic == polytope.chi(lattice="M")
                                        == -polytope.chi(lattice="N")
@@ -127,7 +139,7 @@ class PolytopeRecord(NamedTuple):
 
     polytope: Polytope
     vertex_count: int
-    h11: int  # M-lattice h11  == polytope.h21(lattice="N")
+    h11: int  # M-lattice h11  == polytope.h12(lattice="N")
     h12: int  # M-lattice h12  == polytope.h11(lattice="N")
     euler_characteristic: int  # M-lattice chi  == -polytope.chi(lattice="N")
 
@@ -195,12 +207,12 @@ def _resolve_dir(
     Raises :exc:`ValueError` with an actionable message if none are set.
     """
     if db_dir is not None:
-        return Path(db_dir)
+        return _as_dir(db_dir)
     if global_default is not None:
         return global_default
     env = os.environ.get(env_var)
     if env:
-        return Path(env)
+        return _as_dir(env)
     raise ValueError(
         f"No {label} database directory configured. Pass db_dir= or set "
         f"the {env_var} environment variable to the directory containing "
@@ -345,11 +357,11 @@ def _optional_dir(
     shards are fetched on demand.
     """
     if db_dir is not None:
-        return Path(db_dir)
+        return _as_dir(db_dir)
     if global_default is not None:
         return global_default
     env = os.environ.get(env_var)
-    return Path(env) if env else None
+    return _as_dir(env) if env else None
 
 
 def _available_4d_vertex_counts(resolved_dir: Path | None) -> list[int]:
@@ -1279,7 +1291,8 @@ def _table_to_batch(table: pa.Table) -> PolytopeBatch:
 
     values, offsets = _batch_buffers(table)
 
-    col = lambda name: table.column(name).to_numpy(zero_copy_only=False)  # noqa: E731
+    def col(name):
+        return table.column(name).to_numpy(zero_copy_only=False)
 
     return PolytopeBatch(
         ks_ids=_ks_ids(values, offsets),

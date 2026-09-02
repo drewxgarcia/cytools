@@ -5,6 +5,8 @@ so these tests always exercise real Parquet data without network access or a
 machine-specific database installation.
 """
 
+import pathlib
+
 import numpy as np
 import pytest
 
@@ -128,7 +130,7 @@ def test_records_are_wellformed():
     for r in records:
         p = r.polytope
         assert p.vertices().shape == (r.vertex_count, 4)
-        assert p.dim() == 4
+        assert p.dimension() == 4
         assert p.is_reflexive(), "corrupted vertices produce non-reflexive polytopes"
 
 
@@ -141,7 +143,7 @@ def test_hodge_columns_use_m_lattice_convention():
     for r in records:
         p = r.polytope
         assert r.h11 == p.h11(lattice="M")
-        assert r.h11 == p.h21(lattice="N")
+        assert r.h11 == p.h12(lattice="N")
         assert r.h12 == p.h11(lattice="N")
         assert r.euler_characteristic == p.chi(lattice="M")
         assert r.euler_characteristic == -p.chi(lattice="N")
@@ -500,6 +502,38 @@ def test_empty_batch_scan_needs_no_database_configuration(monkeypatch):
     monkeypatch.setattr(ds, "DB_DIR", None)
     assert list(ds.scan_batches(n=0)) == []
     assert ds.load_polytopes(n=0) == []
+
+
+# ---------------------------------------------------------------------------
+# A database directory given with a leading `~` must be expanded
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("given", ["~/ks", "~"])
+def test_database_directory_expands_a_leading_tilde(monkeypatch, given):
+    """`env CYTOOLS_DB_DIR=~/dir cmd` passes the tilde through literally.
+
+    A shell does not expand `~` after `VAR=` for a command like `env`, and
+    `Path` does not expand it either, so the unexpanded string used to be
+    treated as a relative directory -- reporting the database as unavailable
+    while it sat in plain sight. Both resolvers and the import-time global
+    must expand it.
+    """
+    expected = pathlib.Path(given).expanduser()
+    assert expected.is_absolute(), "fixture must exercise the expansion"
+
+    # caller-supplied argument, as a str and as a Path
+    assert ds._optional_dir(given, None, "CYTOOLS_DB_DIR") == expected
+    assert ds._resolve_dir(given, None, "CYTOOLS_DB_DIR", "4D") == expected
+    assert ds._optional_dir(pathlib.Path(given), None, "CYTOOLS_DB_DIR") == expected
+
+    # a fresh read of the environment (set after import)
+    monkeypatch.setenv("CYTOOLS_DB_DIR", given)
+    assert ds._optional_dir(None, None, "CYTOOLS_DB_DIR") == expected
+    assert ds._resolve_dir(None, None, "CYTOOLS_DB_DIR", "4D") == expected
+
+    # and the import-time global
+    assert ds._as_dir(given) == expected
 
 
 # ---------------------------------------------------------------------------

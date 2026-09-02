@@ -129,7 +129,37 @@ def conflicting_runtime(candidate: "str | os.PathLike | None") -> str | None:
     if resolved in loaded:
         # Same file -- dyld will reuse the existing image.
         return None
-    return sorted(loaded)[0]
+    return min(loaded)
+
+
+#: Homebrew installs into a versioned Cellar directory and exposes a stable
+#: `opt/<formula>` symlink that it repoints on upgrade.
+_HOMEBREW_CELLAR = "/opt/homebrew/Cellar/"
+_HOMEBREW_OPT = "/opt/homebrew/opt/"
+
+
+def _stable_link_target(path: str) -> str:
+    """Rewrite a resolved runtime path into one that survives an upgrade.
+
+    `loaded_runtimes` reports realpaths, so on Homebrew it names a *versioned*
+    Cellar location such as `.../Cellar/libomp/22.1.7/lib/libomp.dylib`.
+    Suggesting that verbatim produced a symlink that broke silently: homebrew
+    upgraded libomp to 23.1.0, the 22.1.7 directory went away, and PyTorch then
+    failed to load at all with a dangling `@loader_path/libomp.dylib` -- a
+    worse outcome than the duplicate the link was meant to fix.
+
+    The `opt/<formula>` path points at whatever version is current, so a link
+    through it keeps working. Anything not under the Cellar is returned as-is.
+    """
+    if not path.startswith(_HOMEBREW_CELLAR):
+        return path
+    remainder = path[len(_HOMEBREW_CELLAR) :]
+    formula, _, rest = remainder.partition("/")
+    # rest is "<version>/lib/libomp.dylib"; drop just the version component
+    _, _, below_version = rest.partition("/")
+    if not formula or not below_version:
+        return path
+    return f"{_HOMEBREW_OPT}{formula}/{below_version}"
 
 
 def ensure_compatible() -> None:
@@ -154,7 +184,7 @@ def ensure_compatible() -> None:
         f"  about to load:  {bundled}\n"
         "When both are LLVM builds, the usual fix is to make PyTorch share the "
         "one already loaded:\n"
-        f'  ln -sf "{other}" "{bundled}"\n'
+        f'  ln -sf "{_stable_link_target(other)}" "{bundled}"\n'
         "Re-apply that after any reinstall of PyTorch, which restores its "
         "bundled copy. KMP_DUPLICATE_LIB_OK=TRUE silences the abort instead, "
         "but it suppresses the guard rather than removing the duplicate and "

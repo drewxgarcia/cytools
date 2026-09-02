@@ -74,3 +74,29 @@ def test_loaded_runtimes_reports_real_paths():
 def test_loaded_runtimes_is_empty_off_darwin(monkeypatch):
     monkeypatch.setattr(sys, "platform", "linux")
     assert openmp.loaded_runtimes() == set()
+
+
+# ------------------------------------------------------- upgrade-proof linking
+def test_the_suggested_link_target_survives_a_homebrew_upgrade():
+    """The repair the guard prints must not be pinned to a version.
+
+    Regression test. `loaded_runtimes` reports realpaths, so the message named
+    `.../Cellar/libomp/22.1.7/...`. A link made through that broke when
+    homebrew moved to 23.1.0: the Cellar directory vanished and PyTorch failed
+    to load at all, which is worse than the duplicate runtime it was fixing.
+    """
+    from cytools._backends.openmp import _stable_link_target
+
+    versioned = "/opt/homebrew/Cellar/libomp/22.1.7/lib/libomp.dylib"
+    assert _stable_link_target(versioned) == "/opt/homebrew/opt/libomp/lib/libomp.dylib"
+    # any version maps to the same stable path
+    assert _stable_link_target(
+        "/opt/homebrew/Cellar/libomp/23.1.0/lib/libomp.dylib"
+    ) == _stable_link_target(versioned)
+
+
+def test_non_homebrew_paths_are_left_alone():
+    from cytools._backends.openmp import _stable_link_target
+
+    for path in ("/usr/lib/libomp.dylib", "/opt/homebrew/Cellar/malformed"):
+        assert _stable_link_target(path) == path
