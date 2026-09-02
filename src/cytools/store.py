@@ -67,6 +67,8 @@ import numpy as np
 import pyarrow as pa
 import pyarrow.parquet as pq
 
+import cytools.provenance as provenance
+
 __all__ = [
     "ERROR_COLUMN",
     "UNSUPPORTED_COLUMN",
@@ -333,6 +335,16 @@ class DerivedStore:
         if not tables:
             return pa.table({_ID_COLUMN: pa.array([], type=pa.int64())})
 
+        # Concatenating parts is exactly where two generations of results
+        # become one indistinguishable column, so it is where the mismatch has
+        # to be reported. This warns rather than raises: an existing store
+        # written before stamping is legitimate data, and refusing to read it
+        # would be a worse outcome than saying what it is.
+        provenance.warn_if_mixed(
+            [provenance.read_fingerprint(t) for t in tables],
+            f"{quantity!r} v{version}",
+        )
+
         table = pa.concat_tables(tables, promote_options="default")
 
         ids = table.column(_ID_COLUMN).to_numpy(zero_copy_only=False).astype(np.int64)
@@ -442,6 +454,16 @@ class DerivedStore:
         # widened by compaction into something `read()` would not have produced.
         schema = pa.unify_schemas(schemas, promote_options="default")
 
+        # `unify_schemas` does not carry key-value metadata across, so the
+        # stamp has to be reapplied or compaction would quietly strip the
+        # provenance of every row it rewrites. What it carries is the sources'
+        # provenance, not this process's -- see `combined_fingerprint`.
+        sources = [provenance.read_fingerprint(path) for path in readable]
+        provenance.warn_if_mixed(sources, f"compaction of {quantity!r} v{version}")
+        schema = schema.with_metadata(
+            provenance.stamp(schema.metadata, provenance.combined_fingerprint(sources))
+        )
+
         d = self.quantity_dir(quantity, version)
         d.mkdir(parents=True, exist_ok=True)
         final = self._part_path(d)
@@ -537,6 +559,11 @@ class DerivedStore:
         # it currently pays.
         table = table.sort_by(_ID_COLUMN)
 
+        # Stamp what produced these numbers. `version` says what the caller
+        # *meant* to change; this records what actually differed, including the
+        # engine substitutions and dependency upgrades nobody declared.
+        table = provenance.with_fingerprint(table)
+
         d = self.quantity_dir(quantity, version)
         d.mkdir(parents=True, exist_ok=True)
         final = self._part_path(d)
@@ -544,6 +571,42 @@ class DerivedStore:
         pq.write_table(table, tmp)
         tmp.replace(final)
         return final
+
+    def provenance(self, quantity: str, version: int = 1) -> list[dict]:
+        """
+        **Description:**
+        What produced each part file of *quantity*, oldest write first.
+
+        **Arguments:**
+        - `quantity`: Name of the derived quantity.
+        - `version`: Algorithm version.
+
+        **Returns:**
+        *(list[dict])* One entry per part, with keys `part` (the file name),
+            `rows`, and `provenance` -- the latter `None` for parts written
+            before stamping existed.
+
+        **Example:**
+        ```python {2}
+        store = DerivedStore("/tmp/derived")
+        {entry["provenance"]["digest"] for entry in store.provenance("hodge")}
+        # {'3f7c1a90b4e26d58'}
+        ```
+        """
+        entries = []
+        for path in self._parts(quantity, version):
+            try:
+                metadata = pq.read_metadata(path)
+            except Exception:
+                continue
+            entries.append(
+                {
+                    "part": path.name,
+                    "rows": metadata.num_rows,
+                    "provenance": provenance.read_fingerprint(path),
+                }
+            )
+        return entries
 
 
 # ---------------------------------------------------------------------------
