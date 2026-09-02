@@ -1,3 +1,5 @@
+import itertools
+
 import numpy as np
 import pytest
 
@@ -293,6 +295,43 @@ def test_neighbor_triangulations_nontrivial_labels():
         include_points_interior_to_facets=True,
     )
     assert {key(x) for x in [t, *neighbors]} == {key(x) for x in all_frts}
+
+
+@pytest.mark.parametrize(
+    "labels",
+    ([10, 20, 30, 40, 50], ["a", "b", "c", "d", "origin"]),
+)
+def test_face_restriction_treats_labels_as_identifiers(labels):
+    points = [[1, 0, 0], [0, 1, 0], [0, 0, 1], [-1, -1, -1], [0, 0, 0]]
+    polytope = Polytope(points, labels=labels)
+    origin = polytope._label_origin
+    vertices = [label for label in polytope.labels if label != origin]
+    simplices = [
+        [origin, *face] for face in itertools.combinations(vertices, polytope.dim())
+    ]
+    triangulation = polytope.triangulate(
+        simplices=simplices,
+        check_input_simplices=False,
+    )
+
+    full_simplices = [frozenset(simplex) for simplex in triangulation.simplices()]
+    expected = []
+    for face in polytope.faces(2):
+        restrictions = {
+            intersection
+            for simplex in full_simplices
+            if len(intersection := simplex.intersection(face.labels)) == 3
+        }
+        expected.append(restrictions)
+
+    assert (
+        triangulation.simplices(
+            on_faces_dim=2,
+            split_by_face=True,
+            as_np_array=False,
+        )
+        == expected
+    )
 
 
 def test_random_flips_defaults():
