@@ -1,20 +1,22 @@
 """Tests for the Parquet-backed KS dataset loader.
 
-These are skipped unless a local 4D KS database is configured (CYTOOLS_DB_DIR
-or the default download location), since they read real data.
+The suite configures the committed Kreuzer--Skarke slice in ``conftest.py``,
+so these tests always exercise real Parquet data without network access or a
+machine-specific database installation.
 """
 
 import numpy as np
 import pytest
 
-ds = pytest.importorskip("cytools.dataset")
+import cytools.dataset as ds
+
+SINGLE_VERTEX_COUNT = 7
+PAIR_VERTEX_COUNTS = [7, 8]
+MULTI_VERTEX_COUNTS = [7, 8, 9]
 
 
 def _load(**kwargs):
-    try:
-        return ds.load_polytopes(**kwargs)
-    except (ImportError, ValueError) as e:
-        pytest.skip(f"no local KS database configured: {e}")
+    return ds.load_polytopes(**kwargs)
 
 
 def _safe_extract(table):
@@ -84,8 +86,8 @@ def test_batch_exposes_all_zero_construction_database_counts():
 
 @pytest.mark.parametrize(
     "n_vertices",
-    [[13], [13, 14], [13, 14, 15], list(range(10, 18))],
-    ids=["single", "two-files", "three-files", "eight-files"],
+    [[7], [7, 8], [7, 8, 9], list(range(5, 10))],
+    ids=["single", "two-files", "three-files", "five-files"],
 )
 def test_vertex_extraction_matches_reference(n_vertices, monkeypatch):
     """The zero-copy fast path must agree with per-row extraction.
@@ -122,7 +124,7 @@ def test_vertex_extraction_matches_reference(n_vertices, monkeypatch):
 
 
 def test_records_are_wellformed():
-    records = _load(n_vertices=[13, 14, 15], n=12)
+    records = _load(n_vertices=MULTI_VERTEX_COUNTS, n=12)
     for r in records:
         p = r.polytope
         assert p.vertices().shape == (r.vertex_count, 4)
@@ -135,7 +137,7 @@ def test_hodge_columns_use_m_lattice_convention():
 
     Pinned so a future "fix" that swaps the columns cannot land silently.
     """
-    records = _load(n_vertices=[13], n=5)
+    records = _load(n_vertices=[SINGLE_VERTEX_COUNT], n=5)
     for r in records:
         p = r.polytope
         assert r.h11 == p.h11(lattice="M")
@@ -151,10 +153,7 @@ def test_hodge_columns_use_m_lattice_convention():
 
 
 def _batches(**kwargs):
-    try:
-        return list(ds.scan_batches(**kwargs))
-    except (ImportError, ValueError) as e:
-        pytest.skip(f"no local KS database configured: {e}")
+    return list(ds.scan_batches(**kwargs))
 
 
 def test_scan_batches_constructs_no_polytopes(monkeypatch):
@@ -174,7 +173,7 @@ def test_scan_batches_constructs_no_polytopes(monkeypatch):
 
     monkeypatch.setattr(Polytope, "__init__", counting_init)
 
-    batches = _batches(n_vertices=[13, 14], n=40, batch_size=16)
+    batches = _batches(n_vertices=PAIR_VERTEX_COUNTS, n=40, batch_size=16)
     rows = sum(len(b) for b in batches)
     assert rows == 40
 
@@ -189,7 +188,7 @@ def test_scan_batches_constructs_no_polytopes(monkeypatch):
 
 
 def test_batch_buffers_are_consistent():
-    for b in _batches(n_vertices=[13, 14, 15], n=50, batch_size=20):
+    for b in _batches(n_vertices=MULTI_VERTEX_COUNTS, n=50, batch_size=20):
         assert b.vertex_values.flags["C_CONTIGUOUS"]
         assert b.vertex_offsets[0] == 0
         assert b.vertex_offsets[-1] == len(b.vertex_values)
@@ -205,8 +204,8 @@ def test_batch_buffers_are_consistent():
 
 
 def test_batch_agrees_with_load_polytopes():
-    records = _load(n_vertices=[13], n=12)
-    batches = _batches(n_vertices=[13], n=12, batch_size=64)
+    records = _load(n_vertices=[SINGLE_VERTEX_COUNT], n=12)
+    batches = _batches(n_vertices=[SINGLE_VERTEX_COUNT], n=12, batch_size=64)
     flat = [(b, i) for b in batches for i in range(len(b))]
     assert len(flat) == len(records)
 
@@ -228,8 +227,8 @@ def test_batch_agrees_with_load_polytopes():
 
 def test_ks_ids_are_stable_and_content_derived():
     """Same row -> same id across independent scans, regardless of batching."""
-    a = _batches(n_vertices=[13], n=30, batch_size=30)
-    b = _batches(n_vertices=[13], n=30, batch_size=7)
+    a = _batches(n_vertices=[SINGLE_VERTEX_COUNT], n=30, batch_size=30)
+    b = _batches(n_vertices=[SINGLE_VERTEX_COUNT], n=30, batch_size=7)
 
     ids_a = [i for batch in a for i in batch.ks_ids]
     ids_b = [i for batch in b for i in batch.ks_ids]
@@ -242,7 +241,7 @@ def test_ks_ids_are_stable_and_content_derived():
 
 
 def test_batch_take_repacks_correctly():
-    batch = _batches(n_vertices=[13, 14], n=20, batch_size=64)[0]
+    batch = _batches(n_vertices=[SINGLE_VERTEX_COUNT], n=20, batch_size=64)[0]
     picked = [3, 0, 7, 1]
     sub = batch.take(picked)
 
@@ -262,7 +261,7 @@ def test_scan_batches_respects_batch_size():
     rather than a flat slice of one big table.
     """
     for batch_size in (7, 20, 500):
-        batches = _batches(n_vertices=[13, 14, 15], n=50, batch_size=batch_size)
+        batches = _batches(n_vertices=MULTI_VERTEX_COUNTS, n=50, batch_size=batch_size)
         sizes = [len(b) for b in batches]
         assert all(0 < s <= batch_size for s in sizes), sizes
         assert sum(sizes) == 50
@@ -273,7 +272,7 @@ def test_capped_scan_is_spread_across_vertex_counts():
 
     Regression test. The batched scan yields one batch per row group, and an
     early version let the first file's batch absorb the whole budget, so
-    `n_vertices=[13, 14, 15], n=16` returned sixteen 13-vertex polytopes. Every
+    a three-file query returned every row from its first shard. Every
     benchmark fixture that samples a vertex-count range would have been
     silently skewed to its lowest member.
     """
@@ -281,18 +280,17 @@ def test_capped_scan_is_spread_across_vertex_counts():
 
     counts = Counter()
     rows = 0
-    for batch in _batches(n_vertices=[13, 14, 15], n=30, batch_size=8):
+    for batch in _batches(n_vertices=MULTI_VERTEX_COUNTS, n=30, batch_size=8):
         counts.update(batch.vertex_count.tolist())
         rows += len(batch)
 
     assert rows == 30
-    assert set(counts) == {13, 14, 15}, f"only got {dict(counts)}"
+    assert set(counts) == set(MULTI_VERTEX_COUNTS), f"only got {dict(counts)}"
 
-    # Apportioned in proportion to how many polytopes each file holds, not
-    # evenly: 13v/14v/15v hold 43.5M/56.1M/64.1M rows, so an even 10/10/10
-    # would under-represent 15v by a third. Evenness was the old behaviour and
-    # skewed every distribution built on a capped scan.
-    populations = {13: 43_458_000, 14: 56_060_584, 15: 64_085_869}
+    # Apportioned in proportion to the committed shards, not evenly. These
+    # counts are pinned by the fixture generator and make the test identical
+    # on a laptop and in CI.
+    populations = {7: 1_622, 8: 2_767, 9: 1_556}
     total = sum(populations.values())
     for vc, pop in populations.items():
         expected = 30 * pop / total
@@ -314,16 +312,15 @@ def test_streaming_memory_does_not_grow_with_n():
 
     def peak_pool(n):
         high = 0
-        for batch in ds.scan_batches(n_vertices=[13, 14], n=n, batch_size=512):
+        for batch in ds.scan_batches(
+            n_vertices=PAIR_VERTEX_COUNTS, n=n, batch_size=512
+        ):
             high = max(high, pa.total_allocated_bytes())
             del batch
         return high
 
-    try:
-        small = peak_pool(1000)
-        large = peak_pool(50_000)
-    except (ImportError, ValueError) as e:
-        pytest.skip(f"no local KS database configured: {e}")
+    small = peak_pool(100)
+    large = peak_pool(5_000)
 
     assert large < small * 4, (
         f"Arrow allocation grew from {small / 1e6:.0f}MB to {large / 1e6:.0f}MB "
@@ -339,7 +336,7 @@ def test_ks_ids_uniform_and_ragged_paths_agree():
     Both must give a row the same id, or a derived-results store stops joining
     the moment a query spans files.
     """
-    single = _batches(n_vertices=[13], n=60, batch_size=60)
+    single = _batches(n_vertices=[SINGLE_VERTEX_COUNT], n=60, batch_size=60)
     assert single, "expected a batch"
     batch = single[0]
 
@@ -347,7 +344,7 @@ def test_ks_ids_uniform_and_ragged_paths_agree():
     expected = [int(x) for x in batch.ks_ids]
 
     # append a row of a different width to force the ragged path
-    other = _batches(n_vertices=[14], n=1, batch_size=1)[0]
+    other = _batches(n_vertices=[PAIR_VERTEX_COUNTS[1]], n=1, batch_size=1)[0]
     blocks.append(other.vertices(0))
 
     counts = np.array([len(b) for b in blocks], dtype=np.int64)
@@ -363,7 +360,7 @@ def test_ks_ids_do_not_collide_over_a_large_sample():
     seen = {}
     collisions = 0
     rows = 0
-    for batch in _batches(n_vertices=[13, 14, 15], n=20_000, batch_size=8192):
+    for batch in _batches(n_vertices=MULTI_VERTEX_COUNTS, n=20_000, batch_size=8192):
         for i in range(len(batch)):
             rows += 1
             key = int(batch.ks_ids[i])
@@ -386,7 +383,9 @@ def test_row_set_is_invariant_to_batch_size():
     def id_set(batch_size):
         return {
             int(i)
-            for b in _batches(n_vertices=[13, 14, 15], n=600, batch_size=batch_size)
+            for b in _batches(
+                n_vertices=MULTI_VERTEX_COUNTS, n=600, batch_size=batch_size
+            )
             for i in b.ks_ids
         }
 
@@ -404,7 +403,7 @@ def test_batch_values_survive_the_arrow_table():
     """
     import gc
 
-    batch = _batches(n_vertices=[13], n=200, batch_size=200)[0]
+    batch = _batches(n_vertices=[SINGLE_VERTEX_COUNT], n=200, batch_size=200)[0]
     snapshot = np.array(batch.vertices(0), copy=True)
     for _ in range(3):
         gc.collect()
@@ -417,7 +416,7 @@ def test_capped_scans_are_nested_in_n():
     A capped scan takes a prefix of each file's seeded row-group ordering, so a
     larger n is a superset of a smaller one. This is what makes growing a sweep
     cheap against a derived store: the previously computed rows are all still
-    present and get skipped, rather than a fresh random subset being drawn. The
+    present and get reused, rather than a fresh random subset being drawn. The
     earlier read-everything-then-sample implementation did not have this
     property.
     """
@@ -425,7 +424,7 @@ def test_capped_scans_are_nested_in_n():
     def id_set(n):
         return {
             int(i)
-            for b in _batches(n_vertices=[13, 14], n=n, batch_size=32)
+            for b in _batches(n_vertices=PAIR_VERTEX_COUNTS, n=n, batch_size=32)
             for i in b.ks_ids
         }
 
@@ -528,28 +527,13 @@ def test_capped_scan_matches_the_population_shape():
     """End-to-end: the returned vertex-count mix tracks the real population."""
     import collections
 
-    ds = pytest.importorskip("cytools.dataset")
-    truth = {
-        6: 5,
-        7: 38,
-        8: 82,
-        9: 107,
-        10: 174,
-        11: 132,
-        12: 98,
-        13: 51,
-        14: 14,
-        15: 5,
-    }
-    try:
-        got = collections.Counter()
-        for b in ds.scan_batches(h12=200, n=350, batch_size=64):
-            for i in range(len(b)):
-                got[len(b.vertices(i))] += 1
-    except (ImportError, ValueError) as e:
-        pytest.skip(f"no local KS database configured: {e}")
-    if not got:
-        pytest.skip("no rows returned")
+    truth = {5: 14, 6: 220, 7: 939, 8: 2_261, 9: 1_556}
+    got = collections.Counter()
+    for b in ds.scan_batches(h12=5, n=350, batch_size=64):
+        for i in range(len(b)):
+            got[len(b.vertices(i))] += 1
+
+    assert got, "the committed slice must contain h11(N)=5 polytopes"
 
     drawn = sum(got.values())
     total = sum(truth.values())

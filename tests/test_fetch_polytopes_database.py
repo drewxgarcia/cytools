@@ -24,32 +24,33 @@ from cytools.utils import _fetch_from_database
 
 def _fetch(**kwargs):
     kwargs.setdefault("source", "database")
-    try:
-        return fetch_polytopes(**kwargs)
-    except (ImportError, ValueError, FileNotFoundError) as e:
-        if "database" in str(e).lower() or "CYTOOLS_DB_DIR" in str(e):
-            pytest.skip(f"no local KS database configured: {e}")
-        raise
+    return fetch_polytopes(**kwargs)
+
+
+# The committed slice is complete for N-lattice h11 <= 5. Its mirror Hodge
+# numbers are naturally much larger; 59 is the most common and therefore a
+# robust fixture for the M-lattice mapping tests.
+H11_BY_LATTICE = {"N": 5, "M": 59}
 
 
 # ------------------------------------------------------------ lattice mapping
 @pytest.mark.parametrize("lattice", ["N", "M"])
 def test_h11_filter_is_in_the_requested_lattice(lattice):
     """The convention swap must be invisible to the caller."""
-    polytopes = _fetch(h11=5, lattice=lattice, limit=5)
-    if not polytopes:
-        pytest.skip("no matching polytopes in the local database")
-    assert all(p.h11(lattice=lattice) == 5 for p in polytopes)
+    target = H11_BY_LATTICE[lattice]
+    polytopes = _fetch(h11=target, lattice=lattice, limit=5)
+    assert polytopes, f"the committed slice has no h11({lattice})={target} fixture"
+    assert all(p.h11(lattice=lattice) == target for p in polytopes)
 
 
 @pytest.mark.parametrize("lattice", ["N", "M"])
 def test_chi_filter_is_in_the_requested_lattice(lattice):
-    seed = _fetch(h11=5, lattice=lattice, limit=4)
-    if not seed:
-        pytest.skip("no matching polytopes in the local database")
+    h11 = H11_BY_LATTICE[lattice]
+    seed = _fetch(h11=h11, lattice=lattice, limit=4)
+    assert seed
     target = seed[0].chi(lattice=lattice)
 
-    polytopes = _fetch(h11=5, lattice=lattice, chi=target, limit=4)
+    polytopes = _fetch(h11=h11, lattice=lattice, chi=target, limit=4)
     assert polytopes
     assert all(p.chi(lattice=lattice) == target for p in polytopes)
 
@@ -65,22 +66,19 @@ def test_h21_is_an_alias_for_h12():
 # ------------------------------------------------------------ column mappings
 def test_n_vertices_filter():
     polytopes = _fetch(h11=5, lattice="N", n_vertices=6, limit=3)
-    if not polytopes:
-        pytest.skip("no matching polytopes in the local database")
+    assert polytopes
     assert all(len(p.vertices()) == 6 for p in polytopes)
 
 
 def test_n_points_filter():
     polytopes = _fetch(h11=5, lattice="N", n_points=9, limit=3)
-    if not polytopes:
-        pytest.skip("no matching polytopes in the local database")
+    assert polytopes
     assert all(len(p.points()) == 9 for p in polytopes)
 
 
 def test_n_facets_filter():
     polytopes = _fetch(h11=5, lattice="N", n_facets=6, limit=3)
-    if not polytopes:
-        pytest.skip("no matching polytopes in the local database")
+    assert polytopes
     assert all(len(p.facets()) == 6 for p in polytopes)
 
 

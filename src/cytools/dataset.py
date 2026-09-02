@@ -80,9 +80,11 @@ import pyarrow.parquet as pq
 from cytools.polytope import Polytope
 
 __all__ = [
+    "DatabaseUnavailable",
     "PolytopeBatch",
     "PolytopeRecord",
     "PolytopeRecord5D",
+    "download_shards",
     "load_5d_polytopes",
     "load_polytopes",
     "scan_batches",
@@ -206,11 +208,65 @@ def _resolve_dir(
     )
 
 
-#: HuggingFace dataset repository holding the 4D Parquet shards. Used only as a
-#: fallback: a shard present locally is never re-fetched. There is deliberately
-#: no 5D counterpart -- the 5D API is local-only, and a constant naming a remote
-#: repo that nothing reads only suggests otherwise.
+#: HuggingFace dataset repository holding the 4D Parquet shards. There is
+#: deliberately no 5D counterpart -- the 5D API is local-only, and a constant
+#: naming a remote repo that nothing reads only suggests otherwise.
 _HF_4D_REPO = "calabi-yau-data/polytopes-4d"
+
+#: Rough shard sizes, for the "you need to download this" message. The 4D
+#: database is ~16 GB across 32 vertex-count shards, the largest ~2 GB.
+_DB_TOTAL_SIZE = "~16 GB"
+_DB_SHARD_SIZE = "up to ~2 GB"
+
+#: Set for the duration of `download_shards`, which is the only sanctioned way
+#: to reach the network for data.
+_EXPLICIT_DOWNLOAD = False
+
+
+class DatabaseUnavailable(RuntimeError):
+    """A requested database shard is not present locally, and fetching it was
+    not asked for.
+
+    Reading the database never starts a download on its own. A vertex-count
+    shard runs to ~2 GB and the whole 4D database to ~16 GB, so a query that
+    quietly began pulling that -- because the caller happened to have
+    `huggingface_hub` installed -- is a surprise no library should spring, and
+    in a test suite it is a multi-gigabyte transfer nobody asked for.
+
+    So the missing data is reported instead, and :func:`download_shards` is the
+    explicit, batteries-included way to fetch it.
+    """
+
+
+def _downloads_permitted() -> bool:
+    """Whether reaching HuggingFace is currently sanctioned.
+
+    True inside :func:`download_shards`, or when `CYTOOLS_ALLOW_DOWNLOADS` is
+    set -- the opt-in for callers who genuinely do want a read to fetch what it
+    needs, e.g. an unattended job on a fresh machine.
+    """
+    if _EXPLICIT_DOWNLOAD:
+        return True
+    return os.environ.get("CYTOOLS_ALLOW_DOWNLOADS", "").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+        "on",
+    )
+
+
+def _needs_download(what: str, remedy: str) -> DatabaseUnavailable:
+    """Build the "you need to fetch this first" error."""
+    return DatabaseUnavailable(
+        f"{what} is not available locally, and reading the database does not "
+        f"download anything by itself ({_DB_SHARD_SIZE} per vertex-count "
+        f"shard, {_DB_TOTAL_SIZE} for all of them).\n"
+        f"  To fetch it:      {remedy}\n"
+        "  Already have it:  pass db_dir= or set CYTOOLS_DB_DIR to the "
+        "directory of Parquet files.\n"
+        "  Opt in globally:  set CYTOOLS_ALLOW_DOWNLOADS=1 to let reads fetch "
+        "shards on demand."
+    )
 
 
 def _hf_download(repo_id: str, filename: str) -> Path:
@@ -309,7 +365,93 @@ def _available_4d_vertex_counts(resolved_dir: Path | None) -> list[int]:
         local = _all_vertex_counts(resolved_dir)
         if local:
             return local
+
+    # Listing the remote repo is a small request, but it is still the network,
+    # and every count it reports becomes a shard the scan then tries to fetch.
+    # Gating it here keeps an unconfigured read entirely offline.
+    if not _downloads_permitted():
+        raise _needs_download(
+            "The 4D polytope database",
+            "cytools.dataset.download_shards()  # or download_shards([13, 14])",
+        )
     return _hf_4d_vertex_counts()
+
+
+def download_shards(
+    n_vertices: int | Iterable[int] | None = None,
+    *,
+    db_dir: Path | str | None = None,
+    quiet: bool = False,
+) -> list[Path]:
+    """
+    **Description:**
+    Fetch 4D Kreuzer-Skarke Parquet shards from HuggingFace, explicitly.
+
+    This is the sanctioned way to obtain the database, and the only thing in
+    `cytools.dataset` that reaches the network for data. Reads never download
+    on their own -- they raise :class:`DatabaseUnavailable` and point here --
+    because a vertex-count shard runs to ~2 GB and the full database to ~16 GB.
+
+    Shards already present are reported and not re-fetched, so this is safe to
+    re-run and safe to call for a range you have only partly downloaded.
+
+    **Arguments:**
+    - `n_vertices`: Vertex-count shard(s) to fetch, e.g. `13` or `[13, 14]`.
+        `None` fetches every shard the remote repository publishes -- the full
+        ~16 GB.
+    - `db_dir`: Where to look for shards you already have. Downloads land in
+        the HuggingFace cache regardless; pass this so an existing local
+        database is not re-fetched. Defaults to `CYTOOLS_DB_DIR`.
+    - `quiet`: Suppress the per-shard progress lines.
+
+    **Returns:**
+    *(list)* The local path of every requested shard, downloaded or already
+        present, in the order requested.
+
+    **Example:**
+    ```python {2}
+    from cytools.dataset import download_shards
+    paths = download_shards([13, 14])
+    ```
+    """
+    global _EXPLICIT_DOWNLOAD
+
+    resolved_dir = _optional_dir(db_dir, DB_DIR, "CYTOOLS_DB_DIR")
+
+    was_allowed = _EXPLICIT_DOWNLOAD
+    _EXPLICIT_DOWNLOAD = True
+    try:
+        if n_vertices is None:
+            counts = _hf_4d_vertex_counts()
+        elif isinstance(n_vertices, (int, np.integer)):
+            counts = [int(n_vertices)]
+        else:
+            counts = [int(v) for v in n_vertices]
+
+        unknown = [c for c in counts if not 5 <= c <= 36]
+        if unknown:
+            raise ValueError(
+                f"no 4D shard exists for vertex count(s) {unknown}; "
+                "the database covers 5 through 36."
+            )
+
+        paths = []
+        for i, vc in enumerate(counts, start=1):
+            local = _db_path(vc, resolved_dir) if resolved_dir else None
+            if local is not None and local.exists():
+                if not quiet:
+                    print(f"[{i}/{len(counts)}] {vc}-vertex shard: already local")
+                paths.append(local)
+                continue
+            if not quiet:
+                print(
+                    f"[{i}/{len(counts)}] {vc}-vertex shard: fetching "
+                    f"({_DB_SHARD_SIZE})..."
+                )
+            paths.append(_hf_download(_HF_4D_REPO, _hf_4d_filename(vc)))
+        return paths
+    finally:
+        _EXPLICIT_DOWNLOAD = was_allowed
 
 
 def _weights_to_vertices(weights: np.ndarray) -> np.ndarray:
@@ -619,13 +761,20 @@ def _resolve_4d_path(vc, resolved_dir) -> Path:
     Lazy so that a capped query does not touch every vertex-count file, and so
     that a download is only ever paid for a shard the query actually reads.
 
-    A shard present locally is used as-is and never re-fetched; only a missing
-    one falls back to HuggingFace.
+    A shard present locally is used as-is and never re-fetched. A missing one
+    raises :class:`DatabaseUnavailable` rather than starting a download; see
+    :func:`download_shards`.
     """
     if resolved_dir is not None:
         path = _db_path(vc, resolved_dir)
         if path.exists():
             return path
+
+    if not _downloads_permitted():
+        raise _needs_download(
+            f"The {vc}-vertex 4D shard",
+            f"cytools.dataset.download_shards({vc})",
+        )
 
     return _hf_download(_HF_4D_REPO, _hf_4d_filename(vc))
 

@@ -25,6 +25,7 @@ from cytools._version import (
 
 _LAZY_EXPORTS = {
     "Cone": ("cytools.cone", "Cone"),
+    "DatabaseUnavailable": ("cytools.dataset", "DatabaseUnavailable"),
     "Geometry": ("cytools.landscape", "Geometry"),
     "HPolytope": ("cytools.h_polytope", "HPolytope"),
     "Polytope": ("cytools.polytope", "Polytope"),
@@ -32,6 +33,7 @@ _LAZY_EXPORTS = {
     "Unsupported": ("cytools.store", "Unsupported"),
     "check_for_updates": ("cytools._updates", "check_for_updates"),
     "config": ("cytools.config", None),
+    "download_shards": ("cytools.dataset", "download_shards"),
     "fetch_polytopes": ("cytools.utils", "fetch_polytopes"),
     "load_polytopes": ("cytools.dataset", "load_polytopes"),
     "ntfe": ("cytools.ntfe", None),
@@ -67,6 +69,7 @@ def __dir__() -> list[str]:
 
 __all__ = [
     "Cone",
+    "DatabaseUnavailable",
     "Geometry",
     "HPolytope",
     "PerformanceWarning",
@@ -76,6 +79,7 @@ __all__ = [
     "__version__",
     "check_for_updates",
     "config",
+    "download_shards",
     "fetch_polytopes",
     "load_polytopes",
     "ntfe",

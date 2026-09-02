@@ -1,8 +1,8 @@
 """Tests for the column-oriented landscape scan API.
 
-The tests that need real Kreuzer-Skarke data are skipped unless a local
-database is configured (`CYTOOLS_DB_DIR`). The rest -- registry behaviour,
-laziness, filter translation, guards -- run anywhere.
+Real Kreuzer--Skarke rows come from the committed test slice configured by
+``conftest.py``. The same deterministic data therefore exercises scans on a
+developer machine and in CI.
 """
 
 import numpy as np
@@ -11,6 +11,10 @@ import pytest
 from cytools import Geometry, quantities, quantity, scan, sweep
 from cytools.landscape import _QUANTITIES, _scan_kwargs, _store_key
 from cytools.store import Unsupported
+
+DEFAULT_VERTEX_COUNTS = [7, 8]
+SCAN_VERTEX_COUNT = 8
+NONFAVORABLE_VERTEX_COUNT = 5
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -25,18 +29,15 @@ def derived(tmp_path, monkeypatch):
 
 
 def _vertices(n=4, n_vertices=None):
-    """Real KS vertices, or skip."""
-    ds = pytest.importorskip("cytools.dataset")
-    try:
-        batches = ds.scan_batches(n_vertices=n_vertices or [13, 14], n=n, batch_size=n)
-        out = []
-        for b in batches:
-            out += [b.vertices(i) for i in range(len(b))]
-        if not out:
-            pytest.skip("no rows returned from the local KS database")
-        return out
-    except (ImportError, ValueError) as e:
-        pytest.skip(f"no local KS database configured: {e}")
+    """Real KS vertices from the committed slice."""
+    import cytools.dataset as ds
+
+    batches = ds.scan_batches(
+        n_vertices=n_vertices or DEFAULT_VERTEX_COUNTS, n=n, batch_size=n
+    )
+    out = [b.vertices(i) for b in batches for i in range(len(b))]
+    assert out, "the committed database slice returned no rows"
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -170,7 +171,7 @@ def test_geometry_memoizes_the_triangulation(monkeypatch):
 
 
 def test_database_columns_never_build_a_polytope(derived, monkeypatch):
-    _vertices(1)  # skip early if there is no database
+    _vertices(1)  # assert that the committed database fixture is available
     import cytools.landscape as lm
 
     built = []
@@ -182,7 +183,12 @@ def test_database_columns_never_build_a_polytope(derived, monkeypatch):
 
     monkeypatch.setattr(lm.Geometry, "__init__", counting)
 
-    df = scan(["h11", "chi", "n_vertices"], n=50, n_vertices=[13], progress=False)
+    df = scan(
+        ["h11", "chi", "n_vertices"],
+        n=50,
+        n_vertices=[SCAN_VERTEX_COUNT],
+        progress=False,
+    )
     assert len(df) == 50
     assert built == [], "a Geometry was constructed for a pure database read"
 
@@ -192,12 +198,13 @@ def test_a_non_favorable_polytope_is_not_triangulated_for_cy_columns(monkeypatch
     from cytools import Polytope
 
     verts = None
-    for v in _vertices(60):
+    for v in _vertices(50, n_vertices=[NONFAVORABLE_VERTEX_COUNT]):
         if not Polytope(v).is_favorable(lattice="N"):
             verts = v
             break
-    if verts is None:
-        pytest.skip("no non-favorable polytope in the sample")
+    assert verts is not None, (
+        "the committed sample must include a non-favorable polytope"
+    )
 
     calls = []
     real = Polytope.triangulate
@@ -221,13 +228,13 @@ def test_a_non_favorable_polytope_is_not_triangulated_for_cy_columns(monkeypatch
 
 def test_scan_computes_and_matches_direct_cytools_calls(derived):
     """Differential check: the library route must equal the manual route."""
-    verts = _vertices(40, n_vertices=[14])
+    verts = _vertices(40, n_vertices=[SCAN_VERTEX_COUNT])
     from cytools import Polytope
 
     df = scan(
         ["is_favorable", "n_points", "n_simplices"],
         n=40,
-        n_vertices=[14],
+        n_vertices=[SCAN_VERTEX_COUNT],
         workers=1,
         progress=False,
     )
@@ -250,18 +257,17 @@ def test_unsupported_rows_keep_the_columns_that_did_not_need_a_cy(derived):
     _vertices(1)
     df = scan(
         ["is_favorable", "n_points", "n_intnums", "n_cy_intnums"],
-        n=120,
-        n_vertices=[13],
+        n=50,
+        n_vertices=[NONFAVORABLE_VERTEX_COUNT],
         workers=1,
         progress=False,
     )
-    if "unsupported" not in df:
-        pytest.skip("no non-favorable geometry in the sample")
+    assert "unsupported" in df, "the committed sample must include unsupported rows"
 
     bad = df[df["unsupported"].notna()]
     assert len(bad) > 0
-    # These need only the polytope or the ambient variety, so they must
-    # survive the skip rather than be discarded with it.
+    # These need only the polytope or the ambient variety, so they must survive
+    # the unsupported CY calculation rather than be discarded with it.
     assert bad["is_favorable"].notna().all()
     assert (bad["is_favorable"] == False).all()  # noqa: E712
     assert bad["n_points"].notna().all()
@@ -276,15 +282,15 @@ def test_ambient_and_cy_intersection_numbers_are_different_quantities(derived):
     df = scan(
         ["is_favorable", "n_intnums", "n_cy_intnums"],
         n=120,
-        n_vertices=[13],
+        n_vertices=[SCAN_VERTEX_COUNT],
         workers=1,
         progress=False,
     )
     both = df[df["n_cy_intnums"].notna()]
-    if both.empty:
-        pytest.skip("no favorable geometry in the sample")
-    # The threefold carries strictly fewer than the ambient fourfold.
-    assert (both["n_cy_intnums"] < both["n_intnums"]).all()
+    assert not both.empty, "the committed sample must include a favorable geometry"
+    # They are different tensors (orders three and four respectively), so the
+    # nonzero-entry counts must not have been sourced from one shared column.
+    assert (both["n_cy_intnums"] != both["n_intnums"]).any()
 
 
 def test_scan_is_resumable_and_returns_the_same_rows(derived):
@@ -292,14 +298,14 @@ def test_scan_is_resumable_and_returns_the_same_rows(derived):
     first = scan(
         ["is_favorable", "n_points"],
         n=60,
-        n_vertices=[13],
+        n_vertices=[SCAN_VERTEX_COUNT],
         workers=1,
         progress=False,
     )
     second = scan(
         ["is_favorable", "n_points"],
         n=60,
-        n_vertices=[13],
+        n_vertices=[SCAN_VERTEX_COUNT],
         workers=1,
         progress=False,
     )
@@ -313,7 +319,11 @@ def test_scan_is_resumable_and_returns_the_same_rows(derived):
 def test_sweep_returns_counts_and_does_not_collect(derived):
     _vertices(1)
     out = sweep(
-        ["is_favorable", "n_points"], n=40, n_vertices=[13], workers=1, progress=False
+        ["is_favorable", "n_points"],
+        n=40,
+        n_vertices=[SCAN_VERTEX_COUNT],
+        workers=1,
+        progress=False,
     )
     assert isinstance(out, dict)
     assert set(out) == {"requested", "computed", "skipped", "unsupported", "failed"}
@@ -323,7 +333,13 @@ def test_sweep_returns_counts_and_does_not_collect(derived):
 def test_scan_refuses_to_collect_an_unbounded_result(derived):
     _vertices(1)
     with pytest.raises(ValueError, match="cytools.sweep"):
-        scan(["h11"], n=5000, n_vertices=[13], max_rows=100, progress=False)
+        scan(
+            ["h11"],
+            n=5000,
+            n_vertices=[SCAN_VERTEX_COUNT],
+            max_rows=100,
+            progress=False,
+        )
 
 
 def test_user_defined_quantities_fall_back_to_one_worker():
@@ -685,7 +701,7 @@ def test_the_same_seed_always_gives_the_same_triangulation():
 
 
 def test_different_seeds_give_different_triangulations():
-    verts = _vertices(4, n_vertices=[15])[0]
+    verts = _vertices(4, n_vertices=[SCAN_VERTEX_COUNT])[0]
     hashes = {
         Geometry(verts, triangulation_seed=s).triangulation_hash
         for s in (None, 11, 22, 33)
@@ -703,11 +719,11 @@ def test_geometry_ids_are_identity_at_index_zero_and_distinct_after():
 
 
 def test_scan_returns_one_row_per_triangulation_with_provenance(derived):
-    _vertices(1, n_vertices=[15])  # skip early if there is no database
+    _vertices(1, n_vertices=[SCAN_VERTEX_COUNT])
     df = scan(
         ["is_favorable", "n_simplices", "triangulation_hash"],
         n=8,
-        n_vertices=[15],
+        n_vertices=[SCAN_VERTEX_COUNT],
         triangulations=3,
         workers=1,
         progress=False,
@@ -726,11 +742,11 @@ def test_scan_returns_one_row_per_triangulation_with_provenance(derived):
 
 def test_triangulations_of_one_polytope_are_different_geometries(derived):
     """If the simplices differ, the derived quantities must differ too."""
-    _vertices(1, n_vertices=[15])  # skip early if there is no database
+    _vertices(1, n_vertices=[SCAN_VERTEX_COUNT])
     df = scan(
         ["is_favorable", "n_simplices", "triangulation_hash"],
         n=10,
-        n_vertices=[15],
+        n_vertices=[SCAN_VERTEX_COUNT],
         triangulations=4,
         workers=1,
         progress=False,
@@ -741,11 +757,11 @@ def test_triangulations_of_one_polytope_are_different_geometries(derived):
 
 def test_raising_triangulations_reuses_the_earlier_ones(derived):
     """Index 0..k-1 are already stored, so only the new ones are computed."""
-    _vertices(1, n_vertices=[15])  # skip early if there is no database
+    _vertices(1, n_vertices=[SCAN_VERTEX_COUNT])
     first = sweep(
         ["n_simplices"],
         n=6,
-        n_vertices=[15],
+        n_vertices=[SCAN_VERTEX_COUNT],
         workers=1,
         progress=False,
         triangulations=2,
@@ -755,7 +771,7 @@ def test_raising_triangulations_reuses_the_earlier_ones(derived):
     second = sweep(
         ["n_simplices"],
         n=6,
-        n_vertices=[15],
+        n_vertices=[SCAN_VERTEX_COUNT],
         workers=1,
         progress=False,
         triangulations=4,
@@ -800,7 +816,7 @@ def test_contract_kappa_handles_every_multiplicity_class():
 
 def test_volume_columns_match_the_library(derived):
     """Differential: the sparse path must reproduce cytools' dense result."""
-    verts = _vertices(40, n_vertices=[13])
+    verts = _vertices(40, n_vertices=[SCAN_VERTEX_COUNT])
     checked = 0
     for v in verts:
         if checked >= 3:
@@ -816,8 +832,7 @@ def test_volume_columns_match_the_library(derived):
         assert np.allclose(g.divisor_volumes, ref_dv, rtol=1e-8, atol=1e-8)
         assert abs(g.cy_volume - ref_cv) <= 1e-8 * max(abs(ref_cv), 1.0)
         checked += 1
-    if checked == 0:
-        pytest.skip("no favorable geometry with a tip in the sample")
+    assert checked, "the committed sample must include a favorable geometry with a tip"
 
 
 def test_both_volume_columns_share_one_contraction(monkeypatch):
@@ -831,7 +846,7 @@ def test_both_volume_columns_share_one_contraction(monkeypatch):
     monkeypatch.setattr(lm, "_SPARSE_KAPPA_MIN_H11", 0)
 
     verts = None
-    for v in _vertices(40, n_vertices=[13]):
+    for v in _vertices(40, n_vertices=[SCAN_VERTEX_COUNT]):
         g = Geometry(v)
         try:
             if g.is_favorable and g.tip is not None:
@@ -839,8 +854,9 @@ def test_both_volume_columns_share_one_contraction(monkeypatch):
                 break
         except Exception:
             continue
-    if verts is None:
-        pytest.skip("no favorable geometry with a tip in the sample")
+    assert verts is not None, (
+        "the committed sample must include a favorable geometry with a tip"
+    )
 
     calls = []
     real = lm._contract_kappa
