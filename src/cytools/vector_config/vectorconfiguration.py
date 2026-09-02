@@ -112,12 +112,6 @@ class VectorConfiguration(regfans.VectorConfiguration):
         """
         return Cone(rays=np.asarray(self.vectors(which=which)))
 
-    # aliases
-    positive_hull = conical_hull
-    pos = conical_hull
-    coni = conical_hull
-    cone = conical_hull
-
     def convex_hull(self, which: int | Iterable[int] | None = None) -> Polytope:
         """
         **Description:**
@@ -146,10 +140,6 @@ class VectorConfiguration(regfans.VectorConfiguration):
             self._poly[which] = Polytope(np.asarray(self.vectors(which)), labels=which)
 
         return self._poly[which]
-
-    # aliases
-    conv = convex_hull
-    polytope = convex_hull
 
     # properties of the PC
     # --------------------
@@ -334,6 +324,9 @@ class VectorConfiguration(regfans.VectorConfiguration):
         fan = Fan.from_regfans(fan)  # cast to CYTools type
         return fan
 
+    # Not a convenience alias: `regfans.VectorConfiguration` binds its own
+    # `subdivide` to the *base* `triangulate`, so without this the inherited
+    # name would skip the CYTools `Fan` cast above.
     subdivide = triangulate
 
 

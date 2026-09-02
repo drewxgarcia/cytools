@@ -32,10 +32,10 @@ def test_scikit_sparse_api_when_installed():
     ``cholesky_AAt`` in favour of ``cho_factor``. A missing module or a missing
     name should fail loudly here rather than degrade the solver silently.
     """
-    from sksparse.cholmod import (  # noqa: F401  # ty: ignore[unresolved-import]  # compiled extension, no stubs
-        CholmodError,
-        cho_factor,
-    )
+    from sksparse.cholmod import CholmodError, cho_factor
+
+    assert callable(cho_factor)
+    assert issubclass(CholmodError, Exception)
 
 
 @pytest.mark.parametrize(

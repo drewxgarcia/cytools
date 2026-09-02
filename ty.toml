@@ -1,11 +1,19 @@
-# Optional extras (`gnn`, `mosek`) are not installed in every environment.
-# Configure that here rather than with inline suppressions, which flip to
-# "unused" as soon as the extra *is* installed.
 [environment]
-# The source stays type-compatible with upstream's 3.10 floor even though the
-# Workbench distribution supports 3.12+. Runtime CI covers 3.12 and 3.14.
+# Deliberately *below* `requires-python = ">=3.12"`. Raising this to 3.12
+# resolves numpy's version-branched stubs differently and surfaces 19
+# diagnostics -- `np.delete`/`np.dot`/`np.shape` overload mismatches and three
+# `cygv.hkty` argument types. They are stub strictness rather than known bugs,
+# and silencing them would mean casts, so the raise is staged as its own piece
+# of work instead of being smuggled in behind a lint change.
 python-version = "3.10"
+# Hand-written types for compiled extensions that ship none. See stubs/.
+extra-paths = ["stubs"]
 
+# `mosek` and `dualgnn` are optional extras, imported under `try: ... except
+# ImportError`. They are absent in a base install, so they are configured here
+# rather than with inline suppressions, which flip to "unused" the moment the
+# extra *is* installed. Compiled extensions that are always present get real
+# types in stubs/ instead; this is only for genuinely optional packages.
 [[overrides]]
 include = [
     "src/cytools/config.py",

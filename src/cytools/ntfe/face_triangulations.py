@@ -75,7 +75,7 @@ def _dualgnn_face_triangs(
 
     **Arguments:**
     - `face`: The 2-face (PolytopeFace) of interest.
-    - `face_poly`: The 2-face as a Polytope (i.e., face.as_poly()).
+    - `face_poly`: The 2-face as a Polytope (i.e., face.as_polytope()).
     - `N`: The number of triangulations to sample (with replacement, so
         fewer may be returned after deduplication and regularity filtering).
     - `model`: A dualgnn.model.DualGNN instance, or a path to a model
@@ -182,7 +182,7 @@ def face_triangs(
     # iterate over faces
     ind = 0
     for face in faces:
-        p = face.as_poly()  # convert to Polytope to get all triangulations
+        p = face.as_polytope()  # convert to Polytope to get all triangulations
 
         if (max_npts is not None) and (len(p.points()) > max_npts):
             if verbosity >= 1:
@@ -294,7 +294,7 @@ def _as_2d_poly(poly: "Polytope", verbosity: int = 0) -> "Polytope":
     `poly` itself if it already lives in a 2D ambient space, else an
     equivalent polytope in ZZ^2 carrying the same labels.
     """
-    if poly.ambient_dim() == 2:
+    if poly.ambient_dimension() == 2:
         return poly
 
     if verbosity >= 1:
@@ -334,7 +334,7 @@ def grow_ft(
     rand_gen = np.random.Generator(np.random.PCG64(seed=seed))
 
     # dimension checking
-    if self.dim() != 2:
+    if self.dimension() != 2:
         raise NotImplementedError
 
     poly = _as_2d_poly(self, verbosity=verbosity)
@@ -384,7 +384,7 @@ def grow_ft(
     choosable = edges - bdry
 
     # get the bounding box of known edges. Used for intersection checking
-    edges_bounds = dict()
+    edges_bounds = {}
     for i in range(2):
         for j in range(i + 1, 3):
             edges_bounds[frozenset((start[i], start[j]))] = [
@@ -424,7 +424,8 @@ def grow_ft(
                 # triangulation, so there is nothing meaningful to return
                 warnings.warn(
                     "grow_ft: growth got stuck (no valid vertex to build off "
-                    f"of edge {sorted(edge)}). Returning None."
+                    f"of edge {sorted(edge)}). Returning None.",
+                    stacklevel=2,
                 )
                 return None
 
@@ -571,7 +572,7 @@ def grow_frt(
     The FRT of poly.
     """
     # input checking
-    if self.dim() != 2:
+    if self.dimension() != 2:
         raise NotImplementedError
 
     poly = _as_2d_poly(self, verbosity=verbosity)

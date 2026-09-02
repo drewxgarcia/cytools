@@ -138,8 +138,8 @@ def test_inequalities():
     p = Polytope(
         [[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1], [-1, -1, -1, -1]]
     )
-    computed_ineq = set(tuple(i) for i in p.inequalities())
-    real_ineq = set(
+    computed_ineq = {tuple(i) for i in p.inequalities()}
+    real_ineq = {
         tuple(i)
         for i in [
             [4, -1, -1, -1, 1],
@@ -148,7 +148,7 @@ def test_inequalities():
             [-1, -1, -1, 4, 1],
             [-1, -1, -1, -1, 1],
         ]
-    )
+    }
     assert computed_ineq == real_ineq
 
 
@@ -269,8 +269,8 @@ def test_points():
     p = Polytope(
         [[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1], [-1, -1, -6, -9]]
     )
-    pts = set(tuple(pt) for pt in p.points())
-    real_pts = set(
+    pts = {tuple(pt) for pt in p.points()}
+    real_pts = {
         tuple(pt)
         for pt in [
             [0, 0, 0, 0],
@@ -284,7 +284,7 @@ def test_points():
             [0, 0, -1, -1],
             [0, 0, 0, -1],
         ]
-    )
+    }
     assert pts == real_pts
 
 
@@ -306,8 +306,8 @@ def test_vertices():
     p = Polytope(
         [[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1], [-1, -1, -1, -1]]
     )
-    vert = set(tuple(pt) for pt in p.vertices())
-    real_vert = set(
+    vert = {tuple(pt) for pt in p.vertices()}
+    real_vert = {
         tuple(pt)
         for pt in [
             [1, 0, 0, 0],
@@ -316,7 +316,7 @@ def test_vertices():
             [0, 0, 0, 1],
             [-1, -1, -1, -1],
         ]
-    )
+    }
     assert vert == real_vert
 
 
@@ -370,7 +370,7 @@ def test_faces_from_dual_uses_vertices():
 
     # force the dual's faces to be computed first
     p = Polytope(quintic)
-    p.dual().faces()
+    p.dual_polytope().faces()
     from_dual = p.faces()[4][0].vertices()
 
     # ... and compare against computing them from scratch
@@ -395,7 +395,7 @@ def test_faces_ordering_is_deterministic():
     ]
 
     p = Polytope(quintic)
-    p.dual().faces()
+    p.dual_polytope().faces()
     from_dual = [[f.labels for f in dim_faces] for dim_faces in p.faces()]
 
     p2 = Polytope(quintic)
@@ -443,7 +443,7 @@ def test_huang_taylor_sets_are_disjoint():
     assert S_1 is not S_2 and S_2 is not S_3 and S_1 is not S_3
 
     # ... and must be a genuine partition by max dot product with dual vertices
-    dual_vert = p.dual().vertices()
+    dual_vert = p.dual_polytope().vertices()
     for i, S in enumerate([S_1, S_2, S_3]):
         for pt in S:
             assert max(np.dot(pt, v) for v in dual_vert) == i + 1

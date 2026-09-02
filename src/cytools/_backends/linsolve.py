@@ -38,10 +38,7 @@ def cholmod_solve(M: sp.csr_matrix, C) -> np.ndarray | None:
     **Returns:**
     The solution, or None if the factorization failed numerically.
     """
-    from sksparse.cholmod import (  # ty: ignore[unresolved-import]  # compiled extension, no stubs
-        CholmodError,
-        cho_factor,
-    )
+    from sksparse.cholmod import CholmodError, cho_factor
 
     Mt = M.transpose()
     try:

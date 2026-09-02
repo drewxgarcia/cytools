@@ -38,7 +38,7 @@ quintic_dual = Polytope(
         [0, 0, 0, 1],
         [-1, -1, -1, -1],
     ]
-).dual()
+).dual_polytope()
 
 # small (h11=2) polytope with high NTFE-extension rates, for end-to-end tests
 p11169 = Polytope(
@@ -193,7 +193,7 @@ def test_seed_reproducibility():
         for _ in range(2)
     )
     assert len(h1) == len(h2) > 0
-    assert all((a == b).all() for a, b in zip(h1, h2))
+    assert all((a == b).all() for a, b in zip(h1, h2, strict=True))
 
 
 @pytest.mark.requires_dependency("dualgnn")

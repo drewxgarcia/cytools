@@ -305,7 +305,7 @@ def test_gv_invariants_p11169_literature_values():
         [[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1], [-1, -1, -6, -9]]
     )
     cy = p.triangulate().get_cy()
-    assert (cy.h11(), cy.h21()) == (2, 272)
+    assert (cy.h11(), cy.h12()) == (2, 272)
 
     gvs = cy.compute_gvs(max_deg=10)
 
@@ -341,7 +341,7 @@ def test_gv_invariants_quintic_literature_values():
         [[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1], [-1, -1, -1, -1]]
     )
     cy = p.triangulate().get_cy()
-    assert (cy.h11(), cy.h21()) == (1, 101)
+    assert (cy.h11(), cy.h12()) == (1, 101)
 
     gvs = cy.compute_gvs(max_deg=6)
 

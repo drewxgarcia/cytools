@@ -89,14 +89,14 @@ def test_dual_face_saturated_ineqs():
     p = Polytope(
         [[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1], [-1, -1, -6, -9]]
     )
-    dual_ineqs = p.dual().inequalities()[:, :-1].tolist()
+    dual_ineqs = p.dual_polytope().inequalities()[:, :-1].tolist()
 
-    for d in range(p.dim()):
+    for d in range(p.dimension()):
         for f in p.faces(d):
-            df = f.dual()
+            df = f.dual_face()
             expected = frozenset(dual_ineqs.index(v) for v in f.vertices().tolist())
             assert df._saturated_ineqs == expected
-            assert df.dim() == p.dim() - d - 1
+            assert df.dimension() == p.dimension() - d - 1
 
 
 def test_faces_from_dual_vertices():
@@ -105,7 +105,7 @@ def test_faces_from_dual_vertices():
     p = Polytope(
         [[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1], [-1, -1, -1, -1]]
     )
-    p.dual().faces()
+    p.dual_polytope().faces()
 
     top = p.faces(4)[0]
     assert len(top.vertices()) == 5

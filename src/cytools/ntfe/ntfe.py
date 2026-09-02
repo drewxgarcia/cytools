@@ -177,8 +177,8 @@ class _IncrementalLP:
 
 def _adjacency_order(poly):
     """Order the 2-faces so ones sharing points are checked early."""
-    face_pts = [set(int(v) for v in f.labels) for f in poly.faces(2)]
-    facet_pts = [set(int(v) for v in f.labels) for f in poly.facets()]
+    face_pts = [{int(v) for v in f.labels} for f in poly.faces(2)]
+    facet_pts = [{int(v) for v in f.labels} for f in poly.facets()]
     facet_faces = [[j for j, fp in enumerate(face_pts) if fp <= fl] for fl in facet_pts]
 
     # greedy facet walk: hop to an unvisited facet sharing a 2-face with
@@ -371,7 +371,13 @@ def _2d_frt_cone_ineqs(self, ambient_dim: int, verbosity: int = 0) -> "sp.csr_ma
             _ineq_cache_dirty = True
 
         # define the associated hyperplane normal
-        rows.append({lab: c for lab, c in zip((n_s[0], n_s[1], s[0], s[1]), ineq) if c})
+        rows.append(
+            {
+                lab: c
+                for lab, c in zip((n_s[0], n_s[1], s[0], s[1]), ineq, strict=True)
+                if c
+            }
+        )
 
     return matrix.csr_dicts(rows, ambient_dim)
 
@@ -503,7 +509,13 @@ def _2d_s_cone_ineqs(
                     lam = [int(x) for x in null[0].transpose().tolist()[0]]
                     if lam[0] < 0:
                         lam = [-x for x in lam]
-                    rows.append({lab: c for lab, c in zip([p1, p2] + comm, lam) if c})
+                    rows.append(
+                        {
+                            lab: c
+                            for lab, c in zip([p1, p2] + comm, lam, strict=True)
+                            if c
+                        }
+                    )
                 continue
 
             # primitive circuit coefficients, all apex pairs at once
@@ -1561,9 +1573,7 @@ def ntfe_frts(
         joblib.delayed(func)(datum) for datum in data
     )
 
-    for frst in results:
-        if frst is not None:
-            frsts.append(frst)
+    frsts.extend(frst for frst in results if frst is not None)
 
     return frsts
 

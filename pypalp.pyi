@@ -11,7 +11,6 @@ PolytopeInput: TypeAlias = MatrixLike | str
 NefPartitionWithHodge: TypeAlias = tuple[list[list[int]], list[list[int]], int]
 NefPartitionNoHodge: TypeAlias = tuple[list[list[int]], None, None]
 
-
 class Polytope:
     def __init__(self, data: PolytopeInput) -> None: ...
     def vertices(self) -> NDArray[Any]: ...

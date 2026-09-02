@@ -154,9 +154,9 @@ class PolytopeFace:
         ```
         """
         return (
-            f"A {self.dim()}-dimensional face of a "
-            f"{self.ambient_poly.dim()}-dimensional polytope in "
-            f"ZZ^{self.ambient_dim()}"
+            f"A {self.dimension()}-dimensional face of a "
+            f"{self.ambient_poly.dimension()}-dimensional polytope in "
+            f"ZZ^{self.ambient_dimension()}"
         )
 
     # caching
@@ -207,8 +207,6 @@ class PolytopeFace:
         The ambient polytope.
         """
         return self._ambient_poly
-
-    ambient_polytope = lambda self: self.ambient_poly
 
     @property
     def labels(self) -> tuple:
@@ -280,13 +278,8 @@ class PolytopeFace:
         **Returns:**
         *(int)* The dimension of the face.
 
-        **Aliases:**
-        `dim`.
         """
         return self._dim
-
-    # aliases
-    dim = dimension
 
     def ambient_dimension(self) -> int:
         """
@@ -299,13 +292,8 @@ class PolytopeFace:
         **Returns:**
         The dimension of the ambient lattice.
 
-        **Aliases:**
-        `ambient_dim`.
         """
         return self.ambient_poly.ambient_dimension()
-
-    # aliases
-    ambient_dim = ambient_dimension
 
     # points
     # ======
@@ -379,9 +367,6 @@ class PolytopeFace:
         **Returns:**
         *(numpy.ndarray)* The list of lattice points of the face.
 
-        **Aliases:**
-        `pts`.
-
         **Example:**
         We construct a face object and find its lattice points.
         ```python {3}
@@ -408,7 +393,7 @@ class PolytopeFace:
 
         # return
         if optimal and (not as_indices):
-            dim_diff = self.ambient_dim() - self.dim()
+            dim_diff = self.ambient_dimension() - self.dimension()
             if dim_diff > 0:
                 # asking for optimal points, where the optimal value may
                 # differ from the entire polytope
@@ -419,9 +404,6 @@ class PolytopeFace:
         return self.ambient_poly.points(
             which=which, optimal=optimal, as_indices=as_indices
         )
-
-    # aliases
-    pts = points
 
     @overload
     def interior_points(self, as_indices: Literal[False] = False) -> np.ndarray: ...
@@ -441,9 +423,6 @@ class PolytopeFace:
         **Returns:**
         The list of interior lattice points of the face.
 
-        **Aliases:**
-        `interior_pts`.
-
         **Example:**
         We construct a face object and find its interior lattice points.
         ```python {3}
@@ -455,9 +434,6 @@ class PolytopeFace:
         ```
         """
         return self.ambient_poly.points(which=self.labels_int, as_indices=as_indices)
-
-    # aliases
-    interior_pts = interior_points
 
     @overload
     def boundary_points(self, as_indices: Literal[False] = False) -> np.ndarray: ...
@@ -477,9 +453,6 @@ class PolytopeFace:
         **Returns:**
         The list of boundary lattice points of the face.
 
-        **Aliases:**
-        `boundary_pts`.
-
         **Example:**
         We construct a face object and find its boundary lattice points.
         ```python {3}
@@ -493,9 +466,6 @@ class PolytopeFace:
         ```
         """
         return self.ambient_poly.points(which=self.labels_bdry, as_indices=as_indices)
-
-    # aliases
-    boundary_pts = boundary_points
 
     @overload
     def vertices(self, as_indices: Literal[False] = False) -> np.ndarray: ...
@@ -564,9 +534,6 @@ class PolytopeFace:
             )
         return self._polytope
 
-    # alias
-    as_poly = as_polytope
-
     # dual
     # ====
     def dual_face(self) -> PolytopeFace:
@@ -584,9 +551,6 @@ class PolytopeFace:
 
         **Returns:**
         The dual face.
-
-        **Aliases:**
-        `dual`.
 
         **Example:**
         We construct a face object from a polytope, then find the dual face in
@@ -608,7 +572,7 @@ class PolytopeFace:
             raise NotImplementedError("Ambient polytope is not reflexive.")
 
         # perform the calculation
-        dual_poly = self.ambient_poly.dual()
+        dual_poly = self.ambient_poly.dual_polytope()
 
         dual_vert = self.ambient_poly.inequalities()[list(self._saturated_ineqs), :-1]
         # index the dual inequalities by their coefficients, so that the
@@ -630,9 +594,6 @@ class PolytopeFace:
 
         # return
         return self.dual_face()
-
-    # aliases
-    dual = dual_face
 
     # faces
     # =====

@@ -224,7 +224,7 @@ def test_batch_agrees_with_load_polytopes():
     flat = [(b, i) for b in batches for i in range(len(b))]
     assert len(flat) == len(records)
 
-    for r, (b, i) in zip(records, flat):
+    for r, (b, i) in zip(records, flat, strict=True):
         # Polytope canonicalizes vertex order, so compare as sets against the
         # raw stored buffer, and elementwise once both go through Polytope
         assert {tuple(v) for v in b.vertices(i)} == {
@@ -251,7 +251,7 @@ def test_ks_ids_are_stable_and_content_derived():
 
     # and the id really is a function of the vertices
     verts_a = [v.tobytes() for batch in a for v in batch.iter_vertices()]
-    by_id = dict(zip(ids_a, verts_a))
+    by_id = dict(zip(ids_a, verts_a, strict=True))
     assert len(by_id) == len(set(verts_a)), "distinct geometries share an id"
 
 
@@ -555,7 +555,7 @@ def test_apportion_is_proportional_and_exact():
 
     assert sum(budgets) == 350, "apportionment must not lose or invent rows"
     total = sum(weights)
-    for w, b in zip(weights, budgets):
+    for w, b in zip(weights, budgets, strict=True):
         expected = 350 * w / total
         assert abs(b - expected) < 1.0, f"{b} vs {expected:.2f} for weight {w}"
 

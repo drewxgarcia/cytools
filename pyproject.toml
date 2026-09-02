@@ -80,32 +80,55 @@ dev = [
 ]
 
 [tool.ruff]
-# Keep syntax broadly upstreamable even though the distribution supports 3.12+.
 # 88 is the de-facto standard already in this tree: outside `f_theory/`, only
 # 122 of 30k lines exceed it.
 line-length = 88
+# Deliberately below `requires-python = ">=3.12"`, and kept in lockstep with
+# `python-version` in ty.toml -- a split target is how `datetime.UTC` got
+# suggested by the linter and rejected by the type checker. Raising both is
+# staged work; see the note in ty.toml.
 target-version = "py310"
 src = ["src", "tests", "benchmarks"]
 
 [tool.ruff.lint]
+# A rule belongs here only if a violation would be *fixed* rather than
+# suppressed. pycodestyle is selected as E4/E7/E9 rather than a blanket `E`
+# precisely to leave E501 out: docstrings are the published API reference
+# (rendered by docs/documentation/produce_doc.py) and carry long example lines
+# and URLs that must not be wrapped, while the formatter already owns code
+# width. Prefer narrowing `select` over widening `ignore`: an unselected rule
+# cannot go stale, whereas an `ignore` entry has to stay true. The one entry
+# below is reachable and load-bearing, and RUF100 keeps per-line `noqa` honest.
 select = [
-  "E9",   # syntax and indentation failures
-  "F",    # undefined, unused, and shadowed names
-  "I",    # deterministic import ordering
-  "B904", # preserve exception context at translation boundaries
-  "UP",   # keep syntax aligned with the upstream-compatible Python 3.10 target
-  "W",    # whitespace defects not handled by the formatter
+  "E4",     # imports: placement and one-per-line
+  "E7",     # statement-level defects, incl. ambiguous names and `== None/False`
+  "E9",     # syntax and indentation failures
+  "F",      # undefined, unused, and shadowed names
+  "I",      # deterministic import ordering
+  "UP",     # modernize syntax up to the `target-version` floor
+  "W",      # whitespace defects not handled by the formatter
+  "PIE",    # misc anti-patterns; already clean, kept as a ratchet
+  "FURB",   # further modernizations up to the same floor
+  "C4",     # comprehension and collection-call defects; `dict()` -> `{}` etc.
+  "RSE",    # no parentheses on bare `raise X()`
+  "TID",    # tidy imports: no relative imports across package boundaries
+  "Q",      # quote consistency, aligned with the formatter
+  "ICN",    # conventional import aliases (`import numpy as np`)
+  "INT",    # gettext f-string defects
+  "SLOT",   # `__slots__` on subclasses of immutable builtins
+  "FLY",    # `str.join` over a static sequence instead of `+`
+  "PERF",   # loop-level performance defects
+  "B",      # bugbear: silent `zip` truncation, mutable defaults, dead exprs
+  "RUF100", # a `noqa` naming a non-enabled rule is rot, not documentation
 ]
 ignore = [
-  # Docstrings in this project are the published API reference (rendered by
-  # docs/documentation/produce_doc.py), and contain long example lines and URLs
-  # that must not be wrapped. The formatter enforces code line length.
-  "E501",
-  # `l` is conventional for a lattice/linear-relation index throughout the
-  # geometry code; renaming would obscure the mathematics.
-  "E741",
+  # try/except inside a loop. The rule predates PEP 659 zero-cost exceptions:
+  # on the 3.12+ this package requires, entering a `try` that does not raise is
+  # free, so restructuring the 60 sites would buy no measurable time while
+  # flattening error handling that is currently local and readable. Measured,
+  # not assumed -- this project's north star is wall-clock, not rule counts.
+  "PERF203",
 ]
-
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 python_files = ["test_*.py", "bench_*.py"]

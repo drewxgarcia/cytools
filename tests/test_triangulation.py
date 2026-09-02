@@ -12,7 +12,7 @@ def test_ambient_dimension():
         [[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1], [-1, -1, -1, -1]]
     )
     t = p.triangulate()
-    assert t.ambient_dim() == 4
+    assert t.ambient_dimension() == 4
 
 
 def test_automorphism_orbit():
@@ -93,17 +93,14 @@ def test_heights():
     assert t == t2
 
 
-def test_points_index_vocabulary_and_legacy_alias():
+def test_points_index_vocabulary():
     p = Polytope(
         [[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1], [-1, -1, -1, -1]]
     )
     t = p.triangulate()
     labels = t.labels[:3]
 
-    canonical = t.points(which=labels, as_indices=True)
-    with pytest.warns(DeprecationWarning, match="as_triang_indices"):
-        legacy = t.points(which=labels, as_triang_indices=True)
-    assert canonical.tolist() == legacy.tolist() == [0, 1, 2]
+    assert t.points(which=labels, as_indices=True).tolist() == [0, 1, 2]
 
     with pytest.raises(ValueError, match="different index spaces"):
         t.points(which=labels, as_indices=True, as_poly_indices=True)
@@ -274,7 +271,7 @@ def test_neighbor_triangulations_nontrivial_labels():
         ]
     )
     face = p.faces(2)[19]  # a 5-point polygon with labels (3, 4, 7, 9, 12)
-    face_poly = face.as_poly()
+    face_poly = face.as_polytope()
     assert set(face_poly.labels) != set(range(len(face_poly.labels)))
 
     t = face_poly.triangulate(include_points_interior_to_facets=True)
@@ -307,7 +304,8 @@ def test_face_restriction_treats_labels_as_identifiers(labels):
     origin = polytope._label_origin
     vertices = [label for label in polytope.labels if label != origin]
     simplices = [
-        [origin, *face] for face in itertools.combinations(vertices, polytope.dim())
+        [origin, *face]
+        for face in itertools.combinations(vertices, polytope.dimension())
     ]
     triangulation = polytope.triangulate(
         simplices=simplices,
@@ -403,7 +401,7 @@ def test_two_neighbors():
     for n in triangs:
         assert n.is_star() and n.is_fine() and n.is_regular()
         # a 2-neighbor differs from t in exactly one 2-face restriction
-        assert sum(a != b for a, b in zip(base, n.restrict())) == 1
+        assert sum(a != b for a, b in zip(base, n.restrict(), strict=True)) == 1
 
 
 def test_two_neighbors_skips_unextendable_flips():
@@ -429,7 +427,7 @@ def test_two_neighbors_skips_unextendable_flips():
     assert len(neighbors) == 7  # one flip is not realizable and is skipped
     base = t.restrict()
     for n in neighbors:
-        assert sum(a != b for a, b in zip(base, n.restrict())) == 1
+        assert sum(a != b for a, b in zip(base, n.restrict(), strict=True)) == 1
 
 
 def test_points():

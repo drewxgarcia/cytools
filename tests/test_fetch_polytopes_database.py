@@ -104,7 +104,8 @@ def test_dualize_returns_the_dual():
     dualized = _fetch(h11=5, lattice="N", limit=3, dualize=True)
     assert plain and len(plain) == len(dualized)
     assert all(
-        (a.dual().vertices() == b.vertices()).all() for a, b in zip(plain, dualized)
+        (a.dual_polytope().vertices() == b.vertices()).all()
+        for a, b in zip(plain, dualized, strict=True)
     )
 
 

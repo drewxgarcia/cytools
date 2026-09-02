@@ -1,7 +1,9 @@
 """Public choice types stay aligned with the runtime contracts they describe."""
 
-from inspect import Parameter, signature
+from inspect import signature
 from typing import get_args, get_type_hints
+
+import regfans.fan
 
 from cytools._typing import (
     AutomorphismAction,
@@ -15,7 +17,6 @@ from cytools._typing import (
     Lattice,
     LinearSolverBackend,
     NormalFormBackend,
-    PointednessBackend,
     PolytopeBackend,
     PolytopeFormat,
     PolytopeInputType,
@@ -55,14 +56,8 @@ def test_choice_aliases_are_exact():
     assert get_args(TriangulationBackend) == ("cgal", "qhull", "topcom")
     assert get_args(RandomTriangulationBackend) == ("cgal", "qhull")
     assert get_args(SecondaryConeBackend) == ("native", "topcom")
-    assert get_args(ExtremalRaysMethod) == (
-        "extremalrays",
-        "legacy",
-        "lp",
-        "nnls",
-    )
+    assert get_args(ExtremalRaysMethod) == ("extremalrays", "legacy", "nnls")
     assert get_args(ExtremalityMethod) == ("lp", "nnls")
-    assert get_args(PointednessBackend) == ("dual", "null", "lp", "nnls")
     assert get_args(StretchedConeBackend) == (
         "mosek",
         "osqp",
@@ -128,7 +123,6 @@ def test_domain_annotations_use_operation_specific_aliases():
         choice(Triangulation.secondary_cone, "backend") == SecondaryConeBackend | None
     )
     assert choice(Cone.extremal_rays, "method") is ExtremalRaysMethod
-    assert choice(Cone.is_pointed, "backend") is PointednessBackend
     assert choice(Cone.tip_of_stretched_cone, "backend") == (
         StretchedConeBackend | None
     )
@@ -144,20 +138,30 @@ def test_domain_annotations_use_operation_specific_aliases():
 
 
 def test_index_flags_have_one_canonical_spelling():
-    migrated = {
-        Triangulation.points: "as_triang_indices",
+    """`as_indices` is the only spelling; the migration aliases are gone.
+
+    This asserts the *absence* of the retired names rather than their
+    behaviour, so re-introducing a convenience alias fails here.
+    """
+    retired = {"as_triang_indices", "as_face_inds", "as_index", "as_vertex_index"}
+    canonical = {
+        Triangulation.points: "as_indices",
+        Fan.restricted_simps: "as_indices",
+        find_trilayer_vertex_polytope: "as_indices",
+        find_trilayer_vertex_vertices: "as_indices",
+        # `Fan.cones` overrides `regfans.fan.Fan.cones`. Renaming that method's
+        # fourth positional parameter would break the override contract, so the
+        # dependency's spelling is the canonical one for this method alone.
         Fan.cones: "as_inds",
-        Fan.restricted_simps: "as_face_inds",
-        find_trilayer_vertex_polytope: "as_index",
-        find_trilayer_vertex_vertices: "as_vertex_index",
     }
 
-    for function, legacy_name in migrated.items():
+    for function, flag in canonical.items():
         parameters = signature(function).parameters
-        assert "as_indices" in parameters
-        if function is Fan.cones:
-            # regfans' virtual method contract fixes the legacy positional
-            # slot; the canonical spelling is therefore the keyword-only one.
-            assert parameters["as_indices"].kind is Parameter.KEYWORD_ONLY
-        else:
-            assert parameters[legacy_name].kind is Parameter.KEYWORD_ONLY
+        assert flag in parameters
+        assert retired.isdisjoint(parameters)
+        # exactly one index flag per function, never two spellings
+        assert len({"as_indices", "as_inds"} & set(parameters)) == 1
+
+    assert list(signature(Fan.cones).parameters).index("as_inds") == list(
+        signature(regfans.fan.Fan.cones).parameters
+    ).index("as_inds")

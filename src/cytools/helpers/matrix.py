@@ -131,7 +131,7 @@ def csr_unique_rows(mat):
     mat.sum_duplicates()
     keys = [
         (tuple(mat.indices[a:b]), tuple(mat.data[a:b]))
-        for a, b in zip(mat.indptr[:-1], mat.indptr[1:])
+        for a, b in zip(mat.indptr[:-1], mat.indptr[1:], strict=True)
     ]
     seen, keep = set(), []
     for i, k in enumerate(keys):
@@ -186,7 +186,7 @@ class CSR_stack:
         return misc.from_base10(self._choices, self._choice_bounds)
 
     def _blocks(self):
-        for i, opts in zip(self.choices, self._options):
+        for i, opts in zip(self.choices, self._options, strict=True):
             yield opts[i]
 
     @property
@@ -225,7 +225,11 @@ class CSR_stack:
             if idx < n:
                 lo, hi = block.indptr[idx], block.indptr[idx + 1]
                 return dict(
-                    zip(block.indices[lo:hi].tolist(), block.data[lo:hi].tolist())
+                    zip(
+                        block.indices[lo:hi].tolist(),
+                        block.data[lo:hi].tolist(),
+                        strict=True,
+                    )
                 )
             idx -= n
         raise IndexError("CSR_stack: list index out of range")

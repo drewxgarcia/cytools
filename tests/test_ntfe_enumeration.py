@@ -148,7 +148,7 @@ def test_grow_frt_keeps_parent_polytope_labels():
     # column indices into the ambient polytope's height space by
     # _2d_frt_cone_ineqs, silently corrupting the default grow2d NTFE path.
     face = p_h11_8.faces(2)[_MULTI_FRT_FACE]
-    face_poly = face.as_poly()
+    face_poly = face.as_polytope()
 
     grown = face_poly.grow_frt(N=3, seed=1)
     if not isinstance(grown, set):
@@ -168,7 +168,7 @@ def test_grow_frt_triangulations_survive_the_ntfe_extension():
     # the point of the labels: the FRT built from a grown 2-face
     # triangulation must actually restrict back to that triangulation
     face = p_h11_8.faces(2)[_MULTI_FRT_FACE]
-    grown = p_h11_8.faces(2)[_MULTI_FRT_FACE].as_poly().grow_frt(N=3, seed=1)
+    grown = p_h11_8.faces(2)[_MULTI_FRT_FACE].as_polytope().grow_frt(N=3, seed=1)
     if not isinstance(grown, set):
         grown = {grown}
 

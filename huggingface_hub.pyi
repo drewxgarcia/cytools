@@ -8,7 +8,6 @@ def hf_hub_download(
     token: str | None = ...,
     **kwargs: Any,
 ) -> str: ...
-
 def list_repo_files(
     repo_id: str,
     *,

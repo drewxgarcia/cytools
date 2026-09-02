@@ -68,7 +68,7 @@ def test_trailing_blank_lines_terminate_cleanly(tmp_path):
 def test_does_not_fall_through_into_the_ks_reader(ws_file):
     """The `ws` branch used to run on into the `ks` loop once it finished."""
     polytopes = read_polytopes(ws_file, input_type="file", format="ws", as_list=True)
-    assert all(p.dim() == 4 for p in polytopes)
+    assert all(p.dimension() == 4 for p in polytopes)
 
 
 def test_file_handle_is_closed(ws_file):

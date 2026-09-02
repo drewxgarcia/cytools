@@ -1,0 +1,3 @@
+from typing import Any
+
+def _compute_gvgw(*args: Any, **kwargs: Any) -> Any: ...

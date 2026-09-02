@@ -36,8 +36,6 @@ os.environ["CYTOOLS_DB_DIR"] = os.environ.get(
     "CYTOOLS_TEST_DB_DIR", str(COMMITTED_SLICE)
 )
 
-import cytools
-
 
 @functools.cache
 def _dependency_available(name: str) -> bool:
@@ -116,6 +114,10 @@ def experimental_features():
     polytope has no GLSM charge matrix at all, for instance, and enabling the
     flag does not change that.
     """
+    # Imported here, not at module scope: `cytools.dataset` reads
+    # CYTOOLS_DB_DIR at import time, and the assignment above must land first.
+    import cytools
+
     prev = cytools.config._exp_features_enabled
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")

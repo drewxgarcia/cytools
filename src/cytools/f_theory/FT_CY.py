@@ -165,7 +165,10 @@ class CY_orientifold:
                 if len(KB_multiplier.points()) > 0:
                     NP_orbifold = UF.Newton_Polytope(orbifold_pts, orbifold_line_bundle)
                     self.__Newton_Polytope = NP_orbifold
-                    if NP_orbifold.minkowski_sum(KB_multiplier).dim() == self.__dim:
+                    if (
+                        NP_orbifold.minkowski_sum(KB_multiplier).dimension()
+                        == self.__dim
+                    ):
                         orbifold_pts_refined, line_bundles, normal_fan = UF.normal_fan(
                             [NP_orbifold, KB_multiplier],
                             np.array([self._multiplier, 1, self._multiplier]),
@@ -873,7 +876,7 @@ class F_Theory_Uplift:
                 )
             )
         if not self.is_nef_partition():
-            warnings.warn("Careful, uplift is not a nef-partition")
+            warnings.warn("Careful, uplift is not a nef-partition", stacklevel=2)
         return self.__Cayley_M
 
     def Cayley_N(self):
@@ -918,7 +921,7 @@ class F_Theory_Uplift:
         else:
             raise ValueError("Uplift is not a partition")
         if not self.is_nef_partition():
-            warnings.warn("Careful, uplift is not a nef-partition")
+            warnings.warn("Careful, uplift is not a nef-partition", stacklevel=2)
         return self.__Cayley_N
 
     def pol_W_M(self):
@@ -1023,7 +1026,7 @@ class F_Theory_Uplift:
         else:
             raise ValueError("Uplift is not a partition")
         if not self.is_nef_partition():
-            warnings.warn("Careful, uplift is not a nef-partition")
+            warnings.warn("Careful, uplift is not a nef-partition", stacklevel=2)
         return self.__pol_W_N
 
     def pol_B_N(self):
@@ -1057,7 +1060,7 @@ class F_Theory_Uplift:
         else:
             raise ValueError("Uplift does not yield a partition")
         if not self.is_nef_partition():
-            warnings.warn("Careful, uplift is not a nef-partition")
+            warnings.warn("Careful, uplift is not a nef-partition", stacklevel=2)
         return self.__pol_B_N
 
     def pol_N_conv(self):
@@ -1096,7 +1099,7 @@ class F_Theory_Uplift:
         else:
             raise ValueError("Uplift is not a partition")
         if not self.is_nef_partition():
-            warnings.warn("Careful, uplift is not a nef-partition")
+            warnings.warn("Careful, uplift is not a nef-partition", stacklevel=2)
         return self.__pol_N_sum
 
     def vectors_singular_uplift_ambient(self, labels=None):
@@ -1150,19 +1153,15 @@ class F_Theory_Uplift:
 
         """
         if self.__blowups is None:
-            bus = []
             pts = self.vectors_singular_uplift_ambient()
             # set alongside the singular-uplift points fetched just above
             x, y = self.x, self.y
             if (x is None) or (y is None):
                 raise RuntimeError("The singular-uplift frame was never set.")
-            for xxx in self.NHC_singular_uplift(as_labels=True):
-                bus.append(
-                    np.array(
-                        [pts[xxx - 1] + x + 2 * y, 2 * pts[xxx - 1] + 2 * x + 3 * y]
-                    )
-                )
-            self.__blowups = bus
+            self.__blowups = [
+                np.array([pts[xxx - 1] + x + 2 * y, 2 * pts[xxx - 1] + 2 * x + 3 * y])
+                for xxx in self.NHC_singular_uplift(as_labels=True)
+            ]
         if as_labels:
             return np.arange(
                 len(self.vectors_singular_uplift_ambient()) + 1,
@@ -1329,7 +1328,7 @@ class F_Theory_Uplift:
         - `int`: The point-counting estimate.
 
         """
-        return len(self.Cayley_M().points()) - 1 - (self.Cayley_N().dim())
+        return len(self.Cayley_M().points()) - 1 - (self.Cayley_N().dimension())
 
     def line_bundle_weierstrass_M(self):
         """
@@ -1962,9 +1961,9 @@ def fetch_orientifolds(
             verbosity,
         ):
             for xi in UF.inequivalent_Z2_actions(p.automorphisms(action="left")):
-                O = CY_orientifold(p, xi)
-                if O.yields_nef_decomposition():
-                    yield O
+                orientifold = CY_orientifold(p, xi)
+                if orientifold.yields_nef_decomposition():
+                    yield orientifold
     else:
         for p in fetch_polytopes(
             h11,
@@ -1992,12 +1991,12 @@ def fetch_orientifolds(
             verbosity,
         ):
             for xi in UF.inequivalent_Z2_actions(p.automorphisms(action="left")):
-                O = CY_orientifold(p, xi)
+                orientifold = CY_orientifold(p, xi)
                 if only_regular:
-                    if O.is_regular():
-                        yield O
+                    if orientifold.is_regular():
+                        yield orientifold
                 else:
-                    yield O
+                    yield orientifold
 
 
 def fetch_F_Theory_uplifts(
@@ -2062,7 +2061,7 @@ def fetch_F_Theory_uplifts(
     """
 
     if only_nef_partition:
-        for O in fetch_orientifolds(
+        for orientifold in fetch_orientifolds(
             only_nef_decomposition=True,
             h11=h11,
             h12=h12,
@@ -2088,11 +2087,11 @@ def fetch_F_Theory_uplifts(
             favorable=favorable,
             verbosity=verbosity,
         ):
-            F = F_Theory_Uplift(O)
+            F = F_Theory_Uplift(orientifold)
             if F.is_nef_partition():
                 yield F
     elif only_nef_decomposition:
-        for O in fetch_orientifolds(
+        for orientifold in fetch_orientifolds(
             only_nef_decomposition=True,
             h11=h11,
             h12=h12,
@@ -2118,9 +2117,9 @@ def fetch_F_Theory_uplifts(
             favorable=favorable,
             verbosity=verbosity,
         ):
-            yield F_Theory_Uplift(O)
+            yield F_Theory_Uplift(orientifold)
     else:
-        for O in fetch_orientifolds(
+        for orientifold in fetch_orientifolds(
             only_regular=only_regular,
             only_nef_decomposition=False,
             h11=h11,
@@ -2147,7 +2146,7 @@ def fetch_F_Theory_uplifts(
             favorable=favorable,
             verbosity=verbosity,
         ):
-            yield F_Theory_Uplift(O)
+            yield F_Theory_Uplift(orientifold)
 
 
 def fetch_nef_partition_uplifts(

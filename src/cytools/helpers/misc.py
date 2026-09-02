@@ -62,7 +62,7 @@ def to_base10(c: Sequence[int], B: Sequence[int]) -> int:
         )
     result = 0
     multiplier = 1
-    for c_i, B_i in zip(reversed(c), reversed(B)):
+    for c_i, B_i in zip(reversed(c), reversed(B), strict=True):
         result += int(c_i) * multiplier
         multiplier *= B_i
     return result

@@ -35,7 +35,6 @@ from sympy.matrices.normalforms import smith_normal_decomp
 import cytools.h_polytope as h_polytope
 
 # CYTools imports
-from cytools._compat import resolve_deprecated_bool
 from cytools.cone import Cone
 from cytools.helpers.arithmetic import primitive
 from cytools.polytope import Polytope
@@ -212,7 +211,7 @@ def h11_2_part(Cay: Polytope, Cayd: Polytope, det=False):
 
     """
     Cdvert = Cayd.vertices()
-    n = Cay.dim() - 1
+    n = Cay.dimension() - 1
     h11_ret = len(Cayd.points()) - n - 2
 
     if det:
@@ -401,9 +400,7 @@ def points_from_glsm(glsm):
     return (UU[rank_D:].astype(int)).T
 
 
-def find_trilayer_vertex_polytope(
-    p, as_indices: bool = False, *, as_index: bool | None = None
-):
+def find_trilayer_vertex_polytope(p, as_indices: bool = False):
     """
     **Description:**
 
@@ -414,16 +411,12 @@ def find_trilayer_vertex_polytope(
     - `p (Polytope)`: The trilayer polytope.
 
     - `as_indices (bool)`: Whether to return the vertex index rather than the vertex coordinates. Defaults to `False`.
-    - `as_index (bool)`: Deprecated spelling of `as_indices`.
 
     **Returns:**
 
     - `numpy.ndarray` or `int`: The distinguished vertex, or its index if `as_indices=True`.
 
     """
-    as_indices = resolve_deprecated_bool(
-        as_indices, as_index, name="as_indices", legacy_name="as_index"
-    )
     glsm_vert = glsm_from_points(p.vertices())
     half_anticanon = np.sum(glsm_vert, axis=1) // 2
     index = get_indices(glsm_vert.T, np.array([half_anticanon]))[0]
@@ -432,9 +425,7 @@ def find_trilayer_vertex_polytope(
     return p.vertices()[index]
 
 
-def find_trilayer_vertex_vertices(
-    V, as_indices: bool = False, *, as_vertex_index: bool | None = None
-):
+def find_trilayer_vertex_vertices(V, as_indices: bool = False):
     """
     **Description:**
 
@@ -444,7 +435,6 @@ def find_trilayer_vertex_vertices(
 
     - `V (array-like)`: The vertices of a trilayer polytope.
     - `as_indices (bool)`: Whether to return the vertex index rather than the vertex coordinates. Defaults to `False`.
-    - `as_vertex_index (bool)`: Deprecated spelling of `as_indices`.
 
     **Returns:**
 
@@ -452,12 +442,6 @@ def find_trilayer_vertex_vertices(
 
     """
 
-    as_indices = resolve_deprecated_bool(
-        as_indices,
-        as_vertex_index,
-        name="as_indices",
-        legacy_name="as_vertex_index",
-    )
     glsm_vert = glsm_from_points(V)
     half_anticanon = np.sum(glsm_vert, axis=1) // 2
     index = get_indices(glsm_vert.T, np.array([half_anticanon]))[0]
@@ -500,7 +484,7 @@ def trilayer_normal_form(p):
     s2 = np.array(ss2, dtype=int)
     U0 = np.round(np.linalg.inv(s2).T).astype(int)
     M = U0 @ verts.T
-    for i in range(1, p.ambient_dim()):
+    for i in range(1, p.ambient_dimension()):
         U0[i] = U0[i] + M[i, 0] * U0[0]
     return Polytope((U0 @ verts.T).T)
 
@@ -559,7 +543,7 @@ def points_not_interior_to_facets_and_codim2_faces(p: Polytope):
 
     """
     pts = p.points_not_interior_to_facets()
-    for f in p.faces(p.dim() - 2):
+    for f in p.faces(p.dimension() - 2):
         if len(f.interior_points()) > 0:
             pts = np.delete(pts, get_indices(pts, f.interior_points()), axis=0)
     return pts
@@ -701,7 +685,7 @@ def Z2_fixed_locus(vc_triangulation, q, cone_dimension=None, denominator=2):
             for i in range(1, len(c))
             for j in combinations(c, i)
         }
-        all_cones = [c for c in all_cones]
+        all_cones = list(all_cones)
     else:
         all_cones = list(
             get_lower_dimensional_cones(vc_triangulation.cones(), cone_dimension)
@@ -745,7 +729,7 @@ def inequivalent_Z2_actions(lattice_symmetries):
     t_possibilities = {
         t for t0 in combinations_with_replacement([0, 1], dim) for t in permutations(t0)
     }
-    t_possibilities = [t for t in t_possibilities]
+    t_possibilities = list(t_possibilities)
     t_possibilities = np.delete(
         t_possibilities, t_possibilities.index(tuple([0] * dim)), 0
     )
@@ -758,7 +742,7 @@ def inequivalent_Z2_actions(lattice_symmetries):
         )
     }
     inequivalent_t_possibilities = np.array(
-        [[y for y in x][0] for x in inequivalent_t_possibilities]
+        [list(x)[0] for x in inequivalent_t_possibilities]
     )
 
     return inequivalent_t_possibilities
@@ -832,7 +816,7 @@ def is_reflexive_Gorenstein(cone):
 
     """
     if is_Gorenstein(cone)[0]:
-        dual_cone = cone.dual()
+        dual_cone = cone.dual_cone()
         if is_Gorenstein(dual_cone)[0]:
             return True
     return False
@@ -858,7 +842,7 @@ def Gorenstein_index(cone):
 
     """
     if is_reflexive_Gorenstein(cone):
-        dual_cone = cone.dual()
+        dual_cone = cone.dual_cone()
         return is_Gorenstein(cone)[1] @ is_Gorenstein(dual_cone)[1]
     raise ValueError("Cone is not reflexive Gorenstein")
 
@@ -902,8 +886,8 @@ def _local_cartier_data(toric_fan, weights, cone):
     y = [Fraction(float(v)).limit_denominator(_MAX_CARTIER_DENOMINATOR) for v in approx]
 
     # exact check: arr @ y == rhs over the rationals, or there is no local data
-    for row, b in zip(arr.tolist(), rhs.tolist()):
-        if sum(c * yi for c, yi in zip(row, y)) != b:
+    for row, b in zip(arr.tolist(), rhs.tolist(), strict=True):
+        if sum(c * yi for c, yi in zip(row, y, strict=True)) != b:
             return None
 
     return [-yi for yi in y]
@@ -1236,7 +1220,7 @@ def is_partition(points, L1, L2):
     """
 
     sta = sums_to_anticanonical(points, L1, L2)
-    if sta[0] == False:
+    if not sta[0]:
         return (
             False,
             False,
@@ -1372,7 +1356,7 @@ def base_locus(sections, cones=None, dim=4):
                 continue
             if B[np.array(combo) - 1, :].any(axis=0).all():
                 minimal_hitting_sets.append(combo)
-    return [mhs for mhs in minimal_hitting_sets]
+    return list(minimal_hitting_sets)
 
 
 def normal_fan(
@@ -1679,17 +1663,16 @@ def trilayer_5d_Ftheory_uplift(p, verbosity=1):
     p = trilayer_normal_form(p)
     mid_layer_points = np.where(p.points().T[0] == 0)[0]
     mid_layer_points = np.array(
-        [
-            i
-            for i in set(mid_layer_points).intersection(
+        list(
+            set(mid_layer_points).intersection(
                 set(p.points_to_indices(p.points_not_interior_to_facets()))
             )
-        ]
+        )
     )
     if len(mid_layer_points) > 1 and verbosity > 0:
         print(f"{len(mid_layer_points) - 1} exceptional divisors have been blown down.")
 
-    p_dim = p.dim()
+    p_dim = p.dimension()
 
     p3 = Polytope(np.delete(p.points()[np.where(p.points().T[0] == 1)[0]].T, 0, 0).T)
 
@@ -1697,7 +1680,7 @@ def trilayer_5d_Ftheory_uplift(p, verbosity=1):
 
     n_fan, wts, cns = normal_fan(p2KB)
 
-    cone_hyperplanes = [Cone(n_fan.vectors(c)).dual().rays() for c in cns]
+    cone_hyperplanes = [Cone(n_fan.vectors(c)).dual_cone().rays() for c in cns]
     blown_up = [
         h_polytope.HPolytope(
             np.vstack(
@@ -2016,7 +1999,9 @@ def find_cone(new_ray, current_cones, all_vectors, tol=1e-10):
         coeffs = np.linalg.solve(A, new_ray)
 
         if np.all(coeffs >= -tol):
-            return frozenset(idx for idx, coeff in zip(cone, coeffs) if coeff > tol)
+            return frozenset(
+                idx for idx, coeff in zip(cone, coeffs, strict=True) if coeff > tol
+            )
 
     return None
 
@@ -2043,9 +2028,7 @@ def divisor_intersections(fan, intersection_dict, divisors, basis_set, as_LLL=Tr
 
     codim_cicy = len(divisors)
     simplices = get_lower_dimensional_cones(fan.cones(), fan.dim - codim_cicy - 1)
-    divisor_nonvanishing_sets = []
-    for div in divisors:
-        divisor_nonvanishing_sets.append(set(np.where(div != 0)[0] + 1))
+    divisor_nonvanishing_sets = [set(np.where(div != 0)[0] + 1) for div in divisors]
 
     curves_homology_in_basis = np.zeros((len(simplices), len(basis_set)), dtype=int)
 
@@ -2054,9 +2037,9 @@ def divisor_intersections(fan, intersection_dict, divisors, basis_set, as_LLL=Tr
     for s_idx, s in enumerate(simplices):
         star_s = fan.star(s)
         link_rays = {item for sub_tuple in star_s for item in sub_tuple}
-        valid_intersections = []
-        for div_set in divisor_nonvanishing_sets:
-            valid_intersections.append(div_set.intersection(link_rays))
+        valid_intersections = [
+            div_set.intersection(link_rays) for div_set in divisor_nonvanishing_sets
+        ]
         valid_i = basis_set.intersection(link_rays)
 
         if not (all(valid_intersections) and valid_i):

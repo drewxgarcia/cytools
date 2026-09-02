@@ -64,7 +64,7 @@ def test_dimension_of_an_ill_conditioned_cone_is_exact(n):
     assert np.linalg.matrix_rank(rays.astype(float)) < n, (
         "fixture must be ill-conditioned"
     )
-    assert cone.dim() == n
+    assert cone.dimension() == n
     assert cone.is_solid() is True
 
 

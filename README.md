@@ -10,16 +10,21 @@
 
 CYTools Workbench is an independently maintained, notebook-first fork of
 [CYTools](https://github.com/LiamMcAllisterGroup/cytools), the open-source
-Calabi-Yau geometry package developed by Liam McAllister's group. It keeps the
-compatible `cytools` import namespace while adding reproducible, resumable
-landscape scans and a modern data-analysis workflow.
+Calabi-Yau geometry package developed by Liam McAllister's group. It adds
+reproducible, resumable landscape scans and a modern data-analysis workflow.
 
-Install the fork as `cytools-workbench`; it is a drop-in replacement and must
-not be installed in the same environment as the official `cytools`
-distribution. The fork has its own versions and release lifecycle. General
-fixes are kept separable so they can be proposed upstream, while the notebook
-and landscape product surface can evolve independently. The current upstream
-base is available at runtime as `cytools.upstream_version`.
+Install the fork as `cytools-workbench`. It uses the `cytools` import
+namespace and must not be installed in the same environment as the official
+`cytools` distribution.
+
+**This is a true fork, not a drop-in replacement.** Source compatibility with
+upstream is explicitly not a goal: where upstream's API is redundant,
+ambiguous, or slow, the Workbench changes it. Convenience aliases are removed
+rather than retained, so a single concept has a single spelling, and renames
+land without a deprecation cycle until the first tagged release. Code written
+against upstream CYTools may need edits; every breaking change is listed in
+[CHANGELOG.md](CHANGELOG.md). The upstream base this fork tracks is available
+at runtime as `cytools.upstream_version`.
 
 ## Features
 
@@ -39,7 +44,7 @@ from cytools import Polytope
 
 p = Polytope([[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1], [-1, -1, -1, -1]])
 cy = p.triangulate().get_cy()
-print(cy.h11(), cy.h21())   # 1 101
+print(cy.h11(), cy.h12())  # 1 101
 ```
 
 ## Notebook-first landscape scans
@@ -107,10 +112,12 @@ notebook process; bump `version` when their meaning changes:
 ```python
 from cytools import quantity
 
+
 @quantity
 def max_vertex_coordinate(g):
     """Largest absolute coordinate among the vertices."""
     return abs(g.polytope.vertices()).max()
+
 
 df = scan(
     ["h11", "max_vertex_coordinate"],

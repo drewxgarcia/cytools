@@ -21,6 +21,7 @@
 
 # external imports
 import collections
+import functools
 import itertools
 from collections.abc import Collection, Iterable
 from typing import TYPE_CHECKING, Literal, overload
@@ -30,7 +31,6 @@ import regfans.fan
 from numba import njit
 
 import cytools.utils as utils
-from cytools._compat import resolve_deprecated_bool
 
 # core CYTools imports
 from cytools.cone import Cone
@@ -143,18 +143,17 @@ class Fan(regfans.fan.Fan):
         dim: int | None = None,
         as_rays: bool = False,
         as_hyps: bool = False,
-        as_inds: bool | None = None,
+        as_inds: bool = False,
         ind_offset: int = 0,
         *,
         formal: bool = False,
-        as_indices: bool = False,
     ) -> tuple | list:
         """
         **Description:**
         Returns the cones in the fan, each cone specified either by
             - (default) a tuple of labels
             - (formal=True) as a formal Cone object.
-            - (as_indices=True) as a tuple of indices
+            - (as_inds=True) as a tuple of indices
 
         By default the maximal cones are returned. If `dim` is set, then return
         the `dim`-dimensional cones (faces of the maximal ones). Only
@@ -166,41 +165,41 @@ class Fan(regfans.fan.Fan):
                         currently.
         - `formal`:     Whether to return the cones as formal Cone objects.
         - `as_hyps`:    Whether to return the cones as their hyperplanes.
-        - `as_indices`: Whether to return the cones as indices (not labels).
-        - `as_inds`:    Deprecated spelling of `as_indices`.
+        - `as_inds`:    Whether to return the cones as indices (not labels).
+                        Spelled `as_inds`, not the `as_indices` used elsewhere
+                        in CYTools: this method overrides
+                        `regfans.fan.Fan.cones`, whose fourth positional slot
+                        carries that name. Renaming it here would break the
+                        override contract, so the dependency's vocabulary wins
+                        for this one parameter.
         - `ind_offset`: Additive offset to the indices
 
         **Returns:**
         The cones in the fan (maximal, or `dim`-dimensional if `dim` is set).
         """
-        as_indices = resolve_deprecated_bool(
-            as_indices,
-            as_inds,
-            name="as_indices",
-            legacy_name="as_inds",
-        )
-
         # regfans annotates `dim` as int but defaults it to None, so omit it
         if formal:
             raw = super().cones() if dim is None else super().cones(dim=dim)
-            return tuple([self.vc.cone(np.asarray(c).tolist()) for c in raw])
+            return tuple([self.vc.conical_hull(np.asarray(c).tolist()) for c in raw])
 
         if dim is None:
             return super().cones(
                 as_rays=as_rays,
                 as_hyps=as_hyps,
-                as_inds=as_indices,
+                as_inds=as_inds,
                 ind_offset=ind_offset,
             )
         return super().cones(
             dim=dim,
             as_rays=as_rays,
             as_hyps=as_hyps,
-            as_inds=as_indices,
+            as_inds=as_inds,
             ind_offset=ind_offset,
         )
 
-    # aliases
+    # Not convenience aliases: `regfans.fan.Fan` binds its own `simplices` and
+    # `simps` to the *base* `cones`, so without these the inherited names would
+    # silently resolve past the override above.
     simplices = cones
     simps = cones
 
@@ -209,8 +208,6 @@ class Fan(regfans.fan.Fan):
         to_dim: int = 2,
         padded: bool = False,
         as_indices: bool = False,
-        *,
-        as_face_inds: bool | None = None,
     ):
         """
         **Description:**
@@ -222,18 +219,11 @@ class Fan(regfans.fan.Fan):
                           the restriction
         - `as_indices`: Whether to return each simplex in its face's local
                         index space rather than as labels.
-        - `as_face_inds`: Deprecated spelling of `as_indices`.
 
         **Returns:**
         The restricted simplices
         """
-        as_indices = resolve_deprecated_bool(
-            as_indices,
-            as_face_inds,
-            name="as_indices",
-            legacy_name="as_face_inds",
-        )
-        p = self.vc.conv()
+        p = self.vc.convex_hull()
         simps = self.simps()
 
         # restrict to each to_dim-face
@@ -305,7 +295,7 @@ class Fan(regfans.fan.Fan):
 
         # super easy for regular triangulations. Lift by heights >=0, with origin at 0
         if self.is_regular():
-            p = self.vc.conv(which=self.labels)
+            p = self.vc.convex_hull(which=self.labels)
             pts_in_facets = self.labels == p.labels[1:]
             h = self.heights()
             if h is None:
@@ -322,7 +312,7 @@ class Fan(regfans.fan.Fan):
             )
 
         # get/return the triangulation
-        p = self.vc.conv(self.labels)
+        p = self.vc.convex_hull(self.labels)
 
         simps = tuple([(0,) + c for c in self.simps()])
         t = p.triangulate(
@@ -332,8 +322,6 @@ class Fan(regfans.fan.Fan):
         )
 
         return t
-
-    triang = get_pc_triangulation
 
     # reformatting regfans.Fans outputs
     # ---------------------------------
@@ -466,7 +454,20 @@ class Fan(regfans.fan.Fan):
             # invalidated alongside _kappa when labels change
             self._kappa_view_cache = {}
 
-        if not self.is_triangulation():
+        # `regfans.Fan.is_triangulation` walks every maximal cone doing a rank
+        # check, and caches nothing -- so this guard was re-validating the
+        # whole fan on each call. At h11=200 that is ~16% of the axion payload,
+        # because `compute_divisor_volumes` / `compute_kahler_metric` request
+        # intersection numbers several times per geometry with different
+        # formatting arguments.
+        #
+        # The predicate depends only on the cone structure, and `_kappa` above
+        # is already cached against labels alone rather than cones -- so this
+        # inherits exactly the existing assumption that a fan's cones do not
+        # change under it, and is no weaker.
+        if getattr(self, "_is_triang_cached", None) is None:
+            self._is_triang_cached = bool(self.is_triangulation())
+        if not self._is_triang_cached:
             raise ValueError("Fan is not a triangulation!")
 
         if as_np_array:
@@ -554,7 +555,7 @@ class Fan(regfans.fan.Fan):
                 #  which)
                 # (equiv to taking kappa[i,j,k] = -kappa[0,i,j,k] b/c
                 #  anticanonical)
-                kappa_pushdown = dict()
+                kappa_pushdown = {}
                 for k, v in kappa.items():
                     if (k[0] == 0) and (0 not in k[1:]):
                         kappa_pushdown[k[1:]] = -v
@@ -651,13 +652,13 @@ class Fan(regfans.fan.Fan):
 
         # (formally add the origin to ease indexing)
         vecs = np.vstack([np.zeros((1, dim), dtype=int), self.vectors()])
-        simps = self.cones(as_indices=True, ind_offset=1)
+        simps = self.cones(as_inds=True, ind_offset=1)
         simps_np = np.array(simps)
 
         # face-to-neighbor map for each codim
         # (a neighbor of a face `f` is any point `i` s.t. $f cup {i}$ is a face)
         # (really, this is an encoding of the face lattice...)
-        neighbors = {i: dict() for i in range(1, dim)}
+        neighbors = {i: {} for i in range(1, dim)}
 
         for r in range(1, dim):
             rdict = neighbors[r]
@@ -678,13 +679,13 @@ class Fan(regfans.fan.Fan):
         # --------------------------------
         # for distinct indices, just 1/vol of the cone
         vals = 1 / np.abs(np.linalg.det(vecs[simps_np]))  # NumPy broadcasting
-        self._kappa.update(zip(simps, map(float, vals)))
+        self._kappa.update(zip(simps, map(float, vals), strict=True))
 
         if verbosity >= 1:
             msg = "After computing the intersection numbers associated to "
             msg += "solid cones, we have:"
             print(msg)
-            print({k: v for k, v in self._kappa.items()})
+            print(dict(self._kappa.items()))
 
         # helpers
         if dim == 4:
@@ -714,7 +715,7 @@ class Fan(regfans.fan.Fan):
             elif r == 1:
                 kappa_solver = kappa_solve_1x1
             else:
-                kappa_solver = lambda pts, known: kappa_solve_nxn(pts, known, r)
+                kappa_solver = functools.partial(kappa_solve_nxn, r=r)
 
             # iterate over each r-face
             for face, neighbs in neighbors[r].items():
@@ -769,7 +770,7 @@ class Fan(regfans.fan.Fan):
                     sol = kappa_solver(pts, known_vals)
 
                     # save it
-                    for i, val in zip(face, sol):
+                    for i, val in zip(face, sol, strict=True):
                         self._kappa[insert_sorted(prefactor, i)] = float(val)
 
         # intersection numbers w/ 0
@@ -810,9 +811,6 @@ class Fan(regfans.fan.Fan):
             digits=digits,
             verbosity=0,
         )
-
-    int_nums = intersection_numbers
-    kappa = intersection_numbers
 
     def c2(self, eps: float = 1e-4, digits: int = 4) -> np.ndarray:
         """
@@ -920,7 +918,7 @@ class Fan(regfans.fan.Fan):
         """
         return self.mori_cone(
             pushed_down=pushed_down, in_basis=in_basis, verbosity=verbosity
-        ).dual()
+        ).dual_cone()
 
     def newton_polytope(self, divisor, dilate=False):
         """
@@ -944,7 +942,6 @@ class Fan(regfans.fan.Fan):
                      compute the integer hull (convex hull of contained lattice
                      points) instead.
 
-
         **Returns:**
         The Newton polytope for the passed divisor
         """
@@ -963,7 +960,7 @@ class Fan(regfans.fan.Fan):
         )
 
     def is_gorenstein_fano(self):
-        # idea: self.conv().is_reflexive() should be equivalent
+        # idea: self.convex_hull().is_reflexive() should be equivalent
         return self.newton_polytope([1] * len(self.used_labels)).is_reflexive()
 
     def h21_cy(self):
@@ -973,9 +970,9 @@ class Fan(regfans.fan.Fan):
         the same for every FRST/vex fan of it; this returns the polytope's h21.
         """
         if not self.is_gorenstein_fano():
-            raise NotImplementedError()
+            raise NotImplementedError
 
-        return self.vc.conv().h21()
+        return self.vc.convex_hull().h12()
 
     # generalize flip_linear
     # ----------------------
@@ -1100,7 +1097,7 @@ def kappa_solve_3x3(pts, known):
 # flops
 def minface_dim(config, labels):
     # get dim (face must have at least this dimension)
-    p = config.conv()
+    p = config.convex_hull()
     A = config.vectors(labels)
     dim = np.linalg.matrix_rank([pt.tolist() + [1] for pt in A]) - 1
 
@@ -1196,10 +1193,10 @@ def vc(self, include_points_interior_to_facets=None):
     """
     # set include_points_interior_to_facets
     if include_points_interior_to_facets is None:
-        include_points_interior_to_facets = tuple(self.labels) == self.polytope().labels
+        include_points_interior_to_facets = tuple(self.labels) == self.poly.labels
 
     # get the vc
-    vc = self.polytope().vc(
+    vc = self.poly.vc(
         include_points_interior_to_facets=include_points_interior_to_facets
     )
 
@@ -1220,17 +1217,17 @@ def fan(self, include_points_interior_to_facets=None):
     """
     # set include_points_interior_to_facets
     if include_points_interior_to_facets is None:
-        include_points_interior_to_facets = tuple(self.labels) == self.polytope().labels
+        include_points_interior_to_facets = tuple(self.labels) == self.poly.labels
 
     # get the vc
-    vc = self.polytope().vc(
+    vc = self.poly.vc(
         include_points_interior_to_facets=include_points_interior_to_facets
     )
 
     # build the star fan: keep only simplices containing the origin and drop
     # the origin label from each. the vc above already carries these same
     # labels (minus the origin), so the cells index it directly (no remap).
-    origin = self.polytope().label_origin
+    origin = self.poly.label_origin
     cells = [
         sorted(x for x in simp if x != origin)
         for simp in self.simplices().tolist()

@@ -88,13 +88,13 @@ def test_feature_modules_do_not_mutate_domain_classes():
             elif isinstance(node, (ast.AnnAssign, ast.AugAssign)):
                 targets = [node.target]
 
-            for target in targets:
-                if (
-                    isinstance(target, ast.Attribute)
-                    and isinstance(target.value, ast.Name)
-                    and target.value.id in domain_classes
-                ):
-                    violations.append(f"{path.relative_to(PACKAGE)}:{target.lineno}")
+            violations.extend(
+                f"{path.relative_to(PACKAGE)}:{target.lineno}"
+                for target in targets
+                if isinstance(target, ast.Attribute)
+                and isinstance(target.value, ast.Name)
+                and target.value.id in domain_classes
+            )
 
             if (
                 isinstance(node, ast.Call)

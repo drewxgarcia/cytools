@@ -164,9 +164,9 @@ def test_geometry_memoizes_the_triangulation(monkeypatch):
     monkeypatch.setattr(Polytope, "triangulate", counting)
 
     g = Geometry(verts)
-    g.triangulation
-    g.triangulation
-    g.toric_variety
+    _ = g.triangulation
+    _ = g.triangulation
+    _ = g.toric_variety
     assert len(calls) == 1, "triangulation was rebuilt"
 
 
@@ -217,7 +217,7 @@ def test_a_non_favorable_polytope_is_not_triangulated_for_cy_columns(monkeypatch
 
     g = Geometry(verts)
     with pytest.raises(Unsupported):
-        g.cy
+        _ = g.cy
     assert calls == [], "triangulated a polytope that cannot carry a CY"
 
 
@@ -269,7 +269,7 @@ def test_unsupported_rows_keep_the_columns_that_did_not_need_a_cy(derived):
     # These need only the polytope or the ambient variety, so they must survive
     # the unsupported CY calculation rather than be discarded with it.
     assert bad["is_favorable"].notna().all()
-    assert (bad["is_favorable"] == False).all()  # noqa: E712
+    assert not bad["is_favorable"].any()
     assert bad["n_points"].notna().all()
     assert bad["n_intnums"].notna().all()
     # This one genuinely needs the threefold, so it must be absent.
@@ -805,7 +805,7 @@ def test_contract_kappa_handles_every_multiplicity_class():
 
     # dense reference: fill every distinct permutation with the same value
     dense = np.zeros((n, n, n))
-    for key, v in zip(keys, vals):
+    for key, v in zip(keys, vals, strict=True):
         for p in _PERMS_3:
             dense[key[p[0]], key[p[1]], key[p[2]]] = v
     expected = (np.tensordot(dense, t, axes=([-1], [0])) @ t) / 2
@@ -868,6 +868,6 @@ def test_both_volume_columns_share_one_contraction(monkeypatch):
     monkeypatch.setattr(lm, "_contract_kappa", counting)
 
     g = Geometry(verts)
-    g.divisor_volumes
-    g.cy_volume
+    _ = g.divisor_volumes
+    _ = g.cy_volume
     assert len(calls) == 1, f"contracted {len(calls)} times"

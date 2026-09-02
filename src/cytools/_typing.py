@@ -79,14 +79,13 @@ FaceTriangulationMethod: TypeAlias = Literal["fast", "fair", "grow2d", "dualgnn"
 #: Engine used to compute a triangulation's secondary cone.
 SecondaryConeBackend: TypeAlias = Literal["native", "topcom"]
 
-#: Cone ray-pruning algorithm, including the historical ``"lp"`` alias.
-ExtremalRaysMethod: TypeAlias = Literal["extremalrays", "legacy", "lp", "nnls"]
+#: Cone ray-pruning algorithm.
+ExtremalRaysMethod: TypeAlias = Literal["extremalrays", "legacy", "nnls"]
 
 #: Algorithm used to test whether one ray is extremal.
 ExtremalityMethod: TypeAlias = Literal["lp", "nnls"]
 
 #: Algorithm used to test whether a cone is pointed.
-PointednessBackend: TypeAlias = Literal["dual", "null", "lp", "nnls"]
 
 #: Optimizer accepted by :meth:`cytools.Cone.tip_of_stretched_cone`.
 StretchedConeBackend: TypeAlias = Literal["mosek", "osqp", "cvxopt", "highs", "glop"]
@@ -122,7 +121,6 @@ __all__ = [
     "LinearSolverBackend",
     "Matrix",
     "NormalFormBackend",
-    "PointednessBackend",
     "PolytopeBackend",
     "PolytopeFormat",
     "PolytopeInputType",

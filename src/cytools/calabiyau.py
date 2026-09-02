@@ -177,7 +177,7 @@ class CalabiYau:
             if not triang.is_fine():
                 raise ValueError("Triangulation is non-fine.")
             if (
-                toric_var.dim() != 4 or not triang.polytope().is_favorable(lattice="N")
+                toric_var.dimension() != 4 or not triang.poly.is_favorable(lattice="N")
             ) and not config._exp_features_enabled:
                 raise Exception(
                     "The experimental features must be enabled to "
@@ -186,7 +186,7 @@ class CalabiYau:
                 )
 
             # check that we have sensical points
-            poly = triang.polytope()
+            poly = triang.poly
 
             if sorted(triang.labels) == sorted(poly.labels_not_facet):
                 pass
@@ -195,7 +195,7 @@ class CalabiYau:
             else:
                 error_msg = "Calabi-Yau hypersurfaces must be constructed either from points not interior to facets or using all points.\n"
                 error_msg += f"Triangulation points = {self.triangulation().points().tolist()} (labels = {self.triangulation().labels})\n"
-                error_msg += f"Polytope points = {self.triangulation().polytope().points().tolist()} (labels = {self.triangulation().polytope().labels})\n"
+                error_msg += f"Polytope points = {self.triangulation().poly.points().tolist()} (labels = {self.triangulation().poly.labels})\n"
                 raise ValueError(error_msg)
 
         self._ambient_var = toric_var
@@ -213,7 +213,7 @@ class CalabiYau:
         self._curve_basis = None
         self._curve_basis_mat = None
         self._mori_cone = [None] * 3
-        self._intersection_numbers = dict()
+        self._intersection_numbers = {}
         self._prime_divs = None
         self._second_chern_class = None
         self._is_smooth = None
@@ -266,7 +266,7 @@ class CalabiYau:
             self._curve_basis = None
             self._curve_basis_mat = None
             self._mori_cone = [None] * 3
-            self._intersection_numbers = dict()
+            self._intersection_numbers = {}
             self._prime_divs = None
             self._second_chern_class = None
             self._is_smooth = None
@@ -299,7 +299,7 @@ class CalabiYau:
         # 4-dimensional toric variety
         ```
         """
-        d = self.dim()
+        d = self.dimension()
         if self._is_hypersurface:
             if d == 2:
                 out_str = (
@@ -309,7 +309,7 @@ class CalabiYau:
             elif d == 3:
                 out_str = (
                     "A Calabi-Yau 3-fold hypersurface with "
-                    f"h11={self.h11()} and h21={self.h21()} in a "
+                    f"h11={self.h11()} and h21={self.h12()} in a "
                     "4-dimensional toric variety"
                 )
             elif d == 4:
@@ -325,7 +325,7 @@ class CalabiYau:
                     f"{d + 1}-dimensional toric variety"
                 )
         else:
-            dd = self.ambient_variety().dim()
+            dd = self.ambient_variety().dimension()
             if self._hodge_nums is None or d not in (2, 3, 4):
                 out_str = (
                     f"A complete intersection Calabi-Yau {d}-fold in a "
@@ -340,7 +340,7 @@ class CalabiYau:
             elif d == 3:
                 out_str = (
                     f"A complete intersection Calabi-Yau 3-fold with "
-                    f"h11={self.h11()} and h21={self.h21()} in a "
+                    f"h11={self.h11()} and h21={self.h12()} in a "
                     + f"{dd}-dimensional toric variety"
                 )
             elif d == 4:
@@ -396,7 +396,8 @@ class CalabiYau:
             return True
         warnings.warn(
             "The comparison of CYs should not be done with ==. "
-            "Please use the is_trivially_equivalent function."
+            "Please use the is_trivially_equivalent function.",
+            stacklevel=2,
         )
         return False
 
@@ -467,7 +468,7 @@ class CalabiYau:
         if self._is_hypersurface:
             self_orbit = self.triangulation().automorphism_orbit(on_faces_codim=2)
             self_orbit = tuple(tuple(tuple(s) for s in t) for t in self_orbit)
-            self._hash = hash((hash(self.triangulation().polytope()), hash(self_orbit)))
+            self._hash = hash((hash(self.triangulation().poly), hash(self_orbit)))
         else:
             self._hash = hash((hash(self.ambient_variety()), hash(self._nef_part)))
         return self._hash
@@ -609,9 +610,6 @@ class CalabiYau:
         **Returns:**
         *(int)* The complex dimension of the ambient toric variety.
 
-        **Aliases:**
-        `ambient_dim`.
-
         **Example:**
         We construct a Calabi-Yau and find the dimension of its ambient variety.
         ```python {4}
@@ -622,10 +620,7 @@ class CalabiYau:
         # 4
         ```
         """
-        return self.ambient_variety().dim()
-
-    # aliases
-    ambient_dim = ambient_dimension
+        return self.ambient_variety().dimension()
 
     def dimension(self):
         """
@@ -637,9 +632,6 @@ class CalabiYau:
 
         **Returns:**
         *(int)* The complex dimension of the Calabi-Yau hypersurface.
-
-        **Aliases:**
-        `dim`.
 
         **Example:**
         We construct a Calabi-Yau and find its dimension.
@@ -657,14 +649,11 @@ class CalabiYau:
         tv = self.ambient_variety()
 
         if self._is_hypersurface or self._nef_part is None:
-            self._dim = tv.dim() - 1
+            self._dim = tv.dimension() - 1
         else:
-            self._dim = tv.triangulation().dim() - len(self._nef_part)
+            self._dim = tv.triangulation().dimension() - len(self._nef_part)
 
         return self._dim
-
-    # aliases
-    dim = dimension
 
     def hpq(self, p, q):
         """
@@ -712,7 +701,7 @@ class CalabiYau:
             if hodge_nums is None:
                 raise NotImplementedError("Could not compute the Hodge numbers.")
             return hodge_nums.get((p, q), 0)
-        if self.dim() not in (2, 3, 4):
+        if self.dimension() not in (2, 3, 4):
             raise NotImplementedError(
                 "Only Calabi-Yaus of dimension 2-4 are currently supported."
             )
@@ -746,7 +735,7 @@ class CalabiYau:
         """
         if not self._is_hypersurface:
             return self.hpq(1, 1)
-        if self.dim() not in (2, 3, 4):
+        if self.dimension() not in (2, 3, 4):
             raise NotImplementedError(
                 "Only Calabi-Yaus of dimension 2-4 are currently supported."
             )
@@ -768,9 +757,6 @@ class CalabiYau:
         **Returns:**
         *(int)* The Hodge number $h^{1,2}$ of Calabi-Yau manifold.
 
-        **Aliases:**
-        `h21`.
-
         **Example:**
         We construct a Calabi-Yau hypersurface and compute its $h^{1,2}$.
         ```python {4}
@@ -783,14 +769,11 @@ class CalabiYau:
         """
         if not self._is_hypersurface:
             return self.hpq(1, 2)
-        if self.dim() not in (2, 3, 4):
+        if self.dimension() not in (2, 3, 4):
             raise NotImplementedError(
                 "Only Calabi-Yaus of dimension 2-4 are currently supported."
             )
         return self.polytope().h12(lattice="N")
-
-    # aliases
-    h21 = h12
 
     def h13(self):
         """
@@ -808,9 +791,6 @@ class CalabiYau:
         **Returns:**
         *(int)* The Hodge number $h^{1,3}$ of Calabi-Yau manifold.
 
-        **Aliases:**
-        `h31`.
-
         **Example:**
         We construct a Calabi-Yau hypersurface and compute its $h^{1,3}$.
         ```python {4}
@@ -823,14 +803,11 @@ class CalabiYau:
         """
         if not self._is_hypersurface:
             return self.hpq(1, 3)
-        if self.dim() not in (2, 3, 4):
+        if self.dimension() not in (2, 3, 4):
             raise NotImplementedError(
                 "Only Calabi-Yaus of dimension 2-4 are currently supported."
             )
         return self.polytope().h13(lattice="N")
-
-    # aliases
-    h31 = h13
 
     def h22(self):
         """
@@ -860,7 +837,7 @@ class CalabiYau:
         """
         if not self._is_hypersurface:
             return self.hpq(2, 2)
-        if self.dim() not in (2, 3, 4):
+        if self.dimension() not in (2, 3, 4):
             raise NotImplementedError(
                 "Only Calabi-Yaus of dimension 2-4 are currently supported."
             )
@@ -902,18 +879,18 @@ class CalabiYau:
             if "chi" in hodge_nums:
                 return hodge_nums["chi"]
             chi = 0
-            for i in range(2 * self.dim() + 1):
-                ii = min(i, self.dim())
+            for i in range(2 * self.dimension() + 1):
+                ii = min(i, self.dimension())
                 jj = i - ii
                 while True:
                     chi += (-1 if i % 2 else 1) * hodge_nums[(ii, jj)]
                     ii -= 1
                     jj += 1
-                    if ii < 0 or jj > self.dim():
+                    if ii < 0 or jj > self.dimension():
                         break
             hodge_nums["chi"] = chi
             return chi
-        if self.dim() not in (2, 3, 4):
+        if self.dimension() not in (2, 3, 4):
             raise NotImplementedError(
                 "Only Calabi-Yaus of dimension 2-4 are currently supported."
             )
@@ -1378,7 +1355,7 @@ class CalabiYau:
                 parts = self._nef_part
                 if parts is None:
                     raise RuntimeError("A CICY must have a nef partition.")
-                ambient_dim = self.ambient_dim()
+                ambient_dim = self.ambient_dimension()
                 intnums_dict = ambient_intnums
                 for dd in range(len(parts)):
                     intnums_dict_tmp = defaultdict(lambda: 0)
@@ -1531,7 +1508,7 @@ class CalabiYau:
         # array([-612,   36,  306,  204,   36,   36,   -6])
         ```
         """
-        if self.dim() != 3:
+        if self.dimension() != 3:
             raise NotImplementedError("This function currently only supports 3-folds.")
         if self._second_chern_class is None:
             c2 = np.zeros(len(self.prime_toric_divisors()) + 1, dtype=int)
@@ -1675,7 +1652,7 @@ class CalabiYau:
         # A rational polyhedral cone in RR^2 defined by 3 hyperplanes normals
         ```
         """
-        return self.toric_mori_cone(in_basis=True).dual()
+        return self.toric_mori_cone(in_basis=True).dual_cone()
 
     def toric_effective_cone(self):
         """
@@ -1731,7 +1708,7 @@ class CalabiYau:
         # 3.4999999988856496
         ```
         """
-        if self.dim() != 3:
+        if self.dimension() != 3:
             raise NotImplementedError("This function only supports Calabi-Yau 3-folds.")
         if not hasattr(self, "_fan"):
             self._fan = self.triangulation().fan()
@@ -1778,7 +1755,7 @@ class CalabiYau:
         #         0.5       ])
         ```
         """
-        if self.dim() != 3:
+        if self.dimension() != 3:
             raise NotImplementedError("This function only supports Calabi-Yau 3-folds.")
         if not hasattr(self, "_fan"):
             self._fan = self.triangulation().fan()
@@ -1852,9 +1829,6 @@ class CalabiYau:
         *(numpy.ndarray)* The matrix $\kappa_{ijk}t^k$ at the specified
             location.
 
-        **Aliases:**
-        `compute_AA`.
-
         **Example:**
         We construct a Calabi-Yau hypersurface and compute this matrix at the
         tip of the stretched Kähler cone.
@@ -1868,7 +1842,7 @@ class CalabiYau:
         #        [ 1., -3.]])
         ```
         """
-        if self.dim() != 3:
+        if self.dimension() != 3:
             raise NotImplementedError("This function only supports Calabi-Yau 3-folds.")
         if not hasattr(self, "_fan"):
             self._fan = self.triangulation().fan()
@@ -1879,9 +1853,6 @@ class CalabiYau:
             copy=False,
         )
         return np.tensordot(intnums, tloc, axes=([-1], [0]))
-
-    # aliases
-    compute_AA = compute_kappa_matrix
 
     def compute_kappa_vector(self, tloc):
         r"""
@@ -1945,11 +1916,11 @@ class CalabiYau:
         #        [-9., 43.]])
         ```
         """
-        if self.dim() != 3:
+        if self.dimension() != 3:
             raise NotImplementedError("This function only supports Calabi-Yau 3-folds.")
         xvol = self.compute_cy_volume(tloc)
         Tau = self.compute_divisor_volumes(tloc, in_basis=True)
-        AA = self.compute_AA(tloc)
+        AA = self.compute_kappa_matrix(tloc)
         Kinv = 4 * (np.outer(Tau, Tau) - AA * xvol)
         return Kinv
 
@@ -2016,7 +1987,7 @@ class CalabiYau:
         cy = t.get_cy(nef_part[0])
         cy.h11() # The function is called here since the Hodge numbers have not been computed
         # 4
-        cy.h21() # It is not called here because the Hodge numbers are already cached
+        cy.h12() # It is not called here because the Hodge numbers are already cached
         # 544
         ```
         """
@@ -2026,7 +1997,7 @@ class CalabiYau:
             )
         if self._hodge_nums is not None:
             return self._hodge_nums
-        codim = self.ambient_variety().dim() - self.dim()
+        codim = self.ambient_variety().dimension() - self.dimension()
         poly = self.ambient_variety().polytope()
         vert_ind = poly.points_to_indices(poly.vertices())
         nef_part_fs = frozenset(
@@ -2065,15 +2036,15 @@ class CalabiYau:
 
         hodge_nums = {}
         n = 0
-        for i in range(2 * self.dim() + 1):
-            ii = min(i, self.dim())
+        for i in range(2 * self.dimension() + 1):
+            ii = min(i, self.dimension())
             jj = i - ii
             while True:
                 hodge_nums[(ii, jj)] = matched_hodge_nums[n]
                 n += 1
                 ii -= 1
                 jj += 1
-                if ii < 0 or jj > self.dim():
+                if ii < 0 or jj > self.dimension():
                     break
 
         self._hodge_nums = hodge_nums
@@ -2231,8 +2202,6 @@ class CalabiYau:
             format=format,
         )
 
-    compute_gv = compute_gvs
-
     def compute_gws(
         self,
         mcap_generators: Matrix | None = None,
@@ -2273,8 +2242,6 @@ class CalabiYau:
             basis=basis,
             format=format,
         )
-
-    compute_gw = compute_gws
 
     # =================
     # TEMPORARY METHODS
@@ -2368,9 +2335,9 @@ class CalabiYau:
             pts_f1 = f1.difference(f2)
             pts_f2 = f2.difference(f1)
             comm_pts = list(s2d) + [0]
-            for p1 in pts_f1:
-                for p2 in pts_f2:
-                    origin_circuits.append(([p1, p2], comm_pts))
+            origin_circuits.extend(
+                ([p1, p2], comm_pts) for p1 in pts_f1 for p2 in pts_f2
+            )
 
         if origin_circuits:
             mats = np.empty((len(origin_circuits), 6, 5), dtype=float)
@@ -2381,7 +2348,7 @@ class CalabiYau:
 
             for k, (diff_pts, comm_pts) in enumerate(origin_circuits):
                 if null_dims[k] != 1:
-                    warnings.warn(f"Kernel dimension {null_dims[k]}.")
+                    warnings.warn(f"Kernel dimension {null_dims[k]}.", stacklevel=2)
                     continue
                 v = vecs[k]
                 if v[0] < 0:
@@ -2499,7 +2466,8 @@ def configure_gv_subprocess(
     except (RuntimeError, ValueError) as e:
         warnings.warn(
             f"Could not set the multiprocessing start method to {method!r} "
-            f"({e}); cygv will keep paying full subprocess start-up per call."
+            f"({e}); cygv will keep paying full subprocess start-up per call.",
+            stacklevel=2,
         )
         return None
 
@@ -2602,7 +2570,7 @@ class Invariants:
             invariants = self._charge2invariant.values()
             charges = np.array(list(charges)) @ self._basis.T
             self._charge2invariant = {
-                tuple(r): _gv for r, _gv in zip(charges, invariants)
+                tuple(r): _gv for r, _gv in zip(charges, invariants, strict=True)
             }
 
     # standard methods
@@ -2828,16 +2796,16 @@ def _group_by_deg(charges: Iterable, grading_vec: Vector, as_np_arr: bool = Fals
     charges, degs = charges[sort_inds], degs[sort_inds]
 
     # organize as dict
-    charges_by_deg = dict()
+    charges_by_deg = {}
     if as_np_arr:
-        for charge, deg in zip(charges, degs):
+        for charge, deg in zip(charges, degs, strict=True):
             charges_by_deg[deg] = charges_by_deg.get(deg, []) + [charge]
 
         # map to numpy arrays
         for k, v in charges_by_deg.items():
             charges_by_deg[k] = np.asarray(v, dtype=int)
     else:
-        for charge, deg in zip(charges, degs):
+        for charge, deg in zip(charges, degs, strict=True):
             charges_by_deg[deg] = charges_by_deg.get(deg, set())
             charges_by_deg[deg].add(tuple(charge))
 

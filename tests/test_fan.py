@@ -1,5 +1,4 @@
 import numpy as np
-import pytest
 
 from cytools import Polytope
 
@@ -91,19 +90,14 @@ def test_restricted_simps_label_and_index_paths_agree():
     by_index = fan.restricted_simps(to_dim=2, padded=False, as_indices=True)
 
     assert len(by_label) == len(by_index)
-    for labels, inds in zip(by_label, by_index):
+    for labels, inds in zip(by_label, by_index, strict=True):
         assert [len(s) for s in labels] == [len(s) for s in inds]
 
 
-def test_index_flag_aliases_warn_and_preserve_results():
+def test_index_flag_is_accepted_positionally_and_by_keyword():
+    """The canonical flag sits in the base class's positional slot."""
     fan = fan_fixture()
 
-    canonical_cones = fan.cones(as_indices=True)
-    with pytest.warns(DeprecationWarning, match="as_inds"):
-        legacy_cones = fan.cones(as_inds=True)
-    assert canonical_cones == legacy_cones
-
-    canonical_simps = fan.restricted_simps(as_indices=True)
-    with pytest.warns(DeprecationWarning, match="as_face_inds"):
-        legacy_simps = fan.restricted_simps(as_face_inds=True)
-    assert canonical_simps == legacy_simps
+    by_keyword = fan.cones(as_inds=True)
+    by_position = fan.cones(None, False, False, True)
+    assert by_keyword == by_position

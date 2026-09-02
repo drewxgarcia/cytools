@@ -21,6 +21,7 @@
 from __future__ import annotations
 
 import copy
+import functools
 import itertools
 import math
 import time
@@ -267,15 +268,15 @@ class Polytope:
             self._dim = int(
                 np.linalg.matrix_rank([list(pt) + [1] for pt in points]) - 1
             )
-            self._dim_diff = self.ambient_dim() - self.dim()
+            self._dim_diff = self.ambient_dimension() - self.dimension()
 
         # Empty and zero-dimensional polytopes do not run a hull engine, but a
         # concrete compatibility value is still exposed by `.backend`. For a
         # nontrivial automatic hull, `"ppl"` is only a typed placeholder until
         # `_process_points` records the engine selected by the registry.
-        self._auto_backend = backend is None and self.dim() > 0
+        self._auto_backend = backend is None and self.dimension() > 0
         if backend is None:
-            backend = "palp" if self.dim() <= 0 else "ppl"
+            backend = "palp" if self.dimension() <= 0 else "ppl"
         self._backend: PolytopeBackend = backend
 
         # set point information (better basis, H-representation)
@@ -303,10 +304,10 @@ class Polytope:
         # A 4-dimensional reflexive lattice polytope in ZZ^4
         ```
         """
-        msg = f"A {self.dim()}-dimensional "
-        if self.dim() >= 0:
+        msg = f"A {self.dimension()}-dimensional "
+        if self.dimension() >= 0:
             msg += f"{('reflexive ' if self.is_reflexive() else '')}"
-            msg += f"lattice polytope in ZZ^{self.ambient_dim()} "
+            msg += f"lattice polytope in ZZ^{self.ambient_dimension()} "
         else:
             msg += "polytope "
         msg += f"with points {list(self._inputpts2labels.keys())} "
@@ -335,10 +336,10 @@ class Polytope:
         # A 4-dimensional reflexive lattice polytope in ZZ^4
         ```
         """
-        msg = f"A {self.dim()}-dimensional "
-        if self.dim() >= 0:
+        msg = f"A {self.dimension()}-dimensional "
+        if self.dimension() >= 0:
             msg += f"{('reflexive ' if self.is_reflexive() else '')}"
-            msg += f"lattice polytope in ZZ^{self.ambient_dim()} "
+            msg += f"lattice polytope in ZZ^{self.ambient_dimension()} "
         else:
             msg += "polytope"
 
@@ -534,7 +535,7 @@ class Polytope:
         # self._ineqs_input
         # self._ineqs_optimal
         # self._vertices_optimal
-        self._is_reflexive = dict()
+        self._is_reflexive = {}
 
         # input, optimal points (DON'T CLEAR! Set in init...)
         # self._labels2inputPts
@@ -576,12 +577,12 @@ class Polytope:
         self._is_favorable = None
 
         # glsm
-        self._glsm_basis = dict()
-        self._glsm_charge_matrix = dict()
-        self._glsm_linrels = dict()
+        self._glsm_basis = {}
+        self._glsm_charge_matrix = {}
+        self._glsm_linrels = {}
 
         # misc
-        self._nef_parts = dict()
+        self._nef_parts = {}
         self._normal_form = [None] * 3
 
     # getters
@@ -612,9 +613,6 @@ class Polytope:
         **Returns:**
         The dimension of the ambient lattice.
 
-        **Aliases:**
-        `ambient_dim`.
-
         **Example:**
         We construct a polytope and check the dimension of the ambient lattice.
         ```python {2}
@@ -627,9 +625,6 @@ class Polytope:
             raise ValueError("A polytope with no points has no ambient dimension.")
         return self._dim_ambient
 
-    # aliases
-    ambient_dim = ambient_dimension
-
     def dimension(self) -> int:
         """
         **Description:**
@@ -641,9 +636,6 @@ class Polytope:
         **Returns:**
         The dimension of the polytope.
 
-        **Aliases:**
-        `dim`.
-
         **Example:**
         We construct a polytope and check its dimension.
         ```python {2}
@@ -653,9 +645,6 @@ class Polytope:
         ```
         """
         return self._dim
-
-    # aliases
-    dim = dimension
 
     def is_solid(self) -> bool:
         """
@@ -677,7 +666,7 @@ class Polytope:
         # False
         ```
         """
-        return self.ambient_dim() == self.dim()
+        return self.ambient_dimension() == self.dimension()
 
     @property
     def labels(self):
@@ -793,19 +782,19 @@ class Polytope:
             self._transf_mat_inv = None
             self._vertices_optimal = np.empty((0, 0), dtype=int)
             self._ineqs_optimal = None
-            self._labels2optPts = dict()
-            self._labels2inputPts = dict()
-            self._pts_saturating = dict()
-            self._pts_order = tuple()
-            self._inputpts2labels = dict()
-            self._optimalpts2labels = dict()
-            self._labels2inds = dict()
+            self._labels2optPts = {}
+            self._labels2inputPts = {}
+            self._pts_saturating = {}
+            self._pts_order = ()
+            self._inputpts2labels = {}
+            self._optimalpts2labels = {}
+            self._labels2inds = {}
             self._label_origin = None
-            self._labels_int = tuple()
-            self._labels_facet = tuple()
-            self._labels_bdry = tuple()
-            self._labels_codim2 = tuple()
-            self._labels_not_facet = tuple()
+            self._labels_int = ()
+            self._labels_facet = ()
+            self._labels_bdry = ()
+            self._labels_codim2 = ()
+            self._labels_not_facet = ()
 
             return
 
@@ -813,7 +802,7 @@ class Polytope:
         # -----------------------------
         # translate if not full-dim (allows LLL-reduction)
         if self.is_solid():
-            self._transl_vector = np.zeros(self.ambient_dim(), dtype=int)
+            self._transl_vector = np.zeros(self.ambient_dimension(), dtype=int)
         else:
             self._transl_vector = pts_input[0]
         pts_optimal = np.array(pts_input) - self._transl_vector
@@ -821,12 +810,12 @@ class Polytope:
         # 0D is a special case
         if self._dim == 0:
             # no LLL reduction; optimal space is 0-dimensional
-            self._transf_mat_inv = np.eye(self.ambient_dim(), dtype=int)
+            self._transf_mat_inv = np.eye(self.ambient_dimension(), dtype=int)
 
             # no non-trivial inequalities on a single point
             self._ineqs_optimal = np.zeros((0, 1), dtype=int)
             self._vertices_optimal = np.empty((1, 0), dtype=int)
-            self._ineqs_input = np.zeros((0, self.ambient_dim() + 1), dtype=int)
+            self._ineqs_input = np.zeros((0, self.ambient_dimension() + 1), dtype=int)
 
             # the one point (origin in optimal coords) and its data
             label = labels[0] if labels is not None else 0
@@ -843,13 +832,13 @@ class Polytope:
             self._labels2inds = {label: 0}
 
             # origin handling: the single point is "interior" (no saturations)
-            origin = (0,) * self.ambient_dim()
+            origin = (0,) * self.ambient_dimension()
             self._label_origin = self._inputpts2labels.get(origin, None)
 
             self._labels_int = (label,)
-            self._labels_facet = tuple()
-            self._labels_bdry = tuple()
-            self._labels_codim2 = tuple()
+            self._labels_facet = ()
+            self._labels_bdry = ()
+            self._labels_codim2 = ()
             self._labels_not_facet = (label,)
 
             return
@@ -870,7 +859,7 @@ class Polytope:
         # same one computed faster. RECOVERABLE keeps PALP off the automatic
         # path -- it aborts the interpreter past its compiled-in array bounds,
         # which a 9-dimensional configuration of 40 points reaches.
-        problem = {"dim": self.dim(), "size": len(pts_optimal)}
+        problem = {"dim": self.dimension(), "size": len(pts_optimal)}
         if self._auto_backend:
             engine = CONVEX_HULL.resolve(need=(EXACT, RECOVERABLE), problem=problem)
             # `interval` is an implementation detail of the automatic 1D
@@ -880,7 +869,7 @@ class Polytope:
         else:
             engine_name = (
                 "interval"
-                if self._backend == "qhull" and self.dim() == 1
+                if self._backend == "qhull" and self.dimension() == 1
                 else self._backend
             )
             # ``backend=`` predates the registry and is an established,
@@ -921,7 +910,7 @@ class Polytope:
         # -------------------------------------------------------
         pts_optimal = [tuple(pt) for pt in pts_optimal]
         pts_optimal_all, saturating = saturating_lattice_pts(
-            pts_optimal, self._ineqs_optimal, self.dim(), self._backend
+            pts_optimal, self._ineqs_optimal, self.dimension(), self._backend
         )
 
         # undo LLL transformation, to get points in original basis
@@ -953,8 +942,8 @@ class Polytope:
         inds_sort = sorted(range(len(pts_input_all)), key=sort_fct)
 
         # save info to useful variables/dictionaries
-        self._labels2optPts = dict()
-        self._pts_saturating = dict()
+        self._labels2optPts = {}
+        self._pts_saturating = {}
         nSat_to_labels = [[] for _ in range(len(self._ineqs_optimal) + 1)]
 
         if labels is None:
@@ -966,7 +955,10 @@ class Polytope:
         # N.B.: setdefault reproduces list.index() semantics, i.e. in case of
         # duplicated input points the first label wins.
         pt_to_label = {}
-        for pt, label in zip(pts_optimal, labels):
+        # strict=False is deliberate: `labels` is optional and may be shorter
+        # than the point list (or empty). Points it does not cover fall through
+        # to the generated-label branch below.
+        for pt, label in zip(pts_optimal, labels, strict=False):
             pt_to_label.setdefault(pt, label)
         labels_set = set(labels)
 
@@ -1006,7 +998,7 @@ class Polytope:
         pts_input_all = self._optimal_to_input(self.points(optimal=True))
         self._labels2inputPts = {
             label: tuple(map(int, pt))
-            for label, pt in zip(self._pts_order, pts_input_all)
+            for label, pt in zip(self._pts_order, pts_input_all, strict=True)
         }
 
         # reverse dictionaries
@@ -1017,7 +1009,7 @@ class Polytope:
 
         # common sets of labels
         # ---------------------
-        origin = (0,) * self.ambient_dim()
+        origin = (0,) * self.ambient_dimension()
         if origin in self._inputpts2labels:
             self._label_origin = self._inputpts2labels[origin]
         else:
@@ -1061,7 +1053,7 @@ class Polytope:
         # *** could be sped up by using pre-calculated dicts ***
 
         # pad points with 0s, to make width match original dim
-        points_orig = np.empty((len(pts_opt), self.ambient_dim()), dtype=int)
+        points_orig = np.empty((len(pts_opt), self.ambient_dimension()), dtype=int)
         points_orig[:, self._dim_diff :] = pts_opt
         points_orig[:, : self._dim_diff] = 0
 
@@ -1114,9 +1106,6 @@ class Polytope:
         **Returns:**
         The list of lattice points of the polytope.
 
-        **Aliases:**
-        `pts`.
-
         **Example:**
         We construct a polytope and compute the lattice points. One can verify
         that the first point is the only interior point, and the last three
@@ -1155,40 +1144,119 @@ class Polytope:
         # return
         return np.array([pts[label] for label in which])
 
-    # aliases
-    pts = points
-
     # common point grabbers
     # ---------------------
-    pts_int = lambda self, as_indices=False: self.pts(
-        which=self._labels_int, as_indices=as_indices
-    )
-    pts_bdry = lambda self, as_indices=False: self.pts(
-        which=self._labels_bdry, as_indices=as_indices
-    )
-    pts_facet = lambda self, as_indices=False: self.pts(
-        which=self._labels_facet, as_indices=as_indices
-    )
-    pts_codim2 = lambda self, as_indices=False: self.pts(
-        which=self._labels_codim2, as_indices=as_indices
-    )
-    pts_not_facets = lambda self, as_indices=False: self.pts(
-        which=self._labels_not_facet, as_indices=as_indices
-    )
+    @overload
+    def interior_points(self, as_indices: Literal[False] = False) -> np.ndarray: ...
 
-    # aliases
-    interior_points = pts_int
-    interior_pts = pts_int
-    boundary_points = pts_bdry
-    bdry_points = pts_bdry
-    points_interior_to_facets = pts_facet
-    pts_interior_to_facets = pts_facet
+    @overload
+    def interior_points(self, as_indices: Literal[True]) -> list: ...
 
-    boundary_points_not_interior_to_facets = pts_codim2
-    boundary_pts_not_interior_to_facets = pts_codim2
+    def interior_points(self, as_indices: bool = False) -> np.ndarray | list:
+        """
+        **Description:**
+        Returns the interior lattice points of the polytope.
 
-    points_not_interior_to_facets = pts_not_facets
-    pts_not_interior_to_facets = pts_not_facets
+        **Arguments:**
+        - `as_indices`: Return the points as indices of the full list of points
+          of the polytope.
+
+        **Returns:**
+        The interior lattice points of the polytope.
+        """
+        return self.points(which=self._labels_int, as_indices=as_indices)
+
+    @overload
+    def boundary_points(self, as_indices: Literal[False] = False) -> np.ndarray: ...
+
+    @overload
+    def boundary_points(self, as_indices: Literal[True]) -> list: ...
+
+    def boundary_points(self, as_indices: bool = False) -> np.ndarray | list:
+        """
+        **Description:**
+        Returns the boundary lattice points of the polytope.
+
+        **Arguments:**
+        - `as_indices`: Return the points as indices of the full list of points
+          of the polytope.
+
+        **Returns:**
+        The boundary lattice points of the polytope.
+        """
+        return self.points(which=self._labels_bdry, as_indices=as_indices)
+
+    @overload
+    def points_interior_to_facets(
+        self, as_indices: Literal[False] = False
+    ) -> np.ndarray: ...
+
+    @overload
+    def points_interior_to_facets(self, as_indices: Literal[True]) -> list: ...
+
+    def points_interior_to_facets(self, as_indices: bool = False) -> np.ndarray | list:
+        """
+        **Description:**
+        Returns the lattice points interior to facets.
+
+        **Arguments:**
+        - `as_indices`: Return the points as indices of the full list of points
+          of the polytope.
+
+        **Returns:**
+        The lattice points interior to facets.
+        """
+        return self.points(which=self._labels_facet, as_indices=as_indices)
+
+    @overload
+    def boundary_points_not_interior_to_facets(
+        self, as_indices: Literal[False] = False
+    ) -> np.ndarray: ...
+
+    @overload
+    def boundary_points_not_interior_to_facets(
+        self, as_indices: Literal[True]
+    ) -> list: ...
+
+    def boundary_points_not_interior_to_facets(
+        self, as_indices: bool = False
+    ) -> np.ndarray | list:
+        """
+        **Description:**
+        Returns the boundary lattice points not interior to facets.
+
+        **Arguments:**
+        - `as_indices`: Return the points as indices of the full list of points
+          of the polytope.
+
+        **Returns:**
+        The boundary lattice points not interior to facets.
+        """
+        return self.points(which=self._labels_codim2, as_indices=as_indices)
+
+    @overload
+    def points_not_interior_to_facets(
+        self, as_indices: Literal[False] = False
+    ) -> np.ndarray: ...
+
+    @overload
+    def points_not_interior_to_facets(self, as_indices: Literal[True]) -> list: ...
+
+    def points_not_interior_to_facets(
+        self, as_indices: bool = False
+    ) -> np.ndarray | list:
+        """
+        **Description:**
+        Returns the lattice points not interior to facets.
+
+        **Arguments:**
+        - `as_indices`: Return the points as indices of the full list of points
+          of the polytope.
+
+        **Returns:**
+        The lattice points not interior to facets.
+        """
+        return self.points(which=self._labels_not_facet, as_indices=as_indices)
 
     @overload
     def points_to_labels(self, points: Matrix, is_optimal: bool = False) -> list: ...
@@ -1327,14 +1395,14 @@ class Polytope:
         """
         # return the answer if known
         if self._labels_vertices is not None:
-            return self.pts(
+            return self.points(
                 which=self._labels_vertices,
                 optimal=optimal,
                 as_indices=as_indices,
             )
 
         # calculate the answer
-        if self.dim() <= 0:
+        if self.dimension() <= 0:
             # 0D... trivial
             self._labels_vertices = self._pts_order
 
@@ -1397,11 +1465,11 @@ class Polytope:
         """
         from cytools.polytopeface import PolytopeFace
 
-        if self.dim() < 0:
+        if self.dimension() < 0:
             raise NotImplementedError
 
         # input checking
-        if (d is not None) and (d not in range(self.dim() + 1)):
+        if (d is not None) and (d not in range(self.dimension() + 1)):
             raise ValueError(f"Polytope does not have faces of dimension {d}")
 
         # return answer if known
@@ -1419,7 +1487,7 @@ class Polytope:
 
             # codim>0 faces in increasing order of dimension
             for dim_faces in self._dual._faces[::-1][1:]:
-                self._faces.append(tuple(f.dual() for f in dim_faces))
+                self._faces.append(tuple(f.dual_face() for f in dim_faces))
             # full-dim face
             self._faces.append(
                 (PolytopeFace(self, self.labels_vertices, frozenset(), dim=self._dim),)
@@ -1432,7 +1500,7 @@ class Polytope:
             # cast to tuple
             self._faces = tuple(self._faces)
 
-        elif self.dim() == 4:
+        elif self.dimension() == 4:
             # can use optimized method for 4d polytopes
             self._faces = self._faces4d()
 
@@ -1451,17 +1519,21 @@ class Polytope:
         # get vertices, along with their saturated inequalities
         verts = [tuple(pt) for pt in self.vertices()]
         vert_sat = [self._pts_saturating[label] for label in self.labels_vertices]
-        vert_legacy = list(zip(verts, vert_sat))
+        vert_legacy = list(zip(verts, vert_sat, strict=True))
 
         # construct faces in reverse order (decreasing dim)
         self._faces = []
 
         # full-dim face
         self._faces.append(
-            (PolytopeFace(self, self.labels_vertices, frozenset(), dim=self.dim()),)
+            (
+                PolytopeFace(
+                    self, self.labels_vertices, frozenset(), dim=self.dimension()
+                ),
+            )
         )
         # if polytope is 0-dimensional, we're done!
-        if self.dim() == 0:
+        if self.dimension() == 0:
             self._faces = tuple(self._faces)
             return self.faces(d)
 
@@ -1473,11 +1545,11 @@ class Polytope:
         #
         # then, to get dim-(dd-1) faces, just take intersections of dim-dd ones
         ineq2pts_prev = {}
-        for dd in range(self.dim() - 1, 0, -1):
+        for dd in range(self.dimension() - 1, 0, -1):
             # map from inequalities to points saturating them
             ineq2pts = defaultdict(set)
 
-            if dd == self.dim() - 1:
+            if dd == self.dimension() - 1:
                 # facets... for f-th facet, just collect all points saturating
                 # said inequality
                 for pt in vert_legacy:
@@ -1559,12 +1631,12 @@ class Polytope:
         """
         from cytools.polytopeface import PolytopeFace
 
-        assert self.dim() == 4
+        assert self.dimension() == 4
 
         # get vertices, along with their saturated inequalities
         verts = [tuple(pt) for pt in self.vertices()]
         vert_sat = [self._pts_saturating[label] for label in self.labels_vertices]
-        vert_legacy = list(zip(verts, vert_sat))
+        vert_legacy = list(zip(verts, vert_sat, strict=True))
 
         # facets
         facets = defaultdict(set)
@@ -1654,7 +1726,7 @@ class Polytope:
         facets = p.facets()
         ```
         """
-        return self.faces(self.dim() - 1)
+        return self.faces(self.dimension() - 1)
 
     # H-rep, dual
     # ===========
@@ -1677,9 +1749,6 @@ class Polytope:
         **Returns:**
         The dual polytope.
 
-        **Aliases:**
-        `dual`, `polar_polytope`, `polar`.
-
         **Example:**
         We construct a reflexive polytope and find its dual. We then verify
         that the dual of the dual is the original polytope.
@@ -1693,7 +1762,7 @@ class Polytope:
         # True
         ```
         """
-        if self.dim() < 0:
+        if self.dimension() < 0:
             raise NotImplementedError
 
         # return answer if known
@@ -1715,11 +1784,6 @@ class Polytope:
         self._dual._dual = self
         return self._dual
 
-    # aliases
-    dual = dual_polytope
-    polar_polytope = dual_polytope
-    polar = dual_polytope
-
     def is_reflexive(self, allow_translations=True) -> bool:
         """
         **Description:**
@@ -1739,7 +1803,7 @@ class Polytope:
         # True
         ```
         """
-        if self.dim() <= 0:
+        if self.dimension() <= 0:
             return False
 
         # check if we know the answer
@@ -1771,12 +1835,12 @@ class Polytope:
                 # integral_nullspace returns the null vectors as *columns*, so
                 # the codimension is the number of columns, not of rows.
                 codim = integral_nullspace(self.points()).shape[1]
-                dim = self.ambient_dim() - codim
-                if dim != self.dim():
+                dim = self.ambient_dimension() - codim
+                if dim != self.dimension():
                     self._is_reflexive[allow_translations] = False
                 else:
                     p = Polytope(
-                        lll_reduce(self.points())[:, -self.dim() :],
+                        lll_reduce(self.points())[:, -self.dimension() :],
                         backend=self._backend,
                         deterministic_glsm_basis=self._deterministic_glsm_basis,
                     )
@@ -1885,7 +1949,7 @@ class Polytope:
         ```
         """
         # check that this is sensical
-        if self.dim() != self.ambient_dim():
+        if self.dimension() != self.ambient_dimension():
             raise NotImplementedError(
                 "Automorphisms can only be computed "
                 + "for full-dimensional polytopes."
@@ -1937,7 +2001,7 @@ class Polytope:
             # each still goes through the instance-cache wrapper on every one of
             # the |images| iterations, and `np.eye` was reallocated per
             # candidate.
-            dim = int(self.dim())
+            dim = int(self.dimension())
             n_f_min_vertices = len(f_min_vertices)
             vertices = self.vertices()
             identity = np.eye(dim, dtype=int)
@@ -2028,7 +2092,7 @@ class Polytope:
             return copy.deepcopy(self._Z2_actions)
 
         autos = self.automorphisms(action="left")
-        d = self.ambient_dim()
+        d = self.ambient_dimension()
 
         # all q in {0,1}^d except the trivial q = 0
         candidates = [q for q in itertools.product((0, 1), repeat=d) if any(q)]
@@ -2084,7 +2148,7 @@ class Polytope:
         #        [ 0,  0,  0,  0]])
         ```
         """
-        if self.dim() < 0:
+        if self.dimension() < 0:
             raise NotImplementedError
 
         # This function is based on code by Andrey Novoseltsev, Samuel Gonshaw,
@@ -2103,7 +2167,8 @@ class Polytope:
             if not self.is_solid():
                 warnings.warn(
                     "PALP doesn't support polytopes that are not "
-                    "full-dimensional. Using native backend."
+                    "full-dimensional. Using native backend.",
+                    stacklevel=2,
                 )
                 backend = "native"
 
@@ -2203,7 +2268,7 @@ class Polytope:
                 S[i] = i + 1
         # We determine the other rows of PM_max in turn by use of perms and
         # aut on previous rows.
-        for l in range(1, n_f - 1):
+        for row in range(1, n_f - 1):
             n_s = len(prm)
             n_s_bar = n_s
             cf = 0
@@ -2218,7 +2283,7 @@ class Polytope:
                 # We look for the line with the maximal entry in the first
                 # subsymmetry block, i.e. we are allowed to swap elements
                 # between 0 and S(0)
-                for s in range(l, n_f):
+                for s in range(row, n_f):
                     for j in range(1, S[0]):
                         v = PM[prmb[n_p][0].dot(range(n_f)), :][
                             :, prmb[n_p][1].dot(range(n_v))
@@ -2229,7 +2294,7 @@ class Polytope:
                         l_r[0] = PM[prmb[n_p][0].dot(range(n_f)), :][
                             :, prmb[n_p][1].dot(range(n_v))
                         ][s, 0]
-                        prmb[n_p][0] = PGE(n_f, l + 1, s + 1).dot(prmb[n_p][0])
+                        prmb[n_p][0] = PGE(n_f, row + 1, s + 1).dot(prmb[n_p][0])
                         n_p += 1
                         ccf = 1
                         prmb[n_p] = copy.copy(prm[k])
@@ -2243,14 +2308,14 @@ class Polytope:
                             continue
                         if d == 0:
                             # Maximal values agree, so possible symmetry
-                            prmb[n_p][0] = PGE(n_f, l + 1, s + 1).dot(prmb[n_p][0])
+                            prmb[n_p][0] = PGE(n_f, row + 1, s + 1).dot(prmb[n_p][0])
                             n_p += 1
                             prmb[n_p] = copy.copy(prm[k])
                         else:
                             # We found a greater maximal value for first entry.
                             # It becomes our new reference:
                             l_r[0] = d1
-                            prmb[n_p][0] = PGE(n_f, l + 1, s + 1).dot(prmb[n_p][0])
+                            prmb[n_p][0] = PGE(n_f, row + 1, s + 1).dot(prmb[n_p][0])
                             # Forget previous work done
                             cf = 0
                             prmb = {0: copy.copy(prmb[n_p])}
@@ -2274,19 +2339,19 @@ class Polytope:
                         for j in range(c + 1, h):
                             v = PM[prmb[s][0].dot(range(n_f)), :][
                                 :, prmb[s][1].dot(range(n_v))
-                            ][l]
+                            ][row]
                             if v[c] < v[j]:
                                 prmb[s][1] = PGE(n_v, c + 1, j + 1).dot(prmb[s][1])
                         if ccf == 0:
                             # Set reference and carry on to next permutation
                             l_r[c] = PM[prmb[s][0].dot(range(n_f)), :][
                                 :, prmb[s][1].dot(range(n_v))
-                            ][l, c]
+                            ][row, c]
                             ccf = 1
                         else:
                             d1 = PM[prmb[s][0].dot(range(n_f)), :][
                                 :, prmb[s][1].dot(range(n_v))
-                            ][l, c]
+                            ][row, c]
                             d = d1 - l_r[c]
                             if d < 0:
                                 n_p -= 1
@@ -2315,7 +2380,7 @@ class Polytope:
                 # the restrictions the last worked out
                 # row imposes.
                 c = 0
-                M = PM[prm[0][0].dot(range(n_f)), :][:, prm[0][1].dot(range(n_v))][l]
+                M = PM[prm[0][0].dot(range(n_f)), :][:, prm[0][1].dot(range(n_v))][row]
                 while c < n_v:
                     s = S[c] + 1
                     S[c] = c + 1
@@ -2350,7 +2415,7 @@ class Polytope:
                 S_max[i], S_max[k] = S_max[k], S_max[i]
                 p_c = PGE(n_v, 1 + i, 1 + k).dot(p_c)
         # Create array of possible NFs.
-        prm = [p_c.dot(l[1]) for l in prm.values()]
+        prm = [p_c.dot(perm[1]) for perm in prm.values()]
         Vs = [
             np.array(
                 fmpz_mat(V.T[:, sig.dot(range(n_v))].tolist()).hnf().tolist(),
@@ -2360,7 +2425,7 @@ class Polytope:
         ]
         Vmin = min(Vs)
         if affine_transform:
-            self._normal_form[args_id] = np.array(Vmin).T[:, : self.dim()]
+            self._normal_form[args_id] = np.array(Vmin).T[:, : self.dimension()]
         else:
             self._normal_form[args_id] = np.array(Vmin).T
         return np.array(self._normal_form[args_id])
@@ -2698,7 +2763,7 @@ class Polytope:
         [`random_triangulations_fair`](#random_triangulations_fair) function
         should be used.
         ```python {2,7}
-        p = Polytope([[1,0,0,0],[0,1,0,0],[0,0,1,0],[0,0,0,1],[-1,-1,-1,-1]]).dual()
+        p = Polytope([[1,0,0,0],[0,1,0,0],[0,0,1,0],[0,0,0,1],[-1,-1,-1,-1]]).dual_polytope()
         g = p.random_triangulations_fast()
         next(g) # Runs very quickly
         # A fine, regular, star triangulation of a 4-dimensional point configuration with 106 points in ZZ^4
@@ -2709,7 +2774,7 @@ class Polytope:
         """
         from cytools.triangulation import random_triangulations_fast_generator
 
-        # if self.ambient_dim() > self.dim():
+        # if self.ambient_dimension() > self.dimension():
         #    raise NotImplementedError("Only triangulations of "
         #                              "full-dimensional polytopes are "
         #                              "supported.")
@@ -2824,7 +2889,7 @@ class Polytope:
         [`random_triangulations_fast`](#random_triangulations_fast) function
         should be used instead.
         ```python {2,7}
-        p = Polytope([[1,0,0,0],[0,1,0,0],[0,0,1,0],[0,0,0,1],[-1,-1,-1,-1]]).dual()
+        p = Polytope([[1,0,0,0],[0,1,0,0],[0,0,1,0],[0,0,0,1],[-1,-1,-1,-1]]).dual_polytope()
         g = p.random_triangulations_fast()
         next(g) # Takes a long time (around a minute)
         # A fine, regular, star triangulation of a 4-dimensional point
@@ -2841,7 +2906,7 @@ class Polytope:
         """
         from cytools.triangulation import random_triangulations_fair_generator
 
-        if self.ambient_dim() > self.dim():
+        if self.ambient_dimension() > self.dimension():
             raise NotImplementedError(
                 "Only triangulations of full-dimensional polytopesare supported."
             )
@@ -2973,7 +3038,7 @@ class Polytope:
         #  A fine, regular, star triangulation of a 4-dimensional point configuration with 91 points in ZZ^4]
         ```
         """
-        if self.dim() != 4 or not self.is_reflexive():
+        if self.dimension() != 4 or not self.is_reflexive():
             raise NotImplementedError(
                 "GNN-based sampling is only implemented for reflexive "
                 "4-dimensional polytopes."
@@ -3187,7 +3252,7 @@ class Polytope:
         public entry points each have a single, honest return type."""
         from cytools.triangulation import Triangulation, all_triangulations
 
-        if len(self.points()) == self.dim() + 1:
+        if len(self.points()) == self.dimension() + 1:
             # simplex... trivial
             if raw_output:
                 # N.B.: points(as_indices=True) returns a list, so it must be
@@ -3218,7 +3283,8 @@ class Polytope:
             warnings.warn(
                 "Polytopes with more than around 17 points usually "
                 "have too many triangulations, so this function may "
-                "take too long or run out of memory."
+                "take too long or run out of memory.",
+                stacklevel=2,
             )
 
         return all_triangulations(
@@ -3273,7 +3339,7 @@ class Polytope:
         ```
         """
         # check that we support hodge-number calculations for this polytope
-        d = self.dim()
+        d = self.dimension()
         if not self.is_reflexive() or d not in (2, 3, 4, 5):
             raise ValueError(
                 "Only reflexive polytopes of dimension 2-5 are currently supported."
@@ -3313,11 +3379,11 @@ class Polytope:
                 # lattice for a term that is zero either way.
                 n_int = len(f.interior_points())
                 if n_int:
-                    hpq += n_int * len(f.dual().interior_points())
+                    hpq += n_int * len(f.dual_face().interior_points())
             if q == 1:
                 hpq += len(self.points_not_interior_to_facets()) - d - 1
             if q == d - 2:
-                hpq += len(self.dual().points_not_interior_to_facets()) - d - 1
+                hpq += len(self.dual_polytope().points_not_interior_to_facets()) - d - 1
             return hpq
         if p == 2:
             hpq = (
@@ -3335,12 +3401,8 @@ class Polytope:
     def h12(self, lattice: Lattice = "N") -> int:
         return self.hpq(1, 2, lattice=lattice)
 
-    h21 = h12
-
     def h13(self, lattice: Lattice = "N") -> int:
         return self.hpq(1, 3, lattice=lattice)
-
-    h31 = h13
 
     def h22(self, lattice: Lattice = "N") -> int:
         return self.hpq(2, 2, lattice=lattice)
@@ -3376,7 +3438,7 @@ class Polytope:
         ```
         """
         # check that we support hodge-number calculations for this polytope
-        if not self.is_reflexive() or self.dim() not in (2, 3, 4, 5):
+        if not self.is_reflexive() or self.dimension() not in (2, 3, 4, 5):
             raise ValueError(
                 "Only reflexive polytopes of dimension 2-5 are currently supported."
             )
@@ -3387,20 +3449,20 @@ class Polytope:
 
         # punt the answer if lattice "M"
         if lattice == "M":
-            return self.dual().chi(lattice="N")
+            return self.dual_polytope().chi(lattice="N")
 
         # check if we know the answer
         if self._chi is not None:
             return self._chi
 
         # calculate the answer
-        if self.dim() == 2:
+        if self.dimension() == 2:
             self._chi = 0
-        elif self.dim() == 3:
+        elif self.dimension() == 3:
             self._chi = self.h11(lattice=lattice) + 4
-        elif self.dim() == 4:
-            self._chi = 2 * (self.h11(lattice=lattice) - self.h21(lattice=lattice))
-        elif self.dim() == 5:
+        elif self.dimension() == 4:
+            self._chi = 2 * (self.h11(lattice=lattice) - self.h12(lattice=lattice))
+        elif self.dimension() == 5:
             self._chi = 48 + 6 * (
                 self.h11(lattice=lattice)
                 - self.h12(lattice=lattice)
@@ -3409,7 +3471,7 @@ class Polytope:
         else:
             raise NotImplementedError(
                 "Only polytopes of dimension 2-5 are currently supported, "
-                f"but this one is {self.dim()}-dimensional."
+                f"but this one is {self.dimension()}-dimensional."
             )
 
         # return
@@ -3449,11 +3511,11 @@ class Polytope:
             if self._is_favorable is None:
                 self._is_favorable = (
                     len(self.points_not_interior_to_facets())
-                    == self.h11(lattice="N") + self.dim() + 1
+                    == self.h11(lattice="N") + self.dimension() + 1
                 )
             return self._is_favorable
         if lattice == "M":
-            return self.dual().is_favorable(lattice="N")
+            return self.dual_polytope().is_favorable(lattice="N")
 
         raise ValueError('Lattice must be specified. Options are: "N" or "M".')
 
@@ -3497,7 +3559,7 @@ class Polytope:
         p.glsm_charge_matrix()
         # array([[-18,   1,   9,   6,   1,   1,   0],
         #        [ -6,   0,   3,   2,   0,   0,   1]])
-        p.glsm_charge_matrix().dot(p.points_not_interior_to_facets()) # By definition this product must be zero
+        p.glsm_charge_matrix().dot(p.points_not_interior_to_facets())  # must be zero
         # array([[0, 0, 0, 0],
         #        [0, 0, 0, 0]])
         p.glsm_charge_matrix(include_origin=False) # Excludes the canonical divisor
@@ -3635,7 +3697,8 @@ class Polytope:
                     "An integral basis could not be found. "
                     "A non-integral one will be computed. However, "
                     "this will not be usable as a basis of divisors "
-                    "for the ToricVariety or CalabiYau classes."
+                    "for the ToricVariety or CalabiYau classes.",
+                    stacklevel=2,
                 )
                 if pts_ind == tuple(
                     self.points_not_interior_to_facets(as_indices=True)
@@ -3644,7 +3707,8 @@ class Polytope:
                         "Please let the developers know about the "
                         "polytope that caused this issue. "
                         "Here are the vertices of the polytope: "
-                        f"{self.vertices().tolist()}"
+                        f"{self.vertices().tolist()}",
+                        stacklevel=2,
                     )
                 return self.glsm_charge_matrix(
                     include_origin=include_origin,
@@ -3699,7 +3763,7 @@ class Polytope:
                 if rank > current_rank:
                     good_lattice_basis = np.append(good_lattice_basis, p)
                     current_rank = rank
-                    if rank == self.dim():
+                    if rank == self.dimension():
                         break
             good_lattice_basis = np.sort(good_lattice_basis)
             glsm_basis = [i for i in range(len(pts)) if i not in good_lattice_basis]
@@ -3732,7 +3796,7 @@ class Polytope:
                 )
             linear_relations = np.insert(linear_relations, 0, np.ones(len(pts)), axis=0)
             linear_relations = np.insert(
-                linear_relations, 0, np.zeros(self.dim() + 1), axis=1
+                linear_relations, 0, np.zeros(self.dimension() + 1), axis=1
             )
             linear_relations[0][0] = 1
             linrel = linear_relations
@@ -3973,16 +4037,16 @@ class Polytope:
         """
         # calculate the answer if not known
         if self._volume is None:
-            if self.dim() == 0:
+            if self.dimension() == 0:
                 self._volume = 0
-            elif self.dim() == 1:
+            elif self.dimension() == 1:
                 # points(optimal=True) is (n,1)-shaped here, so flatten it to
                 # get an int rather than a length-1 array
                 pts_1d = self.points(optimal=True).flatten()
                 self._volume = int(max(pts_1d) - min(pts_1d))
             else:
                 self._volume = ConvexHull(self.points(optimal=True)).volume
-                self._volume *= math.factorial(self.dim())
+                self._volume *= math.factorial(self.dimension())
                 self._volume = int(round(self._volume))
 
         # return
@@ -4002,7 +4066,7 @@ class Polytope:
         **Returns:**
         A list of the three sets, as lists of point tuples.
         """
-        dual_vert = self.dual().vertices()
+        dual_vert = self.dual_polytope().vertices()
 
         S_i = [[], [], []]
         for p in self.points():
@@ -4033,20 +4097,20 @@ class Polytope:
         # [A 2-dimensional lattice polytope in ZZ^4]
         ```
         """
-        if not self.is_reflexive() or self.dim() != 4:
+        if not self.is_reflexive() or self.dimension() != 4:
             raise NotImplementedError("Only 4D reflexive polytopes are supported.")
         pts = self.points()
         S_i = self._huang_taylor_sets()
         # Check each of the three conditions
         gen_pts = []
-        for i in range(len(S_i[0])):
-            if tuple(-np.array(S_i[0][i])) in S_i[0]:
-                for j in range(i + 1, len(S_i[0])):
-                    if (
-                        tuple(-np.array(S_i[0][j])) in S_i[0]
-                        and tuple(-np.array(S_i[0][i])) != S_i[0][j]
-                    ):
-                        gen_pts.append((S_i[0][i], S_i[0][j]))
+        gen_pts.extend(
+            (S_i[0][i], S_i[0][j])
+            for i in range(len(S_i[0]))
+            if tuple(-np.array(S_i[0][i])) in S_i[0]
+            for j in range(i + 1, len(S_i[0]))
+            if tuple(-np.array(S_i[0][j])) in S_i[0]
+            and tuple(-np.array(S_i[0][i])) != S_i[0][j]
+        )
         for i in range(len(S_i[1])):
             for j in range(i + 1, len(S_i[1])):
                 p = tuple(-np.array(S_i[1][i]) - np.array(S_i[1][j]))
@@ -4175,7 +4239,7 @@ class Polytope:
         glsm_vert = np.array(
             fmpz_mat(self.vertices().T.tolist()).nullspace()[0].transpose().tolist(),
             dtype=int,
-        )[: -self.dim()]
+        )[: -self.dimension()]
         anticanon = np.sum(glsm_vert, axis=1)
 
         # compute if the Polytope is trilayer
@@ -4225,8 +4289,8 @@ def poly_v_to_h(pts: Matrix, backend: PolytopeBackend) -> tuple[np.ndarray, np.n
     return engine.run(pts_array)
 
 
-def saturating_lattice_pts(
-    pts_in: list[tuple],
+def _saturating_lattice_pts_uncached(
+    pts_in: Matrix,
     ineqs: Matrix | None = None,
     dim: int | None = None,
     backend: PolytopeBackend | None = None,
@@ -4237,8 +4301,8 @@ def saturating_lattice_pts(
     of the hyperplane inequalities that they saturate.
 
     **Arguments:**
-    - `pts`: A list of points spanning the hull.
-    - `ineqs`: Hyperplane inqualities defining the hull. Same format as
+    - `pts_in`: The points spanning the hull.
+    - `ineqs`: Hyperplane inequalities defining the hull. Same format as
         output by poly_v_to_h
     - `dim`: The dimension of the hull.
     - `backend`: The backend to use. Either "palp" or defaults to native.
@@ -4331,3 +4395,45 @@ def is_reflexive_barebones(points: Matrix, backend: PolytopeBackend = "qhull") -
 
     # all checks passed
     return True
+
+
+# Same story as `ppl_hull`: a pure function of (points, inequalities, dim,
+# backend) that a scan calls once per face over a handful of distinct inputs.
+# The single caller (`_process_points`) always passes numpy arrays.
+@functools.lru_cache(maxsize=4096)
+def _saturating_lattice_pts_cached(pts_key, ineqs_key, dim, backend):
+    pts_shape, pts_data = pts_key
+    pts = np.frombuffer(pts_data, dtype=np.int64).reshape(pts_shape)
+    if ineqs_key is None:
+        ineqs = None
+    else:
+        ineqs_shape, ineqs_data = ineqs_key
+        ineqs = np.frombuffer(ineqs_data, dtype=np.int64).reshape(ineqs_shape)
+    return _saturating_lattice_pts_uncached(pts, ineqs, dim, backend)
+
+
+def saturating_lattice_pts(
+    pts_in: Matrix,
+    ineqs: Matrix | None = None,
+    dim: int | None = None,
+    backend: PolytopeBackend | None = None,
+) -> tuple[np.ndarray, list[frozenset]]:
+    """Lattice points and the inequalities each saturates, memoized on the
+    input. Points are returned as a copy; the saturating sets are frozensets
+    and so are shared safely. See `_saturating_lattice_pts_uncached`.
+    """
+
+    def _key(a):
+        if a is None:
+            return None
+        arr = np.ascontiguousarray(np.asarray(a, dtype=np.int64))
+        return (arr.shape, arr.tobytes())
+
+    pts_arr = np.ascontiguousarray(np.asarray(pts_in, dtype=np.int64))
+    # Same gate as `ppl_hull`: only the 2-face-sized inputs recur.
+    if pts_arr.ndim != 2 or pts_arr.shape[1] > 2:
+        return _saturating_lattice_pts_uncached(pts_in, ineqs, dim, backend)
+    pts, saturating = _saturating_lattice_pts_cached(
+        _key(pts_in), _key(ineqs), dim, backend
+    )
+    return pts.copy(), list(saturating)

@@ -511,7 +511,7 @@ def h11(g):
 @quantity(source="database")
 def h21(g):
     """N-lattice Hodge number h^{2,1}."""
-    return int(g.polytope.h21(lattice="N"))
+    return int(g.polytope.h12(lattice="N"))
 
 
 @quantity(source="database")
@@ -547,7 +547,7 @@ def n_facets(g):
 @quantity(source="database")
 def n_dual_points(g):
     """Number of lattice points in the dual polytope."""
-    return len(g.polytope.dual().points())
+    return len(g.polytope.dual_polytope().points())
 
 
 @quantity
@@ -612,7 +612,7 @@ def tip_backend(g):
     """
     import cytools.config as config
 
-    if g.kahler_cone.ambient_dim() < 25:
+    if g.kahler_cone.ambient_dimension() < 25:
         return "osqp"  # exact QP
     return "mosek" if config.mosek_is_activated() else "highs"  # LP approximation
 
@@ -787,7 +787,10 @@ class _ExpandedBatch:
         self._rows = np.repeat(np.arange(len(base)), self._n)
         self._k = np.tile(np.arange(self._n), len(base))
         self.ks_ids = np.array(
-            [_mix(int(base[r]), int(k)) for r, k in zip(self._rows, self._k)],
+            [
+                _mix(int(base[r]), int(k))
+                for r, k in zip(self._rows, self._k, strict=True)
+            ],
             dtype=np.int64,
         )
         self.polytope_ids = base[self._rows]

@@ -45,7 +45,7 @@ def sr_ideal_reference(triang):
     over subset sizes 2..dim, matching the range the implementation covers.
     """
     labels = [ll for ll in triang.labels if ll != triang.poly._label_origin]
-    dim = triang.dim()
+    dim = triang.dimension()
 
     simplices = [set(s) for s in triang.simplices()]
 

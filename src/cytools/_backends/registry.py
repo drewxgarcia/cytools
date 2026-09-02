@@ -40,6 +40,7 @@ import warnings
 from collections.abc import Callable, Iterable, Mapping
 from contextvars import ContextVar
 from dataclasses import dataclass, field
+from types import MappingProxyType
 from typing import Any
 
 __all__ = [
@@ -138,8 +139,13 @@ class GuaranteeViolation(RuntimeError):
 # mapping, which is the safe default (they resolve on their own capabilities).
 # A pool that must inherit the parent's overrides should pass get_overrides()
 # to its workers and apply it with set_overrides() in the initializer.
+#: A `ContextVar` default is shared by every context that never sets one, so
+#: it must not be mutable. Readers copy before mutating; this makes that a
+#: guarantee rather than a convention.
+_EMPTY_OVERRIDES: Mapping[str, str] = MappingProxyType({})
+
 _overrides: ContextVar[Mapping[str, str]] = ContextVar(
-    "cytools_engine_overrides", default={}
+    "cytools_engine_overrides", default=_EMPTY_OVERRIDES
 )
 
 

@@ -38,12 +38,22 @@ verified mechanically.
 
 ## Public API
 
-`cytools.__init__` is the compatibility surface. Public names are listed in
+`cytools.__init__` is the public surface. Public names are listed in
 `cytools.__all__` and resolved from an explicit lazy-export map. Importing the
 package root therefore loads no numerical stack or domain module; accessing a
-name imports only its owning module. Internal modules may change without a
-deprecation cycle; removing or changing a public name requires a changelog
-entry and, after a release, a deprecation period.
+name imports only its owning module.
+
+Upstream source compatibility is not a design constraint. A concept gets one
+spelling; convenience aliases and renamed-parameter shims are deleted rather
+than kept, because two names for one thing is a cost paid at every call site
+and in every doc page. Removing or changing a public name requires a changelog
+entry. Until the first tagged release it requires nothing further; after that,
+a deprecation period applies.
+
+The exception is a name dictated by a dependency. `Fan.cones` spells its index
+flag `as_inds`, not the `as_indices` used everywhere else, because it overrides
+`regfans.fan.Fan.cones` and renaming that parameter would break the override
+contract. Such cases are documented at the definition, not worked around.
 
 Core domain modules follow the same rule for expensive or cyclic peers.
 `Polytope` imports `Triangulation` and `PolytopeFace` inside the operations that
@@ -71,10 +81,12 @@ correctness policy. Advanced users can scope a reproducibility or differential
 test with `cytools.config.engines(...)`; overrides cannot silently weaken a
 call site's guarantees.
 
-Historical `backend=` arguments remain at established public entry points for
-drop-in compatibility, but they resolve into the same adapters. New internal
-code must not thread backend strings through the domain graph or import an
-optional implementation directly.
+`backend=` arguments remain at public entry points where they select a
+genuinely different implementation, and they resolve into the same adapters.
+They are not kept for compatibility: where such an argument had degenerated
+into a no-op it was removed outright, as `Cone.is_pointed(backend, tol)` was.
+New internal code must not thread backend strings through the domain graph or
+import an optional implementation directly.
 
 ## Extension modules
 

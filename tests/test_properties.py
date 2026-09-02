@@ -63,10 +63,10 @@ def test_mirror_swaps_hodge_numbers(experimental_features, verts):
     assert p.is_reflexive()
 
     cy = p.triangulate().get_cy()
-    cy_mirror = p.dual().triangulate().get_cy()
+    cy_mirror = p.dual_polytope().triangulate().get_cy()
 
-    assert cy.h11() == cy_mirror.h21()
-    assert cy.h21() == cy_mirror.h11()
+    assert cy.h11() == cy_mirror.h12()
+    assert cy.h12() == cy_mirror.h11()
     # ... hence the Euler characteristics are opposite
     assert cy.chi() == -cy_mirror.chi()
 
@@ -89,9 +89,9 @@ def test_linear_equivalence_contracts_to_zero(verts):
     kappa = cy.intersection_numbers(in_basis=False, format="dense")
 
     # there are h11 + dim independent divisor classes and dim relations
-    assert len(divs) == cy.h11() + p.dim()
+    assert len(divs) == cy.h11() + p.dimension()
 
-    for m in np.eye(p.dim(), dtype=int):
+    for m in np.eye(p.dimension(), dtype=int):
         vec = np.zeros(kappa.shape[0])
         vec[list(divs)] = pts @ m
         # the relation must be non-trivial, else the test is vacuous
@@ -130,8 +130,8 @@ def test_float_and_exact_intersection_numbers_agree_mirror(experimental_features
     the float-solve-then-round path is doing real work. Also compares the full
     (non-basis) tensor rather than just the basis one.
     """
-    cy_float = Polytope(H11_8).dual().triangulate().get_cy()
-    cy_exact = Polytope(H11_8).dual().triangulate().get_cy()
+    cy_float = Polytope(H11_8).dual_polytope().triangulate().get_cy()
+    cy_exact = Polytope(H11_8).dual_polytope().triangulate().get_cy()
     assert cy_float.h11() == 24
 
     for in_basis in (True, False):

@@ -15,6 +15,12 @@ are occasionally published a day or two later.
 
 ## [Unreleased]
 
+CYTools Workbench is a true fork, not a drop-in replacement for upstream
+CYTools. Source compatibility with upstream is not a goal; a concept gets one
+spelling, and convenience aliases are removed rather than retained. Until the
+first tagged release, renames land without a deprecation cycle. The breaking
+changes below are the consequence.
+
 ### Added
 
 - Notebook-first landscape workflows: `scan`, `sweep`, `status`, the
@@ -30,9 +36,19 @@ are occasionally published a day or two later.
 
 ### Changed
 
-- The project is now an independently versioned, drop-in fork distributed as
-  `cytools-workbench` while retaining the `cytools` import namespace. Its first
-  Workbench release is based on upstream CYTools 1.4.12.
+- Lint coverage extended to `B` (bugbear), `PERF`, `C4`, `RSE`, `TID`, `Q`,
+  `ICN`, `INT`, `SLOT`, `FLY`, and `PIE`, with every violation fixed rather
+  than suppressed. Every `zip()` now states `strict=` explicitly; the one call
+  that genuinely relies on truncation (optional `labels` in
+  `Polytope._process_points`) says `strict=False` and explains why. All 32
+  `warnings.warn` calls gained `stacklevel=`, so a warning points at the caller
+  instead of at library internals. `PERF203` is the sole ignored rule: it
+  predates zero-cost exceptions and buys nothing on the 3.12+ this requires.
+
+- The project is now an independently versioned fork distributed as
+  `cytools-workbench` while retaining the `cytools` import namespace. It is
+  explicitly *not* a drop-in replacement -- see the note at the top of this
+  release. Its first Workbench release is based on upstream CYTools 1.4.12.
 - The supported runtime is Python 3.12+ on Linux and macOS 15+ on Apple
   Silicon. CI builds once and tests the resulting wheel in clean environments;
   optional native backends are tested independently.
@@ -127,6 +143,36 @@ are occasionally published a day or two later.
 
 ### Removed
 
+- **Breaking:** the renamed-parameter shims. `as_triang_indices`
+  (`Triangulation.points`), `as_face_inds` (`Fan.restricted_simps`),
+  `as_index` (`find_trilayer_vertex_polytope`), and `as_vertex_index`
+  (`find_trilayer_vertex_vertices`) are gone; use `as_indices`. The
+  `cytools._compat` module and its `resolve_deprecated_bool` helper are
+  deleted with them. `Fan.cones` keeps the spelling `as_inds` because it
+  overrides `regfans.fan.Fan.cones` and renaming that parameter would break
+  the override contract; its duplicate `as_indices` keyword is removed.
+- **Breaking:** the `backend` and `tol` arguments of `Cone.is_pointed`, which
+  were accepted, validated, and then ignored -- pointedness has been computed
+  by the exact duality test for every representation regardless. The
+  `PointednessBackend` type alias goes with them.
+- **Breaking:** `"lp"` as a synonym for `"legacy"` in
+  `Cone.extremal_rays(method=...)`. `ExtremalRaysMethod` is now
+  `"extremalrays" | "legacy" | "nnls"`. (`ExtremalityMethod` still offers
+  `"lp"`, where it names a genuinely distinct per-ray algorithm.)
+- **Breaking:** the point-accessor aliases on `Polytope`. `points`,
+  `interior_points`, `boundary_points`, `points_interior_to_facets`,
+  `boundary_points_not_interior_to_facets`, and `points_not_interior_to_facets`
+  are now the only spellings for these six operations. Removed: the terse forms
+  (`pts`, `pts_int`, `pts_bdry`, `pts_facet`, `pts_codim2`, `pts_not_facets`)
+  and the abbreviation variants (`interior_pts`, `bdry_points`,
+  `pts_interior_to_facets`, `boundary_pts_not_interior_to_facets`,
+  `pts_not_interior_to_facets`) -- seventeen public names resolving to one
+  implementation. The surviving spellings are the ones `PolytopeFace` already
+  uses, so the sibling classes now name the same concept identically, and
+  `pts_int` no longer reads as "integer points" in a library about lattice
+  points.
+- **Breaking:** `Triangulation.polytope` and `PolytopeFace.ambient_polytope`,
+  which restated the `poly` and `ambient_poly` properties.
 - Conda environment files and the Conda-backed desktop installers. PyPI is the
   user installation path, and source development and CI use the committed `uv`
   lockfile.
@@ -152,6 +198,12 @@ are occasionally published a day or two later.
   enumerators, are unchanged.
 
 ### Fixed
+
+- `Triangulation.automorphism_orbit` grew the orbit by re-applying
+  automorphisms to *orbit elements*, but expressed that by letting a loop
+  variable shadow the `simps` that a nested helper closed over. The helper now
+  takes the simplices as a parameter. No behaviour change -- the data flow is
+  simply visible, and a rename can no longer silently truncate the orbit.
 
 - `Fan.restricted_simps(padded=True, as_face_inds=False)` raised
   `TypeError: 'frozenset' object is not subscriptable`. The padding step

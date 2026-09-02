@@ -39,7 +39,7 @@ Usage::
     def hodge(vertices):
         from cytools import Polytope
         cy = Polytope(vertices).triangulate().get_toric_variety().get_cy()
-        return {"h11": cy.h11(), "h21": cy.h21(), "chi": cy.chi()}
+        return {"h11": cy.h11(), "h21": cy.h12(), "chi": cy.chi()}
 
     summary = materialize(
         "hodge", hodge, store=store,
@@ -178,11 +178,11 @@ class DerivedStore:
         d = self.root / quantity
         if not d.exists():
             return []
-        out = []
-        for p in d.iterdir():
-            if p.is_dir() and p.name.startswith("v") and p.name[1:].isdigit():
-                out.append(int(p.name[1:]))
-        return sorted(out)
+        return sorted(
+            int(p.name[1:])
+            for p in d.iterdir()
+            if p.is_dir() and p.name.startswith("v") and p.name[1:].isdigit()
+        )
 
     def _parts(self, quantity: str, version: int = 1) -> list[Path]:
         d = self.quantity_dir(quantity, version)
@@ -663,7 +663,25 @@ def _make_pool(workers, fn):
 
     # fork is unsafe here: the compiled dependencies segfault in a forked child
     ctx = mp.get_context("spawn")
-    return ProcessPoolExecutor(max_workers=workers, mp_context=ctx)
+    # `forkserver` is not inherited by spawn-ed children, so a worker that
+    # computes GV invariants has to install it itself -- the initializer hook
+    # `configure_gv_subprocess` documents. Without this each GV call in a
+    # worker pays ~137 ms of subprocess start-up. The forkserver itself starts
+    # lazily, so payloads that never touch cygv pay essentially nothing.
+    return ProcessPoolExecutor(
+        max_workers=workers, mp_context=ctx, initializer=_init_worker
+    )
+
+
+def _init_worker() -> None:
+    """Per-worker setup. Must stay import-light and never raise."""
+    try:
+        from cytools.calabiyau import configure_gv_subprocess
+
+        configure_gv_subprocess()
+    except Exception:
+        # A worker must not die because an optional optimization is unavailable.
+        pass
 
 
 def _run_batch(vertex_list, fn, chunksize, pool=None):
@@ -689,7 +707,7 @@ def _safe(fn, vertices):
         # A fact about the geometry, not a failure. Recorded so the row is not
         # retried, and counted apart from errors.
         return {UNSUPPORTED_COLUMN: str(e) or "unsupported"}
-    except Exception as e:  # noqa: BLE001 - one bad geometry must not stop a scan
+    except Exception as e:  # one bad geometry must not stop a scan
         return {ERROR_COLUMN: f"{type(e).__name__}: {e}"}
     if not isinstance(out, dict):
         raise TypeError(
@@ -806,7 +824,7 @@ def materialize(
             results = _run_batch(vertex_list, fn, chunksize, pool=pool)
 
             ok_ids, ok_results = [], []
-            for i, res in zip(todo, results):
+            for i, res in zip(todo, results, strict=True):
                 failed = ERROR_COLUMN in res
                 if failed:
                     totals["failed"] += 1

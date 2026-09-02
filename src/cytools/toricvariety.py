@@ -125,7 +125,7 @@ class ToricVariety:
         # Regularity is not checked since it is generally slow.
         if not triang.is_star():
             raise ValueError("The input triangulation must be star.")
-        if not triang.polytope().is_reflexive() and not config._exp_features_enabled:
+        if not triang.poly.is_reflexive() and not config._exp_features_enabled:
             raise Exception(
                 "The experimental features must be enabled to "
                 "construct toric varieties from triangulations "
@@ -141,13 +141,13 @@ class ToricVariety:
         self._curve_basis = None
         self._curve_basis_mat = None
         self._mori_cone = [None] * 3
-        self._intersection_numbers = dict()
+        self._intersection_numbers = {}
         self._prime_divs = None
         self._is_compact = None
         self._is_smooth = None
         self._canon_div_is_smooth = None
         self._eff_cone = None
-        self._fan_cones = dict()
+        self._fan_cones = {}
         self._nef_part = None
         self._cy = None
         if not self.is_compact() and not config._exp_features_enabled:
@@ -199,12 +199,12 @@ class ToricVariety:
             self._curve_basis = None
             self._curve_basis_mat = None
             self._mori_cone = [None] * 3
-            self._intersection_numbers = dict()
+            self._intersection_numbers = {}
             self._prime_divs = None
             self._is_compact = None
             self._is_smooth = None
             self._canon_div_is_smooth = None
-            self._fan_cones = dict()
+            self._fan_cones = {}
             self._nef_part = None
             self._cy = None
             if recursive:
@@ -235,7 +235,7 @@ class ToricVariety:
         """
         out_str = (
             f"A {'smooth' if self.is_smooth() else 'simplicial'} "
-            f"{'' if self.is_compact() else 'non-'}compact {self.dim()}"
+            f"{'' if self.is_compact() else 'non-'}compact {self.dimension()}"
             f"-dimensional toric variety with {len(self.triangulation().simplices())}"
             f" affine patches"
         )
@@ -349,7 +349,7 @@ class ToricVariety:
         """
         if self._is_compact is not None:
             return self._is_compact
-        self._is_compact = (0,) * self.dim() in [
+        self._is_compact = (0,) * self.dimension() in [
             tuple(pt) for pt in self.polytope().interior_points()
         ]
         return self._is_compact
@@ -402,7 +402,7 @@ class ToricVariety:
         # True
         ```
         """
-        return self._triang.polytope()
+        return self._triang.poly
 
     def dimension(self):
         """
@@ -415,9 +415,6 @@ class ToricVariety:
         **Returns:**
         *(int)* The complex dimension of the toric variety.
 
-        **Aliases:**
-        `dim`.
-
         **Example:**
         We construct a toric variety and find its dimension.
         ```python {4}
@@ -428,10 +425,7 @@ class ToricVariety:
         # 4
         ```
         """
-        return self.triangulation().dim()
-
-    # aliases
-    dim = dimension
+        return self.triangulation().dimension()
 
     def sr_ideal(self):
         """
@@ -815,12 +809,12 @@ class ToricVariety:
             if from_intersection_numbers:
                 mori_rays = (
                     self._compute_mori_rays_from_intersections_4d()
-                    if self.dim() == 4
+                    if self.dimension() == 4
                     else self._compute_mori_rays_from_intersections()
                 )
                 mori_cone = Cone(mori_rays)
             else:
-                mori_cone = self.triangulation().secondary_cone().dual()
+                mori_cone = self.triangulation().secondary_cone().dual_cone()
             self._mori_cone[0] = mori_cone
 
         # 0: All divs, 1: No origin, 2: In basis
@@ -874,7 +868,7 @@ class ToricVariety:
         """
         return mori_rays_from_intersection_numbers(
             self.intersection_numbers(in_basis=False),
-            dim=self.dim(),
+            dim=self.dimension(),
             num_divs=self.glsm_charge_matrix().shape[1],
         )
 
@@ -996,7 +990,7 @@ class ToricVariety:
             g = abs(gcd_list([ii[1] for ii in row]))
             for ii in row:
                 ii[1] = int(round(ii[1] / g))
-        row_list = set(tuple(tuple(ii) for ii in sorted(row)) for row in row_list)
+        row_list = {tuple(tuple(ii) for ii in sorted(row)) for row in row_list}
         mori_rays = np.zeros((len(row_list), num_divs), dtype=int)
         for i, row in enumerate(row_list):
             for ii in row:
@@ -1027,7 +1021,7 @@ class ToricVariety:
         # A rational polyhedral cone in RR^2 defined by 3 hyperplanes normals
         ```
         """
-        return self.mori_cone(in_basis=True).dual()
+        return self.mori_cone(in_basis=True).dual_cone()
 
     def _construct_intnum_equations_4d(self):
         """
@@ -1093,7 +1087,8 @@ class ToricVariety:
 
         face_rows = faces.tolist()
         distintnum_array = [
-            row + [val] for row, val in zip(face_rows, inv_abs_dets.tolist())
+            row + [val]
+            for row, val in zip(face_rows, inv_abs_dets.tolist(), strict=True)
         ]
 
         simp_2 = {j for f in face_rows for j in combinations(f, 2)}
@@ -1234,7 +1229,7 @@ class ToricVariety:
         rhs_eqn: list[int] = []
         rhs_coord: list[int] = []
         rhs_val: list[float] = []
-        for row, val in zip(face_rows, inv_abs_dets.tolist()):
+        for row, val in zip(face_rows, inv_abs_dets.tolist(), strict=True):
             a, b, c, d = row
             rhs_eqn.append(eqn_index[(a, b, c)])
             rhs_coord.append(d)
@@ -1314,7 +1309,7 @@ class ToricVariety:
         intnums = v.intersection_numbers()
         ```
         """
-        dim = self.dim()
+        dim = self.dimension()
         pts_ext = np.empty((self.triangulation().points().shape[0], dim + 1), dtype=int)
         pts_ext[:, :-1] = self.triangulation().points()
         pts_ext[:, -1] = 1
@@ -1557,11 +1552,11 @@ class ToricVariety:
                     "The experimental features must be enabled to use exact arithmetic."
                 )
             # Construct the linear equations
-            # Note that self.dim gives the dimension of the CY not the of the
+            # Note that self.dimension gives the dimension of the CY not the of the
             # variety
             Mat, C, distintnum_array, variable_array = (
                 self._construct_intnum_equations_4d()
-                if self.dim() == 4
+                if self.dimension() == 4
                 else self._construct_intnum_equations()
             )
             # The system to be solved is Mat*x + C = 0. This is an
@@ -1640,7 +1635,7 @@ class ToricVariety:
             # This is because precision errors add up significantly for
             # intersection numbers with self-intersections of the canonical
             # divisor
-            dim = self.dim()
+            dim = self.dimension()
             canon_intnum: defaultdict[tuple[int, ...], Any] = defaultdict(lambda: 0)
             for ii in intnums:
                 # dropping index j from a tuple is slicing, not a filtered
@@ -1690,10 +1685,10 @@ class ToricVariety:
             for n in range(2, dim + 1):
                 tmp_intnum: defaultdict[tuple[int, ...], Any] = defaultdict(lambda: 0)
                 for ii, ii_val in canon_intnum_n[-1].items():
-                    choices = set(
+                    choices = {
                         tuple(c for i, c in enumerate(ii[n - 1 :]) if i != j)
                         for j in range(dim + 1 - n)
-                    )
+                    }
                     for c in choices:
                         tmp_intnum[(0,) * n + c] -= ii_val
                 if exact_arithmetic:
@@ -1829,9 +1824,10 @@ class ToricVariety:
         pts_triang = {tuple(pt) for pt in self._triang.points()[ind_triang]}
         sm = pts_mpcp.issubset(pts_triang) and (
             True
-            if self.dim() <= 4
+            if self.dimension() <= 4
             else all(
-                c.is_smooth() for c in self.fan_cones(self.dim() - 1, self.dim() - 2)
+                c.is_smooth()
+                for c in self.fan_cones(self.dimension() - 1, self.dimension() - 2)
             )
         )
         self._canon_div_is_smooth = sm
@@ -1899,8 +1895,8 @@ class ToricVariety:
         from cytools.cone import Cone
 
         if d is None:
-            d = self.dim() if face_dim is None else face_dim
-        if d not in range(1, self.dim() + 1):
+            d = self.dimension() if face_dim is None else face_dim
+        if d not in range(1, self.dimension() + 1):
             raise ValueError("Only cones of dimension 1 through d are supported.")
         if (d, face_dim) in self._fan_cones:
             return self._fan_cones[(d, face_dim)]
@@ -1978,13 +1974,13 @@ class ToricVariety:
             if not self.triangulation().is_fine():
                 raise ValueError("Triangulation is non-fine.")
             if not config._exp_features_enabled:
-                if self.dim() != 4:
+                if self.dimension() != 4:
                     raise Exception(
                         "The experimental features must be enabled to "
                         "construct CYs with dimension other than 3... "
-                        f"observed dimension = {self.dim()}"
+                        f"observed dimension = {self.dimension()}"
                     )
-                if not self.triangulation().polytope().is_favorable(lattice="N"):
+                if not self.triangulation().poly.is_favorable(lattice="N"):
                     raise Exception(
                         "The experimental features must be enabled to "
                         "construct non-favorable CYs..."
@@ -1992,7 +1988,7 @@ class ToricVariety:
 
             # check that we have sensical points
             triang = self.triangulation()
-            poly = triang.polytope()
+            poly = triang.poly
 
             if sorted(triang.labels) == sorted(poly.labels_not_facet):
                 pass
