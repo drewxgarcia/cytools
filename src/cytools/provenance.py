@@ -276,20 +276,36 @@ def combined_fingerprint(records: list[dict | None]) -> dict[str, Any]:
         record with a `sources` list, so a merge across generations stays
         visible instead of resolving to one arbitrary answer.
     """
+    # De-duplicate by digest, keeping first-seen order. The set of seen keys is
+    # carried alongside rather than rebuilt from `distinct` on each iteration,
+    # which was quadratic in the number of parts being merged.
     distinct: list[dict | None] = []
+    seen: set[str | None] = set()
     for record in records:
         key = None if record is None else record.get("digest")
-        if key not in [None if r is None else r.get("digest") for r in distinct]:
+        if key not in seen:
+            seen.add(key)
             distinct.append(record)
 
     if len(distinct) == 1 and distinct[0] is not None:
         return dict(distinct[0])
 
     sources = [r for r in distinct if r is not None]
-    payload = json.dumps(sources, sort_keys=True, separators=(",", ":"))
+    # Counted over `records`, not `distinct`. Unstamped sources all share the
+    # key `None` and collapse to one entry during de-duplication, so counting
+    # the de-duplicated list reported 1 however many there were -- a merge of
+    # forty unstamped parts claimed a single unstamped source.
+    unstamped = sum(1 for record in records if record is None)
+    # The count is inside the digest, so two merges that differ only in how
+    # much unattributed data they swept up do not present the same digest.
+    payload = json.dumps(
+        {"sources": sources, "unstamped_sources": unstamped},
+        sort_keys=True,
+        separators=(",", ":"),
+    )
     return {
         "sources": sources,
-        "unstamped_sources": sum(1 for r in distinct if r is None),
+        "unstamped_sources": unstamped,
         "digest": hashlib.sha256(payload.encode()).hexdigest()[:16],
     }
 

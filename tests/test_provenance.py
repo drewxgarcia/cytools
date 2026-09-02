@@ -196,4 +196,12 @@ def test_combined_provenance_of_agreeing_sources_is_just_that_provenance():
     record = provenance.fingerprint()
 
     assert provenance.combined_fingerprint([record, dict(record)]) == record
-    assert provenance.combined_fingerprint([None, None])["unstamped_sources"] == 1
+
+
+def test_combined_provenance_counts_every_unstamped_source():
+    two = provenance.combined_fingerprint([None, None])
+    three = provenance.combined_fingerprint([None, None, None])
+
+    assert two["unstamped_sources"] == 2
+    assert three["unstamped_sources"] == 3
+    assert two["digest"] != three["digest"]
