@@ -123,8 +123,8 @@ def find_interior_point():
     assert c.contains(pt)
 
 
+@pytest.mark.requires_dependency("cvxopt")
 def test_cvxopt_backend_when_installed():
-    pytest.importorskip("cvxopt", reason="requires the cvxopt extra")
     c = Cone([[1, 0], [0, 1]])
     tip = c.tip_of_stretched_cone(backend="cvxopt")
     assert tip is not None
@@ -162,8 +162,8 @@ def test_find_lattice_points_finite_coord_bound_exhausted():
         c.find_lattice_points(min_points=3, fast_mode=False, max_coord=1, deg_window=10)
 
 
+@pytest.mark.requires_dependency("PyNormaliz")
 def test_hilbert_basis():
-    pytest.importorskip("PyNormaliz", reason="requires the normaliz extra")
     c = Cone([[1, 3], [2, 1]])
     hb = c.hilbert_basis()
     assert {tuple(row) for row in hb} == {(1, 1), (1, 2), (1, 3), (2, 1)}

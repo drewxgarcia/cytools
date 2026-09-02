@@ -18,9 +18,15 @@ import pytest
 
 from cytools import Polytope
 
-POLYTOPES = [
+REFLEXIVE_POLYTOPES = [
     [[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1], [-1, -1, -6, -9]],
     [[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1], [-1, -1, -1, -1]],
+    [[-6, -8, -5, -5], [0, 1, 0, 0], [1, 0, 0, 0], [2, 4, 5, 0], [3, 3, 0, 5]],
+]
+
+SMOOTH_POLYTOPES = [REFLEXIVE_POLYTOPES[1]]
+
+NON_REFLEXIVE_POLYTOPES = [
     [
         [1, 0, 0, 0],
         [0, 1, 0, 0],
@@ -28,22 +34,36 @@ POLYTOPES = [
         [0, 0, 0, 1],
         [-1, -1, -3, -6],
         [-1, -1, -1, -1],
-    ],
-    [[-6, -8, -5, -5], [0, 1, 0, 0], [1, 0, 0, 0], [2, 4, 5, 0], [3, 3, 0, 5]],
+    ]
 ]
 
 
 def _toric_variety(verts):
     p = Polytope(verts)
-    if not p.is_reflexive():
-        pytest.skip("toric varieties from non-reflexive polytopes need exp features")
+    assert p.is_reflexive(), (
+        "the supported-fixture list contains a non-reflexive polytope"
+    )
     triang = p.triangulate(make_star=True)
-    if not triang.is_star():
-        pytest.skip("toric varieties require a star triangulation")
+    assert triang.is_star(), (
+        "the supported fixture did not produce a star triangulation"
+    )
     return triang.get_toric_variety()
 
 
-@pytest.mark.parametrize("verts", POLYTOPES, ids=lambda v: f"{len(v)}v")
+@pytest.mark.parametrize("verts", NON_REFLEXIVE_POLYTOPES, ids=lambda v: f"{len(v)}v")
+def test_non_reflexive_intersection_numbers_are_explicitly_unsupported(
+    verts, experimental_features
+):
+    """An unsupported domain is an asserted contract, not skipped coverage."""
+    polytope = Polytope(verts)
+    assert not polytope.is_reflexive()
+    variety = polytope.triangulate(make_star=True).get_toric_variety()
+
+    with pytest.raises(ValueError, match="only be computed for reflexive polytopes"):
+        variety.intersection_numbers()
+
+
+@pytest.mark.parametrize("verts", REFLEXIVE_POLYTOPES, ids=lambda v: f"{len(v)}v")
 def test_intersection_numbers_annihilate_the_linear_relations(verts):
     r"""For every linear relation l and every divisor triple (j, k, m):
 
@@ -81,7 +101,7 @@ def test_intersection_numbers_annihilate_the_linear_relations(verts):
     assert worst < 1e-6, f"linear relations violated by {worst:.3e}"
 
 
-@pytest.mark.parametrize("verts", POLYTOPES, ids=lambda v: f"{len(v)}v")
+@pytest.mark.parametrize("verts", REFLEXIVE_POLYTOPES, ids=lambda v: f"{len(v)}v")
 def test_in_basis_is_the_filtered_full_tensor(verts):
     """The basis-restricted tensor must equal filtering the full one.
 
@@ -100,12 +120,11 @@ def test_in_basis_is_the_filtered_full_tensor(verts):
         assert in_basis[key] == pytest.approx(expected[key], abs=1e-8)
 
 
-@pytest.mark.parametrize("verts", POLYTOPES, ids=lambda v: f"{len(v)}v")
+@pytest.mark.parametrize("verts", SMOOTH_POLYTOPES, ids=lambda v: f"{len(v)}v")
 def test_intersection_numbers_are_integral_when_smooth(verts):
     """A smooth toric variety has integral intersection numbers."""
     tv = _toric_variety(verts)
-    if not tv.is_smooth():
-        pytest.skip("toric variety is not smooth")
+    assert tv.is_smooth(), "the smooth-fixture list contains a singular variety"
 
     for key, val in tv.intersection_numbers(in_basis=False).items():
         assert abs(round(float(val)) - float(val)) < 1e-6, f"{key} -> {val}"
@@ -121,7 +140,7 @@ def test_projective_space_and_quintic_pinned_values():
     independent intersection number kappa = 5. Note the distinction: the 5 is a
     property of the Calabi-Yau, not of the ambient toric variety.
     """
-    tv = _toric_variety(POLYTOPES[1])
+    tv = _toric_variety(REFLEXIVE_POLYTOPES[1])
 
     in_basis = tv.intersection_numbers(in_basis=True)
     assert len(in_basis) == 1
@@ -141,7 +160,7 @@ def test_distinct_intersection_numbers_match_simplex_volumes():
 
     Guards the batched-determinant path and the row ordering feeding it.
     """
-    verts = POLYTOPES[0]
+    verts = REFLEXIVE_POLYTOPES[0]
     p = Polytope(verts)
     triang = p.triangulate()
     tv = triang.get_toric_variety()

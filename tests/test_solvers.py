@@ -24,6 +24,7 @@ def _least_squares_system(seed=0, m=60, n=15):
     return M, list(C), x_true
 
 
+@pytest.mark.requires_dependency("sksparse.cholmod")
 def test_scikit_sparse_api_when_installed():
     """The optional performance extra must expose the 0.5+ API.
 
@@ -31,14 +32,22 @@ def test_scikit_sparse_api_when_installed():
     ``cholesky_AAt`` in favour of ``cho_factor``. A missing module or a missing
     name should fail loudly here rather than degrade the solver silently.
     """
-    pytest.importorskip("sksparse.cholmod")
     from sksparse.cholmod import (  # noqa: F401  # ty: ignore[unresolved-import]  # compiled extension, no stubs
         CholmodError,
         cho_factor,
     )
 
 
-@pytest.mark.parametrize("backend", ["sksparse", "scipy", "all"])
+@pytest.mark.parametrize(
+    "backend",
+    [
+        pytest.param(
+            "sksparse", marks=pytest.mark.requires_dependency("sksparse.cholmod")
+        ),
+        "scipy",
+        "all",
+    ],
+)
 def test_backend_solves(backend):
     """Every backend must actually return a solution, not None.
 
@@ -48,8 +57,6 @@ def test_backend_solves(backend):
     degraded to the scipy SuperLU fallback -- a large, invisible slowdown rather
     than a failure. Assert success, not merely correctness.
     """
-    if backend == "sksparse":
-        pytest.importorskip("sksparse.cholmod")
     M, C, x_true = _least_squares_system()
     sol = solve_linear_system(M, C, backend=backend)
     assert sol is not None, f"backend {backend!r} returned no solution"
@@ -57,8 +64,8 @@ def test_backend_solves(backend):
 
 
 @pytest.mark.parametrize("seed", [0, 1, 2])
+@pytest.mark.requires_dependency("sksparse.cholmod")
 def test_backends_agree(seed):
-    pytest.importorskip("sksparse.cholmod")
     M, C, _ = _least_squares_system(seed=seed)
     a = solve_linear_system(M, C, backend="sksparse")
     b = solve_linear_system(M, C, backend="scipy")
@@ -138,8 +145,8 @@ def test_missing_cholmod_warns_instead_of_silently_slowing_down(monkeypatch):
     assert "3x" in msg or "20x" in msg  # says what it costs
 
 
+@pytest.mark.requires_dependency("sksparse.cholmod")
 def test_no_warning_when_cholmod_is_available():
-    pytest.importorskip("sksparse.cholmod")
     M, C, _ = _least_squares_system()
     with warnings.catch_warnings():
         warnings.simplefilter("error", PerformanceWarning)

@@ -20,15 +20,10 @@ POLYTOPES = [
 
 def _cy(verts):
     p = Polytope(verts)
-    if not p.is_reflexive():
-        pytest.skip("needs a reflexive polytope")
+    assert p.is_reflexive(), "the fixed fixture must be reflexive"
     triang = p.triangulate(make_star=True)
-    if not triang.is_star():
-        pytest.skip("needs a star triangulation")
-    try:
-        return triang.get_cy()
-    except Exception as e:
-        pytest.skip(f"cannot build a CY: {e}")
+    assert triang.is_star(), "the fixed fixture must produce a star triangulation"
+    return triang.get_cy()
 
 
 @pytest.mark.parametrize("verts", POLYTOPES, ids=lambda v: f"{len(v)}v")

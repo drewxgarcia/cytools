@@ -74,10 +74,8 @@ def _usable(t):
 @pytest.mark.parametrize("verts", POLYTOPES, ids=lambda v: f"{len(v)}v")
 def test_sr_ideal_matches_definition(verts):
     t = Polytope(verts).triangulate(make_star=True)
-    if not _usable(t):
-        pytest.skip("sr_ideal only applies to full-dimensional star triangulations")
-    if not t.is_fine():
-        pytest.skip("see test_non_fine_triangulations_include_unused_points")
+    assert _usable(t), "the fixed fixture must produce a full-dimensional star"
+    assert t.is_fine(), "the fixed fixture must produce a fine triangulation"
     assert tuple(t.sr_ideal()) == sr_ideal_reference(t)
 
 
@@ -156,7 +154,7 @@ def test_non_fine_triangulations_include_unused_points():
 
         return
 
-    pytest.skip("no non-fine star triangulation with unused points was produced")
+    pytest.fail("no non-fine star triangulation with unused points was produced")
 
 
 def test_sr_ideal_generators_are_minimal_and_are_non_faces():
@@ -189,7 +187,6 @@ def test_sr_ideal_is_cached():
 def test_sr_ideal_rejects_non_star_triangulations():
     p = Polytope(POLYTOPES[0])
     t = p.triangulate(include_points_interior_to_facets=True, make_star=False)
-    if t.is_star():
-        pytest.skip("triangulation came out star anyway")
+    assert not t.is_star(), "the fixed fixture must produce a non-star triangulation"
     with pytest.raises(NotImplementedError):
         t.sr_ideal()

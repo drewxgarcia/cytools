@@ -15,7 +15,7 @@ def _has_dualgnn() -> bool:
 
     This must never raise: it runs at import (i.e. collection) time, so any
     exception here turns a missing optional dependency into a collection
-    error instead of a clean skip. `importlib.util.find_spec` is not
+    error instead of explicit collection-time deselection. `find_spec` is not
     exception-free -- it raises ValueError if something has left a bare stub
     module in `sys.modules` (a common way of blocking optional imports, since
     such a module has `__spec__ = None`), and it propagates whatever a
@@ -26,8 +26,6 @@ def _has_dualgnn() -> bool:
     except Exception:
         return False
 
-
-HAS_DUALGNN = _has_dualgnn()
 
 # dual of the quintic simplex: its ten 21-point 2-faces exercise the GNN,
 # but random per-face FRTs rarely jointly extend (~0.4%), so it's only used
@@ -148,13 +146,16 @@ def _block_dualgnn(monkeypatch):
 
 
 def test_missing_dualgnn_is_actionable_and_never_installs(monkeypatch):
+    # This checks the missing-package translation, not OpenMP compatibility.
+    # Keep the two independent so it runs in the base environment too.
+    monkeypatch.setattr("cytools._backends.openmp.ensure_compatible", lambda: None)
     _block_dualgnn(monkeypatch)
     # max_npts=0 forces sampling (rather than enumeration) on every 2-face
     with pytest.raises(ImportError, match=r"cytools-workbench\[gnn\]"):
         quintic_dual.face_triangs(triang_method="dualgnn", max_npts=0)
 
 
-@pytest.mark.skipif(not HAS_DUALGNN, reason="dualgnn is not installed")
+@pytest.mark.requires_dependency("dualgnn")
 def test_face_triangs():
     face_triangs = quintic_dual.face_triangs(
         triang_method="dualgnn", max_npts=0, N_face_triangs=5, seed=0
@@ -167,7 +168,7 @@ def test_face_triangs():
             assert t.is_regular()
 
 
-@pytest.mark.skipif(not HAS_DUALGNN, reason="dualgnn is not installed")
+@pytest.mark.requires_dependency("dualgnn")
 def test_sample_frsts():
     triangs = list(
         p11169.random_triangulations_gnn(N=4, max_npts=0, N_face_triangs=5, seed=0)
@@ -179,7 +180,7 @@ def test_sample_frsts():
         assert t.is_regular()
 
 
-@pytest.mark.skipif(not HAS_DUALGNN, reason="dualgnn is not installed")
+@pytest.mark.requires_dependency("dualgnn")
 def test_seed_reproducibility():
     # same seed -> bitwise-identical heights (per device; the torch CPU
     # and CUDA generators are independent streams)
@@ -195,14 +196,14 @@ def test_seed_reproducibility():
     assert all((a == b).all() for a, b in zip(h1, h2))
 
 
-@pytest.mark.skipif(not HAS_DUALGNN, reason="dualgnn is not installed")
+@pytest.mark.requires_dependency("dualgnn")
 def test_fills_N():
     triangs = list(p_h11_8.random_triangulations_gnn(N=10, N_face_triangs=5, seed=0))
     assert len(triangs) == 10
     assert len(set(triangs)) == 10
 
 
-@pytest.mark.skipif(not HAS_DUALGNN, reason="dualgnn is not installed")
+@pytest.mark.requires_dependency("dualgnn")
 def test_sample_heights():
     heights = list(
         p11169.random_triangulations_gnn(

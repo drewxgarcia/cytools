@@ -60,9 +60,12 @@ def test_compatibility_check_is_silent_when_clean(monkeypatch):
     assert openmp.ensure_compatible() is None
 
 
-@pytest.mark.skipif(sys.platform != "darwin", reason="dyld introspection is macOS-only")
 def test_loaded_runtimes_reports_real_paths():
     """Whatever it reports must be absolute and look like an OpenMP runtime."""
+    if sys.platform != "darwin":
+        assert openmp.loaded_runtimes() == set()
+        return
+
     for path in openmp.loaded_runtimes():
         assert path.startswith("/")
         assert "libomp" in path.rsplit("/", 1)[-1]

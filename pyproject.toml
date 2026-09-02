@@ -110,7 +110,15 @@ ignore = [
 testpaths = ["tests"]
 python_files = ["test_*.py", "bench_*.py"]
 addopts = ["--strict-config", "--strict-markers"]
-markers = ["slow: long-running benchmarks (deselect with -m 'not slow')"]
+markers = [
+  "slow: long-running benchmarks (deselect with -m 'not slow')",
+  "requires_dependency(name): integration owned by an optional dependency",
+]
+# The repository root, so `tests/test_repro_published.py` can import the
+# reproduction scripts under `benchmarks/` instead of restating the paper's
+# definitions. Set explicitly rather than relying on `python -m pytest`
+# happening to put the working directory on the path.
+pythonpath = ["."]
 
 [tool.uv]
 default-groups = ["dev"]

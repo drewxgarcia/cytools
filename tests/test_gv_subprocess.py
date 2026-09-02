@@ -8,13 +8,12 @@ once. The subprocess is unavoidable; its start-up cost is not.
 import multiprocessing as mp
 from typing import cast
 
+import cygv
 import numpy as np
 import pytest
 
 from cytools._typing import ProcessStartMethod
 from cytools.calabiyau import configure_gv_subprocess
-
-cygv = pytest.importorskip("cygv")
 
 
 @pytest.fixture
@@ -83,27 +82,25 @@ def test_invariants_unchanged_under_forkserver(restore_start_method):
         [[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1], [-1, -1, -6, -9]]
     )
     triang = p.triangulate(make_star=True)
-    if not triang.is_star():
-        pytest.skip("needs a star triangulation")
-    try:
-        cy = triang.get_cy()
-    except Exception as e:
-        pytest.skip(f"cannot build a CY: {e}")
+    assert triang.is_star(), "the fixed fixture must produce a star triangulation"
+    cy = triang.get_cy()
 
     mori = cy.mori_cone_cap(in_basis=True)
-    kwargs = dict(
-        generators=np.asarray(mori.rays()),
-        grading_vector=mori.find_grading_vector(),
-        q=cy.curve_basis(include_origin=False, as_matrix=True),
-        intnums=cy.intersection_numbers(in_basis=True, format="dok"),
-        max_deg=2,
+    generators = np.asarray(mori.rays())
+    grading_vector = mori.find_grading_vector()
+    q = cy.curve_basis(include_origin=False, as_matrix=True)
+    intnums = cast(
+        dict[tuple[int, int, int], int],
+        cy.intersection_numbers(in_basis=True, format="dok"),
     )
 
     configure_gv_subprocess("spawn")
-    baseline = sorted(cygv.compute_gv(**kwargs))
+    baseline = sorted(
+        cygv.compute_gv(generators, grading_vector, q, intnums, max_deg=2)
+    )
 
     configure_gv_subprocess("forkserver")
-    fast = sorted(cygv.compute_gv(**kwargs))
+    fast = sorted(cygv.compute_gv(generators, grading_vector, q, intnums, max_deg=2))
 
     assert baseline == fast, "the start method changed the invariants"
     assert baseline, "expected some GV invariants"

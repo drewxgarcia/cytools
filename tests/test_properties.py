@@ -6,13 +6,9 @@ than pinned outputs for one particular example. They are deliberately run on
 small polytopes so that the suite stays fast.
 """
 
-import warnings
-
 import numpy as np
 import pytest
 
-import cytools
-import cytools.config
 from cytools import Polytope
 
 # a few small reflexive 4d polytopes, kept module-level so each is built once
@@ -47,18 +43,7 @@ H11_8 = [
 ]
 
 
-@pytest.fixture
-def experimental_features():
-    """
-    Temporarily enable the experimental features, restoring the previous state
-    afterwards so that the global flag does not leak into other tests.
-    """
-    prev = cytools.config._exp_features_enabled
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore")
-        cytools.config.enable_experimental_features()
-    yield
-    cytools.config._exp_features_enabled = prev
+# `experimental_features` is a shared fixture; see tests/conftest.py.
 
 
 # mirror symmetry
