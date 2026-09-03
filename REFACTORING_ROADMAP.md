@@ -34,7 +34,13 @@ staged so that every CI gate is enforceable when introduced.
       unused imports and names and fixing the undefined face-enumeration state.
       The former wildcard-export feature modules now have explicit public
       namespaces, so no `F403` exceptions remain.
-- [ ] **1.2** Enable the remaining Ruff families in reviewed batches. Import
+- [~] **1.2** In progress. Enabled and clean: `E4`/`E7`/`E9`, `F`, `I`, `UP`,
+      `W`, `B`, `PERF`, `C4`, `NPY`, `DTZ`, `PIE`, `FURB`, `RSE`, `TID`, `Q`,
+      `ICN`, `INT`, `SLOT`, `FLY`, `RUF100`. One `ignore` entry remains
+      (`UP040`, since PEP 695 aliases break the `get_args` introspection the
+      public typing surface depends on). Next tranches, by cost: `RET` 29,
+      `ISC` 19, `PTH` 17, `A` 11 (all small); then `SIM` 103, `RUF` 126,
+      `C90` 66. Enable the remaining Ruff families in reviewed batches. Import
       ordering is now enforced; the remaining semantic/style families must be
       enabled without unsafe fixes unless numerical tests justify them.
       *Done when:* the full intended rule set is green and enabled in CI.
@@ -150,14 +156,30 @@ Depends on Phase 3. Same treatment as the triangulation enumerators: one return
 type per function; the alternative becomes a separate named method or the
 caller's job.
 
-- [ ] **6.1** `as_list` on the lazy `ntfe_*` enumerators (4 functions) — note
-      these default *eager*, so this is a breaking default flip.
+- [ ] **6.1** `as_generator` on the lazy `ntfe_*` enumerators — **now the
+      loudest inconsistency in the package.** 6.3 gave `ntfe_cones` and
+      `ntfe_hypers` `iter_` siblings, so `ntfe_frts(as_generator=True)` and
+      `ntfe_frsts(as_generator=True)` are the only enumerators left taking a
+      flag. Same for `as_cone` on `cone_of_permissible_heights` and
+      `expanded_secondary_fan` now that `secondary_cone` is split, and for
+      `as_poly_indices` on `Triangulation.points_to_indices` now that
+      `Triangulation.points` is. Half-applied is worse than either end: a
+      caller can no longer predict which spelling a function uses.
 - [x] **6.2** `raw_output` on `all_triangulations` made the
       `Iterator[Triangulation]` annotation a lie. Split into two entry points
       with one honest return type each — `all_triangulations()` and the new
       `all_triangulation_simplices()` — over a private heterogeneous
       implementation. This was the last `ty` error.
-- [ ] **6.3** `as_indices` family (6 blocks) — split or alias.
+- [x] **6.3** Done, and wider than planned: every public boolean that switched
+      a return type is now a separately named method (19 sets). `points`/
+      `point_indices`, `vertices`/`vertex_indices`, `simplices`/`simplex_set`/
+      `simplices_by_face`, `secondary_cone`/`secondary_cone_hyperplanes`,
+      `automorphisms`/`automorphism_dicts`, `intersection_numbers`/
+      `intersection_numbers_array`, `lll_reduce`/`lll_reduce_with_transform`,
+      and the NTFE `iter_` siblings. Public `@overload` sets describing a flag:
+      19 -> 0; total stubs 52 -> 28. `Triangulation.points` lost *two* index
+      flags, so its "different index spaces" `ValueError` is now
+      unexpressible.
       *Explicitly out of scope:* `fetch_polytopes(as_list=)`. Its eager default
       is a deliberate upstream decision (CHANGELOG 1.4.3) on the library's front
       door, and it is a bounded query, not an unbounded enumeration.

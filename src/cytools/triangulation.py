@@ -847,12 +847,44 @@ class Triangulation:
 
     # points
     # ======
+    def point_indices(self, which=None, check_labels: bool = True) -> np.ndarray:
+        """
+        **Description:**
+        Returns the indices of the given points in *this triangulation's*
+        point list. See `polytope_point_indices` for the ambient polytope's
+        index space.
+
+        **Arguments:**
+        - `which`: Which points to return. Specified by a (list of) labels.
+        - `check_labels`: Whether to check that the labels are known.
+
+        **Returns:**
+        The indices, in this triangulation's point list.
+        """
+        which = self._resolve_labels(which, check_labels)
+        if self._labels2inds is None:
+            self._labels2inds = {v: i for i, v in enumerate(self._labels)}
+        return np.array([self._labels2inds[label] for label in which])
+
+    def polytope_point_indices(self, which=None, check_labels: bool = True) -> list:
+        """
+        **Description:**
+        Returns the indices of the given points in the *ambient polytope's*
+        point list. See `point_indices` for this triangulation's index space.
+
+        **Arguments:**
+        - `which`: Which points to return. Specified by a (list of) labels.
+        - `check_labels`: Whether to check that the labels are known.
+
+        **Returns:**
+        The indices, in the ambient polytope's point list.
+        """
+        return self.poly.point_indices(which=self._resolve_labels(which, check_labels))
+
     def points(
         self,
         which=None,
         optimal: bool = False,
-        as_poly_indices: bool = False,
-        as_indices: bool = False,
         check_labels: bool = True,
     ) -> np.ndarray:
         """
@@ -864,10 +896,7 @@ class Triangulation:
         - `which`: Which points to return. Specified by a (list of) labels.
             NOT INDICES!!!
         - `optimal`: Whether to return the points in their optimal coordinates.
-        - `as_poly_indices`: Return indices in the ambient polytope's point
-            list. This remains qualified because it names a distinct index
-            space.
-        - `as_indices`: Return indices in this triangulation's point list.
+        - `check_labels`: Whether to check that the labels are known.
 
         **Returns:**
         The points of the triangulation.
@@ -889,38 +918,9 @@ class Triangulation:
         #        [ 0,  0, -2, -3]])
         ```
         """
-        if as_poly_indices and as_indices:
-            raise ValueError(
-                "as_poly_indices and as_indices select different index spaces; "
-                "only one can be True."
-            )
+        which = self._resolve_labels(which, check_labels)
 
-        # get the labels of the relevant points
-        if which is None:
-            # use all points in the face
-            which = self.labels
-        else:
-            # if which is a single label, wrap it in an iterable
-            if (not isinstance(which, Iterable)) and (which in self.labels):
-                which = [which]
-
-            # check that the input labels are ones we know about. Unhashable
-            # input raises from `set(which)` on its own; it used to be wrapped
-            # in a `try/except Exception: raise`, which caught every exception
-            # only to re-raise it unchanged and so did nothing at all.
-            if check_labels and not set(which).issubset(self.labels):
-                raise ValueError(
-                    f"Specified labels ({which}) aren't "
-                    "subset of triangulation labels "
-                    f"({self.labels})..."
-                )
-
-        # return
-        if as_indices:
-            if self._labels2inds is None:
-                self._labels2inds = {v: i for i, v in enumerate(self._labels)}
-            return np.array([self._labels2inds[label] for label in which])
-        if optimal and (not as_poly_indices):
+        if optimal:
             dim_diff = self.ambient_dimension() - self.dimension()
             if dim_diff > 0:
                 # asking for optimal points, where the optimal value may
@@ -939,9 +939,29 @@ class Triangulation:
                 return np.array([self._labels2optPts[label] for label in which])
 
         # normal case
-        return self.poly.points(
-            which=which, optimal=optimal, as_indices=as_poly_indices
-        )
+        return self.poly.points(which=which, optimal=optimal)
+
+    def _resolve_labels(self, which, check_labels: bool = True):
+        """Normalise the `which` argument of the point accessors to labels."""
+        if which is None:
+            # use all points in the face
+            return self.labels
+
+        # if which is a single label, wrap it in an iterable
+        if (not isinstance(which, Iterable)) and (which in self.labels):
+            return [which]
+
+        # check that the input labels are ones we know about. Unhashable
+        # input raises from `set(which)` on its own; it used to be wrapped
+        # in a `try/except Exception: raise`, which caught every exception
+        # only to re-raise it unchanged and so did nothing at all.
+        if check_labels and not set(which).issubset(self.labels):
+            raise ValueError(
+                f"Specified labels ({which}) aren't "
+                "subset of triangulation labels "
+                f"({self.labels})..."
+            )
+        return which
 
     def points_to_labels(
         self, points: VectorOrMatrix, is_optimal: bool = False
@@ -1020,10 +1040,10 @@ class Triangulation:
 
         # grab labels, and then map to indices
         labels = self.points_to_labels(np.asarray(pts), is_optimal=is_optimal)
-        inds = self.points(
-            which=labels,
-            as_poly_indices=as_poly_indices,
-            as_indices=not as_poly_indices,
+        inds = (
+            np.asarray(self.polytope_point_indices(which=labels))
+            if as_poly_indices
+            else self.point_indices(which=labels)
         )
 
         # get/return the indices
@@ -1046,7 +1066,9 @@ class Triangulation:
         the point if only one is given.
         """
         # (NM: remove this... use labels instead...)
-        return self.points(which=[self._labels[i] for i in inds], as_poly_indices=True)
+        return np.asarray(
+            self.polytope_point_indices(which=[self._labels[i] for i in inds])
+        )
 
     # triangulation
     # =============
@@ -1085,7 +1107,7 @@ class Triangulation:
 
         # calculate the answer
         simps = self.simplices()
-        # simps = np.array([self.points(s, as_indices=True) for s in simps])
+        # simps = np.array([self.point_indices(s) for s in simps])
 
         if simps.shape[1] != self.dimension() + 1:
             self._is_valid = False
@@ -1190,9 +1212,18 @@ class Triangulation:
         *(bool)* True if the heights uniquely define the triangulation, False
         if they are within eps of a wall of the secondary cone.
         """
+        # The precondition lives in the callers (`__init__` skips this when no
+        # heights were supplied). State it here so it is checked once, and so
+        # the array below is known to be an array.
+        heights = self._heights
+        if heights is None:
+            raise ValueError(
+                "check_heights() needs heights; this triangulation has none."
+            )
+
         # find hyperplanes that we are within eps of wall
         eps = 1e-6
-        hyp_dist = np.matmul(self.secondary_cone().hyperplanes(), self._heights)
+        hyp_dist = np.matmul(self.secondary_cone().hyperplanes(), heights)
         not_interior = hyp_dist < eps
 
         # if we are close to any walls
@@ -1217,46 +1248,12 @@ class Triangulation:
 
     # main method
     # -----------
-    @overload
     def simplices(
         self,
         on_faces_dim: int | None = None,
         on_faces_codim: int | None = None,
-        split_by_face: Literal[False] = False,
-        as_np_array: Literal[True] = True,
         as_indices: bool = False,
-    ) -> np.ndarray: ...
-
-    @overload
-    def simplices(
-        self,
-        on_faces_dim: int | None = None,
-        on_faces_codim: int | None = None,
-        split_by_face: Literal[False] = False,
-        *,
-        as_np_array: Literal[False],
-        as_indices: bool = False,
-    ) -> set: ...
-
-    @overload
-    def simplices(
-        self,
-        on_faces_dim: int | None = None,
-        on_faces_codim: int | None = None,
-        *,
-        split_by_face: Literal[True],
-        as_np_array: bool = True,
-        as_indices: bool = False,
-    ) -> list: ...
-
-    def simplices(
-        self,
-        on_faces_dim: int | None = None,
-        on_faces_codim: int | None = None,
-        split_by_face: bool = False,
-        as_np_array: bool = True,
-        as_indices: bool = False,
-    ) -> set | list | np.ndarray:
+    ) -> np.ndarray:
         """
         **Description:**
         Returns the simplices of the triangulation. It also has the option of
@@ -1269,10 +1266,6 @@ class Triangulation:
             given dimension.
         - `on_faces_codim`: Restrict the simplices to faces of the polytope of
             a given codimension.
-        - `split_by_face`: Return the simplices for each face. Don't merge the
-            collection.
-        - `as_np_array`: Return the simplices as a numpy array. Otherwise,
-            they are returned as a set of frozensets.
         - `as_indices`: Whether to map the simplices from labels to point
             indices (in the triangulations).
 
@@ -1303,6 +1296,112 @@ class Triangulation:
         #  [2 4 5]
         #  [3 4 5]]
         ```
+        """
+        return self._collect_simplices(
+            on_faces_dim=on_faces_dim,
+            on_faces_codim=on_faces_codim,
+            as_indices=as_indices,
+            split_by_face=False,
+            as_np_array=True,
+        )
+
+    def simplex_set(
+        self,
+        on_faces_dim: int | None = None,
+        on_faces_codim: int | None = None,
+        as_indices: bool = False,
+    ) -> set:
+        """
+        **Description:**
+        The simplices as a set of frozensets rather than an array. See
+        `simplices` for the arguments, which are identical.
+
+        **Returns:**
+        The simplices, as a set.
+        """
+        return self._collect_simplices(
+            on_faces_dim=on_faces_dim,
+            on_faces_codim=on_faces_codim,
+            as_indices=as_indices,
+            split_by_face=False,
+            as_np_array=False,
+        )
+
+    def simplices_by_face(
+        self,
+        on_faces_dim: int | None = None,
+        on_faces_codim: int | None = None,
+        as_indices: bool = False,
+        as_np_array: bool = True,
+    ) -> list:
+        """
+        **Description:**
+        The simplices grouped per face, rather than merged into one collection.
+        See `simplices` for the remaining arguments.
+
+        **Arguments:**
+        - `as_np_array`: Whether each face's simplices come back as an array
+            (the default) or as a set.
+
+        **Returns:**
+        One entry per face.
+        """
+        return self._collect_simplices(
+            on_faces_dim=on_faces_dim,
+            on_faces_codim=on_faces_codim,
+            as_indices=as_indices,
+            split_by_face=True,
+            as_np_array=as_np_array,
+        )
+
+    # Overloaded, unlike the three public accessors: typing plumbing for their
+    # call sites. The three forms share one traversal, so the branch stays --
+    # but no public signature exposes it.
+    @overload
+    def _collect_simplices(
+        self,
+        on_faces_dim: int | None = None,
+        on_faces_codim: int | None = None,
+        *,
+        split_by_face: Literal[False],
+        as_np_array: Literal[True],
+        as_indices: bool = False,
+    ) -> np.ndarray: ...
+
+    @overload
+    def _collect_simplices(
+        self,
+        on_faces_dim: int | None = None,
+        on_faces_codim: int | None = None,
+        *,
+        split_by_face: Literal[False],
+        as_np_array: Literal[False],
+        as_indices: bool = False,
+    ) -> set: ...
+
+    @overload
+    def _collect_simplices(
+        self,
+        on_faces_dim: int | None = None,
+        on_faces_codim: int | None = None,
+        *,
+        split_by_face: Literal[True],
+        as_np_array: bool = True,
+        as_indices: bool = False,
+    ) -> list: ...
+
+    def _collect_simplices(
+        self,
+        on_faces_dim: int | None = None,
+        on_faces_codim: int | None = None,
+        split_by_face: bool = False,
+        as_np_array: bool = True,
+        as_indices: bool = False,
+    ) -> set | list | np.ndarray:
+        """Shared implementation of the three public accessors.
+
+        Named `_collect_simplices`, not `_simplices`: the latter is already an
+        instance attribute holding the triangulation's own simplices.
         """
         # input parsing
         if (on_faces_dim is None) and (on_faces_codim is None):
@@ -1472,35 +1571,47 @@ class Triangulation:
 
     # regularity
     # ----------
-    @overload
     def secondary_cone(
         self,
         backend: SecondaryConeBackend | None = None,
         include_points_not_in_triangulation: bool = True,
-        as_cone: Literal[True] = True,
         on_faces_dim: int | None = None,
         use_cache: bool = True,
-    ) -> Cone: ...
+    ) -> Cone:
+        """
+        **Description:**
+        Returns the secondary cone of the triangulation. See
+        `secondary_cone_hyperplanes` for the defining hyperplanes themselves.
 
-    @overload
-    def secondary_cone(
-        self,
-        backend: SecondaryConeBackend | None = None,
-        include_points_not_in_triangulation: bool = True,
-        *,
-        as_cone: Literal[False],
-        on_faces_dim: int | None = None,
-        use_cache: bool = True,
-    ) -> np.ndarray | list: ...
+        **Arguments:**
+        - `backend`: The backend to use. Options are "native" and "topcom".
+        - `include_points_not_in_triangulation`: Whether to include points not
+            in the triangulation.
+        - `on_faces_dim`: Restrict to faces of this dimension.
+        - `use_cache`: Whether to use the cached hyperplanes.
 
-    def secondary_cone(
+        **Returns:**
+        The secondary cone.
+        """
+        from cytools.cone import Cone
+
+        hyps = self.secondary_cone_hyperplanes(
+            backend=backend,
+            include_points_not_in_triangulation=include_points_not_in_triangulation,
+            on_faces_dim=on_faces_dim,
+            use_cache=use_cache,
+        )
+        if len(hyps) == 0:
+            hyps = np.zeros((0, len(self.labels)), dtype=int)
+        return Cone(hyperplanes=hyps, check=False)
+
+    def secondary_cone_hyperplanes(
         self,
         backend: SecondaryConeBackend | None = None,
         include_points_not_in_triangulation: bool = True,
-        as_cone: bool = True,
         on_faces_dim: int | None = None,
         use_cache: bool = True,
-    ) -> Cone | np.ndarray | list:
+    ) -> np.ndarray | list:
         """
         **Description:**
         Computes the (hyperplanes defining the) secondary cone of the
@@ -1535,7 +1646,6 @@ class Triangulation:
             of points that are not part of the triangulation. This can be done
             to check regularity faster, but this cannot be used if the actual
             cone in the secondary fan is needed.
-        - `as_cone`: Return a cone or just the defining hyperplanes.
         - `on_faces_dim`: Compute the secondary cone for each face with this
             dimension and then take their intersection. This has the
             interpretation of enforcing the triangulations on each of these
@@ -1554,9 +1664,6 @@ class Triangulation:
         # A rational polyhedral cone in RR^7 defined by 3 hyperplanes normals
         ```
         """
-        if as_cone:
-            from cytools.cone import Cone
-
         # input sanitization
         # ------------------
         args_id = int(include_points_not_in_triangulation)
@@ -1600,23 +1707,15 @@ class Triangulation:
             # intersect the hyperplanes for each N-face
             hyps = []
             for face in self.restrict(restrict_dim=on_faces_dim, as_poly=True):
-                hyps += face.secondary_cone(
+                hyps += face.secondary_cone_hyperplanes(
                     backend=backend,
                     include_points_not_in_triangulation=include_points_not_in_triangulation,
-                    as_cone=False,
                     use_cache=False,
                 )
 
             # restrict to unique hyperplanes
             hyps = sorted(set(hyps))
 
-            # return in the desired format
-            if as_cone:
-                # clean up empty hyperplanes
-                if len(hyps) == 0:
-                    hyps = np.zeros((0, len(self.labels)), dtype=int)
-
-                return Cone(hyperplanes=hyps, check=False)
             return hyps
 
         # want the secondary cone of the triangulation
@@ -1625,13 +1724,6 @@ class Triangulation:
             # we already know the answer!
             hyps = cached_hyps
 
-            # return in the desired format
-            if as_cone:
-                # clean up empty hyperplanes
-                if len(hyps) == 0:
-                    hyps = np.zeros((0, len(self.labels)), dtype=int)
-
-                return Cone(hyperplanes=hyps, check=False)
             return hyps
 
         # we don't yet know the answer... calculate it now!
@@ -1663,10 +1755,9 @@ class Triangulation:
 
         # return
         # (do via calling the same function to use above cached answer)
-        return self.secondary_cone(
+        return self.secondary_cone_hyperplanes(
             backend=backend,
             include_points_not_in_triangulation=include_points_not_in_triangulation,
-            as_cone=as_cone,
         )
 
     def is_regular(self, backend: str | None = None) -> bool:
@@ -1860,7 +1951,7 @@ class Triangulation:
 
         # calculate orbit
         simps = self.simplices(as_indices=True, on_faces_dim=faces_dim)
-        autos = self.poly.automorphisms(as_dictionary=True)
+        autos = self.poly.automorphism_dicts()
 
         # collect automorphisms of polytope that are also automorphisms of
         # the triangulation point configuration
@@ -1900,9 +1991,7 @@ class Triangulation:
                     self.poly.labels[jj] in self.labels
                 ):
                     tmp_labels = [self.poly.labels[j], self.poly.labels[jj]]
-                    idx_j, idx_jj = self.points(
-                        tmp_labels, as_indices=True, check_labels=False
-                    )
+                    idx_j, idx_jj = self.point_indices(tmp_labels, check_labels=False)
                     temp[idx_j] = idx_jj
             autos[i] = temp
 
@@ -2187,9 +2276,9 @@ class Triangulation:
         # with 106 points in ZZ^4
         ```
         """
-        # parse inputs
-        if seed is not None:
-            np.random.seed(seed)
+        # parse inputs. `default_rng(None)` seeds from OS entropy, so the
+        # unseeded path stays random without touching global state.
+        rng = np.random.default_rng(seed)
 
         # unspecified restrictions default to the properties of this
         # triangulation (as documented above)
@@ -2206,7 +2295,10 @@ class Triangulation:
             neighbors = curr_triang.neighbor_triangulations(
                 only_fine=False, only_regular=False, only_star=False
             )
-            np.random.shuffle(neighbors)
+            # permute indices rather than `shuffle` a list of objects, which
+            # numpy only incidentally supports and does not type
+            order = rng.permutation(len(neighbors))
+            neighbors = [neighbors[i] for i in order]
 
             for t in neighbors:
                 # check that the triangulation meets the requirements
@@ -2988,8 +3080,7 @@ def random_triangulations_fast_generator(
     ```
     """
     # parse inputs
-    if seed is not None:
-        np.random.seed(seed)
+    rng = np.random.default_rng(seed)
 
     triang_hashes = set()
     n_retries = 0
@@ -3008,7 +3099,7 @@ def random_triangulations_fast_generator(
             return
 
         # generate random heights, make the triangulation
-        heights = [pt.dot(pt) + np.random.normal(0, c) for pt in poly.points(which=pts)]
+        heights = [pt.dot(pt) + rng.normal(0, c) for pt in poly.points(which=pts)]
         t = Triangulation(
             poly,
             pts,
@@ -3140,11 +3231,10 @@ def random_triangulations_fair_generator(
     if dim != triang_pts.shape[1]:
         raise Exception("Point configuration must be full-dimensional.")
 
-    if seed is not None:
-        np.random.seed(seed)
+    rng = np.random.default_rng(seed)
 
     # Obtain random Delaunay triangulation by picking random point as origin
-    rand_ind = np.random.randint(0, len(pts))
+    rand_ind = rng.integers(0, len(pts))
     points_shifted = [p - triang_pts[rand_ind] for p in triang_pts]
 
     delaunay_heights = [walk_step_size * (np.dot(p, p)) for p in points_shifted]
@@ -3175,7 +3265,7 @@ def random_triangulations_fair_generator(
             in_pt = old_pt
 
             # find random direction
-            random_dir = np.random.normal(size=num_points)
+            random_dir = rng.normal(size=num_points)
             random_dir = random_dir / np.linalg.norm(random_dir)
 
             # take steps
@@ -3231,7 +3321,7 @@ def random_triangulations_fair_generator(
 
         # Take a random walk step
         in_pt = in_pt / np.linalg.norm(in_pt)
-        random_coef = np.random.uniform(0, 1)
+        random_coef = rng.uniform(0, 1)
         new_pt = random_coef * np.array(old_pt) + (1 - random_coef) * np.array(in_pt)
 
         # after enough steps are taken, move on to random flips

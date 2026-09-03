@@ -68,6 +68,7 @@ from cytools._typing import (
     InteriorPointBackend,
     Matrix,
     StretchedConeBackend,
+    SupportsArray,
     Vector,
 )
 from cytools.helpers.arithmetic import gcd_reduce
@@ -133,7 +134,7 @@ class Cone:
     def __init__(
         self,
         rays: Matrix | None = None,
-        hyperplanes: Matrix | None = None,
+        hyperplanes: Matrix | SupportsArray | None = None,
         parse_inputs: bool = True,
         check: bool = True,
         copy: bool = True,

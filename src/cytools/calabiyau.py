@@ -1712,10 +1712,9 @@ class CalabiYau:
             raise NotImplementedError("This function only supports Calabi-Yau 3-folds.")
         if not hasattr(self, "_fan"):
             self._fan = self.triangulation().fan()
-        intnums = self._fan.intersection_numbers(
+        intnums = self._fan.intersection_numbers_array(
             pushed_down=True,
             in_basis=True,
-            as_np_array=True,
             copy=False,
         )
         # the 3D x 1D first contraction goes via tensordot because `@`
@@ -1759,10 +1758,9 @@ class CalabiYau:
             raise NotImplementedError("This function only supports Calabi-Yau 3-folds.")
         if not hasattr(self, "_fan"):
             self._fan = self.triangulation().fan()
-        intnums = self._fan.intersection_numbers(
+        intnums = self._fan.intersection_numbers_array(
             pushed_down=True,
             in_basis=True,
-            as_np_array=True,
             copy=False,
         )
         # the 3D x 1D first contraction goes via tensordot because `@`
@@ -1846,10 +1844,9 @@ class CalabiYau:
             raise NotImplementedError("This function only supports Calabi-Yau 3-folds.")
         if not hasattr(self, "_fan"):
             self._fan = self.triangulation().fan()
-        intnums = self._fan.intersection_numbers(
+        intnums = self._fan.intersection_numbers_array(
             pushed_down=True,
             in_basis=True,
-            as_np_array=True,
             copy=False,
         )
         return np.tensordot(intnums, tloc, axes=([-1], [0]))
@@ -2732,7 +2729,10 @@ class Invariants:
         """
         out = self._charge2invariant.get(tuple(charge), None)
 
-        if check_deg and (out is None):
+        # Without a grading vector the degree is not defined, so the charge
+        # stays "unknown" rather than being reported as a zero invariant.
+        # Previously this raised inside `np.dot` instead.
+        if check_deg and (out is None) and (self._grading_vec is not None):
             if np.dot(charge, self._grading_vec) <= self._cutoff:
                 out = 0  # deg<=cutoff but not in dict -> 0 GV
 

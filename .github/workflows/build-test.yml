@@ -51,11 +51,17 @@ jobs:
         run: uv build --out-dir dist-ci
       - name: Verify package identity and wheel contents
         run: >-
-          python -c 'import glob, zipfile;
+          python -c 'import glob, tarfile, zipfile;
           wheel=glob.glob("dist-ci/cytools_workbench-*.whl")[0];
           names=set(zipfile.ZipFile(wheel).namelist());
-          required={"cytools/__init__.py", "cytools/_version.py", "cytools/dataset.py", "cytools/landscape.py", "cytools/store.py"};
-          assert required <= names, sorted(required - names)'
+          required={"cytools/__init__.py", "cytools/_version.py", "cytools/dataset.py", "cytools/landscape.py", "cytools/store.py", "cytools/py.typed"};
+          forbidden=("benchmarks/", "tests/", "demos/", "scripts/");
+          assert required <= names, sorted(required - names);
+          assert not any(name.startswith(forbidden) for name in names), sorted(name for name in names if name.startswith(forbidden));
+          sdist=glob.glob("dist-ci/cytools_workbench-*.tar.gz")[0];
+          members=tarfile.open(sdist).getnames();
+          relative=[name.split("/", 1)[1] for name in members if "/" in name];
+          assert not any(name.startswith(forbidden) for name in relative), sorted(name for name in relative if name.startswith(forbidden))'
       - name: Upload distributions
         uses: actions/upload-artifact@v7
         with:

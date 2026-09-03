@@ -10,7 +10,7 @@ to PALP as a weight system, so the same data gave different answers depending
 on whether it arrived as a string or as a file.
 """
 
-import gc
+import builtins
 from typing import cast
 
 import pytest
@@ -71,19 +71,28 @@ def test_does_not_fall_through_into_the_ks_reader(ws_file):
     assert all(p.dimension() == 4 for p in polytopes)
 
 
-def test_file_handle_is_closed(ws_file):
-    """Exhausting the generator must not leave the file open."""
-    generator = read_polytopes(ws_file, input_type="file", format="ws", as_list=False)
-    list(generator)
-    gc.collect()
-    open_paths = []
-    for obj in gc.get_objects():
-        try:
-            if isinstance(obj, type(open(ws_file))) and not obj.closed:
-                open_paths.append(getattr(obj, "name", None))
-        except (ReferenceError, TypeError):
-            continue
-    assert ws_file not in open_paths
+def test_file_handle_is_closed(ws_file, monkeypatch):
+    """Exhausting the generator must not leave the file open.
+
+    The reader's own handle is tracked rather than scanning `gc.get_objects()`
+    for one. Walking every live object touched lazy attributes on unrelated
+    third-party modules (torch's deprecation shims warned), and it could only
+    ever show that *some* matching handle was absent. This shows that the
+    reader opened a file and that it closed it.
+    """
+    opened: list = []
+    real_open = builtins.open
+
+    def tracking_open(*args, **kwargs):
+        handle = real_open(*args, **kwargs)
+        opened.append(handle)
+        return handle
+
+    monkeypatch.setattr(builtins, "open", tracking_open)
+    list(read_polytopes(ws_file, input_type="file", format="ws", as_list=False))
+
+    assert opened, "the reader never opened the file"
+    assert all(handle.closed for handle in opened)
 
 
 def test_unknown_format_is_rejected(ws_file):

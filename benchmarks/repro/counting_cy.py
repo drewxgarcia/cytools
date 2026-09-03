@@ -36,9 +36,7 @@ PAPER_FAV_ONLY = {6: (16608, 584281, 74503), 7: (48221, 5990333, 467283)}
 
 
 def twoface_key(triang):
-    return frozenset(
-        frozenset(s) for s in triang.simplices(on_faces_dim=2, as_np_array=False)
-    )
+    return frozenset(frozenset(s) for s in triang.simplex_set(on_faces_dim=2))
 
 
 def analyze(verts):
@@ -52,7 +50,7 @@ def analyze(verts):
     for t in p.all_triangulations():
         n_frst += 1
         keys.add(twoface_key(t))
-    autos = p.automorphisms(as_dictionary=True)
+    autos = p.automorphism_dicts()
     seen, n_cls = set(), 0
     for k in keys:
         if k in seen:

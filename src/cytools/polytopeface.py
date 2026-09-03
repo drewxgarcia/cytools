@@ -22,7 +22,7 @@ from __future__ import annotations
 
 # 'standard' imports
 from collections.abc import Iterable
-from typing import TYPE_CHECKING, Literal, overload
+from typing import TYPE_CHECKING
 
 # 3rd party imports
 import numpy as np
@@ -343,19 +343,23 @@ class PolytopeFace:
 
         return self._labels, self._labels_int, self._labels_bdry
 
-    @overload
-    def points(
-        self, which=None, optimal: bool = False, as_indices: Literal[False] = False
-    ) -> np.ndarray: ...
+    def point_indices(self, which=None) -> list:
+        """
+        **Description:**
+        Returns the indices of the lattice points of the face, into the
+        ambient polytope's full list of points.
 
-    @overload
-    def points(
-        self, which=None, optimal: bool = False, *, as_indices: Literal[True]
-    ) -> list: ...
+        **Arguments:**
+        - `which`: Which points to return. Specified by a (list of) labels.
 
-    def points(
-        self, which=None, optimal: bool = False, as_indices: bool = False
-    ) -> np.ndarray | list:
+        **Returns:**
+        The indices of the face's lattice points.
+        """
+        return self.ambient_poly.point_indices(
+            which=self.labels if which is None else which
+        )
+
+    def points(self, which=None, optimal: bool = False) -> np.ndarray:
         """
         **Description:**
         Returns the lattice points of the face.
@@ -392,7 +396,7 @@ class PolytopeFace:
                 )
 
         # return
-        if optimal and (not as_indices):
+        if optimal:
             dim_diff = self.ambient_dimension() - self.dimension()
             if dim_diff > 0:
                 # asking for optimal points, where the optimal value may
@@ -401,17 +405,9 @@ class PolytopeFace:
                 return lll_reduce(pts - pts[0])[:, dim_diff:]
 
         # normal case
-        return self.ambient_poly.points(
-            which=which, optimal=optimal, as_indices=as_indices
-        )
+        return self.ambient_poly.points(which=which, optimal=optimal)
 
-    @overload
-    def interior_points(self, as_indices: Literal[False] = False) -> np.ndarray: ...
-
-    @overload
-    def interior_points(self, *, as_indices: Literal[True]) -> list: ...
-
-    def interior_points(self, as_indices: bool = False) -> np.ndarray | list:
+    def interior_points(self) -> np.ndarray:
         """
         **Description:**
         Returns the interior lattice points of the face.
@@ -433,15 +429,23 @@ class PolytopeFace:
         #        [ 0,  0,  0, -1]])
         ```
         """
-        return self.ambient_poly.points(which=self.labels_int, as_indices=as_indices)
+        return self.ambient_poly.points(which=self.labels_int)
 
-    @overload
-    def boundary_points(self, as_indices: Literal[False] = False) -> np.ndarray: ...
+    def interior_point_indices(self) -> list:
+        """
+        **Description:**
+        Returns the indices of the interior lattice points of the face, into the ambient polytope's full list
+        of lattice points.
 
-    @overload
-    def boundary_points(self, *, as_indices: Literal[True]) -> list: ...
+        **Arguments:**
+        None.
 
-    def boundary_points(self, as_indices: bool = False) -> np.ndarray | list:
+        **Returns:**
+        The indices of those points.
+        """
+        return self.ambient_poly.point_indices(which=self.labels_int)
+
+    def boundary_points(self) -> np.ndarray:
         """
         **Description:**
         Returns the boundary lattice points of the face.
@@ -465,15 +469,23 @@ class PolytopeFace:
         #        [ 0,  1,  0,  0]])
         ```
         """
-        return self.ambient_poly.points(which=self.labels_bdry, as_indices=as_indices)
+        return self.ambient_poly.points(which=self.labels_bdry)
 
-    @overload
-    def vertices(self, as_indices: Literal[False] = False) -> np.ndarray: ...
+    def boundary_point_indices(self) -> list:
+        """
+        **Description:**
+        Returns the indices of the boundary lattice points of the face, into the ambient polytope's full list
+        of lattice points.
 
-    @overload
-    def vertices(self, *, as_indices: Literal[True]) -> list: ...
+        **Arguments:**
+        None.
 
-    def vertices(self, as_indices: bool = False) -> np.ndarray | list:
+        **Returns:**
+        The indices of those points.
+        """
+        return self.ambient_poly.point_indices(which=self.labels_bdry)
+
+    def vertices(self) -> np.ndarray:
         """
         **Description:**
         Returns the vertices of the face.
@@ -496,9 +508,21 @@ class PolytopeFace:
         #        [ 0,  0,  1,  0]])
         ```
         """
-        return self.ambient_poly.points(
-            which=self._labels_vertices, as_indices=as_indices
-        )
+        return self.ambient_poly.points(which=self._labels_vertices)
+
+    def vertex_indices(self) -> list:
+        """
+        **Description:**
+        Returns the indices of the vertices of the face, into the ambient polytope's full list
+        of lattice points.
+
+        **Arguments:**
+        None.
+
+        **Returns:**
+        The indices of those points.
+        """
+        return self.ambient_poly.point_indices(which=self._labels_vertices)
 
     # polytope
     # ========

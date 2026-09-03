@@ -1,11 +1,8 @@
 [environment]
-# Deliberately *below* `requires-python = ">=3.12"`. Raising this to 3.12
-# resolves numpy's version-branched stubs differently and surfaces 19
-# diagnostics -- `np.delete`/`np.dot`/`np.shape` overload mismatches and three
-# `cygv.hkty` argument types. They are stub strictness rather than known bugs,
-# and silencing them would mean casts, so the raise is staged as its own piece
-# of work instead of being smuggled in behind a lint change.
-python-version = "3.10"
+# Matches `requires-python = ">=3.12"`, and kept in lockstep with ruff's
+# `target-version`. A split between the two is how `datetime.UTC` once got
+# suggested by the linter and rejected by the type checker.
+python-version = "3.12"
 # Hand-written types for compiled extensions that ship none. See stubs/.
 extra-paths = ["stubs"]
 

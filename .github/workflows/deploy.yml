@@ -19,7 +19,14 @@ jobs:
       - name: Build SDist
         run: pipx run build --sdist
       - name: Verify SDist contains package sources
-        run: python -c 'import glob, tarfile; p=glob.glob("dist/*.tar.gz")[0]; names=tarfile.open(p).getnames(); assert any(n.endswith("/src/cytools/__init__.py") for n in names), names'
+        run: >-
+          python -c 'import glob, tarfile;
+          p=glob.glob("dist/*.tar.gz")[0];
+          names=tarfile.open(p).getnames();
+          relative=[name.split("/", 1)[1] for name in names if "/" in name];
+          forbidden=("benchmarks/", "tests/", "demos/", "scripts/");
+          assert any(n.endswith("/src/cytools/__init__.py") for n in names), names;
+          assert not any(name.startswith(forbidden) for name in relative), sorted(name for name in relative if name.startswith(forbidden))'
       - uses: actions/upload-artifact@v7
         with:
           name: ci-sdist
@@ -33,7 +40,13 @@ jobs:
       - name: Build Wheel
         run: pipx run build --wheel
       - name: Verify wheel contains CYTools
-        run: python -c 'import glob, zipfile; p=glob.glob("dist/*.whl")[0]; names=zipfile.ZipFile(p).namelist(); assert "cytools/__init__.py" in names, names'
+        run: >-
+          python -c 'import glob, zipfile;
+          p=glob.glob("dist/*.whl")[0];
+          names=zipfile.ZipFile(p).namelist();
+          forbidden=("benchmarks/", "tests/", "demos/", "scripts/");
+          assert {"cytools/__init__.py", "cytools/py.typed"} <= set(names), names;
+          assert not any(name.startswith(forbidden) for name in names), sorted(name for name in names if name.startswith(forbidden))'
       - uses: actions/upload-artifact@v7
         with:
           name: ci-wheel

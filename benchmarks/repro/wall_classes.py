@@ -51,9 +51,7 @@ def wall_data(verts, favorable_only=True):
     out = []
     seen = set()
     for t in p.all_triangulations():
-        key = frozenset(
-            frozenset(s) for s in t.simplices(on_faces_dim=2, as_np_array=False)
-        )
+        key = frozenset(frozenset(s) for s in t.simplex_set(on_faces_dim=2))
         if key in seen:
             continue
         seen.add(key)

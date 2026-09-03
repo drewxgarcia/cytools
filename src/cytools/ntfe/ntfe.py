@@ -53,11 +53,14 @@ from cytools.utils import adjugate, integral_nullspace
 __all__ = [
     "cone_of_permissible_heights",
     "expanded_secondary_fan",
+    "iter_ntfe_cones",
     "ntfe_cones",
     "ntfe_frsts",
     "ntfe_frts",
+    "iter_ntfe_hypers",
     "ntfe_hypers",
     "triangface_ineqs",
+    "triangface_ineqs_and_triangs",
     "triangfaces_to_frst",
     "triangfaces_to_frt",
 ]
@@ -918,7 +921,36 @@ def triangfaces_to_frst(
 
 # generate ALL 2-face inequivalent hyperplanes/cones/FRSTs
 # --------------------------------------------------------
-@overload
+def triangface_ineqs_and_triangs(
+    self,
+    face_triangs: list | None = None,
+    require_star: bool = False,
+    max_npts: int = 17,
+    N_face_triangs: int = 1000,
+    triang_method: FaceTriangulationMethod = "grow2d",
+    verbosity: int = 0,
+) -> tuple[list, list]:
+    """
+    **Description:**
+    The 2-face inequalities together with the 2-face triangulations that
+    produced them. See `triangface_ineqs` for the arguments, which are
+    identical.
+
+    **Returns:**
+    `(inequalities, face_triangulations)`.
+    """
+    return _triangface_ineqs(
+        self,
+        face_triangs=face_triangs,
+        require_star=require_star,
+        max_npts=max_npts,
+        N_face_triangs=N_face_triangs,
+        triang_method=triang_method,
+        verbosity=verbosity,
+        return_triangs=True,
+    )
+
+
 def triangface_ineqs(
     self,
     face_triangs: list | None = None,
@@ -926,13 +958,47 @@ def triangface_ineqs(
     max_npts: int = 17,
     N_face_triangs: int = 1000,
     triang_method: FaceTriangulationMethod = "grow2d",
-    return_triangs: Literal[False] = False,
+    verbosity: int = 0,
+) -> list:
+    """
+    **Description:**
+    The 2-face inequalities. Use `triangface_ineqs_and_triangs` when the
+    triangulation objects themselves are also wanted; the implementation
+    computes both regardless, so neither spelling costs more than the other.
+
+    **Returns:**
+    The inequalities.
+    """
+    return triangface_ineqs_and_triangs(
+        self,
+        face_triangs=face_triangs,
+        require_star=require_star,
+        max_npts=max_npts,
+        N_face_triangs=N_face_triangs,
+        triang_method=triang_method,
+        verbosity=verbosity,
+    )[0]
+
+
+# Overloaded, unlike the public wrappers: typing plumbing for their two
+# call sites. The branch is real -- the two forms differ in the body --
+# but no public signature exposes it.
+@overload
+def _triangface_ineqs(
+    self,
+    face_triangs: list | None = None,
+    require_star: bool = False,
+    max_npts: int = 17,
+    N_face_triangs: int = 1000,
+    triang_method: FaceTriangulationMethod = "grow2d",
+    *,
+    return_triangs: Literal[False],
     verbosity: int = 0,
 ) -> list: ...
 
 
 @overload
-def triangface_ineqs(
+def _triangface_ineqs(
     self,
     face_triangs: list | None = None,
     require_star: bool = False,
@@ -945,7 +1011,7 @@ def triangface_ineqs(
 ) -> tuple[list, list]: ...
 
 
-def triangface_ineqs(
+def _triangface_ineqs(
     self,
     face_triangs: list | None = None,
     require_star: bool = False,
@@ -1020,7 +1086,43 @@ def triangface_ineqs(
     return ineqs, face_triangs
 
 
-@overload
+def iter_ntfe_hypers(
+    self,
+    require_star: bool = False,
+    N: int | None = None,
+    seed: int | None = None,
+    face_ineqs: list | None = None,
+    face_triangs: list | None = None,
+    max_npts: int = 17,
+    N_face_triangs: int = 1000,
+    triang_method: FaceTriangulationMethod = "grow2d",
+    separate_boring: bool = True,
+    verbosity: int = 0,
+) -> Generator["matrix.CSR_stack", None, None]:
+    """
+    **Description:**
+    A generator over the NTFE hyperplane stacks, rather than a materialised
+    list. See `ntfe_hypers` for the arguments, which are identical.
+
+    **Returns:**
+    A generator of hyperplane stacks.
+    """
+    return _ntfe_hypers(
+        self,
+        require_star=require_star,
+        N=N,
+        seed=seed,
+        face_ineqs=face_ineqs,
+        face_triangs=face_triangs,
+        max_npts=max_npts,
+        N_face_triangs=N_face_triangs,
+        triang_method=triang_method,
+        separate_boring=separate_boring,
+        verbosity=verbosity,
+        as_generator=True,
+    )
+
+
 def ntfe_hypers(
     self,
     require_star: bool = False,
@@ -1031,14 +1133,57 @@ def ntfe_hypers(
     max_npts: int = 17,
     N_face_triangs: int = 1000,
     triang_method: FaceTriangulationMethod = "grow2d",
-    as_generator: Literal[False] = False,
+    separate_boring: bool = True,
+    verbosity: int = 0,
+) -> list["matrix.CSR_stack"]:
+    """
+    **Description:**
+    The NTFE hyperplane stacks as a list. Use `iter_ntfe_hypers` to stream
+    them instead; the list form is exactly `list(iter_ntfe_hypers(...))`.
+
+    **Returns:**
+    A list of hyperplane stacks.
+    """
+    return list(
+        iter_ntfe_hypers(
+            self,
+            require_star=require_star,
+            N=N,
+            seed=seed,
+            face_ineqs=face_ineqs,
+            face_triangs=face_triangs,
+            max_npts=max_npts,
+            N_face_triangs=N_face_triangs,
+            triang_method=triang_method,
+            separate_boring=separate_boring,
+            verbosity=verbosity,
+        )
+    )
+
+
+# Overloaded, unlike the public wrappers: typing plumbing for their two
+# call sites. The branch is real -- the two forms differ in the body --
+# but no public signature exposes it.
+@overload
+def _ntfe_hypers(
+    self,
+    require_star: bool = False,
+    N: int | None = None,
+    seed: int | None = None,
+    face_ineqs: list | None = None,
+    face_triangs: list | None = None,
+    max_npts: int = 17,
+    N_face_triangs: int = 1000,
+    triang_method: FaceTriangulationMethod = "grow2d",
+    *,
+    as_generator: Literal[False],
     separate_boring: bool = True,
     verbosity: int = 0,
 ) -> list["matrix.CSR_stack"]: ...
 
 
 @overload
-def ntfe_hypers(
+def _ntfe_hypers(
     self,
     require_star: bool = False,
     N: int | None = None,
@@ -1055,7 +1200,7 @@ def ntfe_hypers(
 ) -> Generator["matrix.CSR_stack", None, None]: ...
 
 
-def ntfe_hypers(
+def _ntfe_hypers(
     self,
     require_star: bool = False,
     N: int | None = None,
@@ -1184,11 +1329,13 @@ def ntfe_hypers(
         # set the seed
         if seed is None:
             seed = time.time_ns() % (2**32)
-        np.random.seed(seed)
+        rng = np.random.default_rng(seed)
 
         # choose the hypers
         while len(chosen) < N:
-            choice = tuple(np.random.choice(x) for x in choices)
+            # plain ints: these index into `ineqs_array` and key the dedup
+            # set below, and numpy scalars would carry a dtype through both
+            choice = tuple(int(rng.choice(x)) for x in choices)
             chosen.add(choice)
 
     # grab/return hyperplanes
@@ -1213,7 +1360,45 @@ def ntfe_hypers(
     return hypers
 
 
-@overload
+def iter_ntfe_cones(
+    self,
+    hypers: Sequence[Any] | Iterator[Any] | None = None,
+    require_star: bool = False,
+    N: int | None = None,
+    seed: int | None = None,
+    face_ineqs: list | None = None,
+    face_triangs: list | None = None,
+    max_npts: int = 17,
+    N_face_triangs: int = 1000,
+    triang_method: FaceTriangulationMethod = "grow2d",
+    separate_boring: bool = True,
+    verbosity=0,
+) -> Generator[Cone, None, None]:
+    """
+    **Description:**
+    A generator over the NTFE cones, rather than a materialised list. See
+    `ntfe_cones` for the arguments, which are identical.
+
+    **Returns:**
+    A generator of cones.
+    """
+    return _ntfe_cones(
+        self,
+        hypers=hypers,
+        require_star=require_star,
+        N=N,
+        seed=seed,
+        face_ineqs=face_ineqs,
+        face_triangs=face_triangs,
+        max_npts=max_npts,
+        N_face_triangs=N_face_triangs,
+        triang_method=triang_method,
+        separate_boring=separate_boring,
+        verbosity=verbosity,
+        as_generator=True,
+    )
+
+
 def ntfe_cones(
     self,
     hypers: Sequence[Any] | Iterator[Any] | None = None,
@@ -1225,14 +1410,57 @@ def ntfe_cones(
     max_npts: int = 17,
     N_face_triangs: int = 1000,
     triang_method: FaceTriangulationMethod = "grow2d",
-    as_generator: Literal[False] = False,
+    separate_boring: bool = True,
+    verbosity=0,
+) -> list[Cone]:
+    """
+    **Description:**
+    The NTFE cones as a list. Use `iter_ntfe_cones` to stream them instead.
+
+    **Returns:**
+    A list of cones.
+    """
+    return _ntfe_cones(
+        self,
+        hypers=hypers,
+        require_star=require_star,
+        N=N,
+        seed=seed,
+        face_ineqs=face_ineqs,
+        face_triangs=face_triangs,
+        max_npts=max_npts,
+        N_face_triangs=N_face_triangs,
+        triang_method=triang_method,
+        separate_boring=separate_boring,
+        verbosity=verbosity,
+        as_generator=False,
+    )
+
+
+# Overloaded, unlike the public wrappers: typing plumbing for their two
+# call sites. The branch is real -- the two forms differ in the body --
+# but no public signature exposes it.
+@overload
+def _ntfe_cones(
+    self,
+    hypers: Sequence[Any] | Iterator[Any] | None = None,
+    require_star: bool = False,
+    N: int | None = None,
+    seed: int | None = None,
+    face_ineqs: list | None = None,
+    face_triangs: list | None = None,
+    max_npts: int = 17,
+    N_face_triangs: int = 1000,
+    triang_method: FaceTriangulationMethod = "grow2d",
+    *,
+    as_generator: Literal[False],
     separate_boring: bool = True,
     verbosity=0,
 ) -> list[Cone]: ...
 
 
 @overload
-def ntfe_cones(
+def _ntfe_cones(
     self,
     hypers: Sequence[Any] | Iterator[Any] | None = None,
     require_star: bool = False,
@@ -1250,7 +1478,7 @@ def ntfe_cones(
 ) -> Generator[Cone, None, None]: ...
 
 
-def ntfe_cones(
+def _ntfe_cones(
     self,
     hypers: Sequence[Any] | Iterator[Any] | None = None,
     require_star: bool = False,
@@ -1322,7 +1550,8 @@ def ntfe_cones(
             )
 
         # generate the hyperplanes
-        hypers = self.ntfe_hypers(
+        hypers = _ntfe_hypers(
+            self,
             require_star=require_star,
             N=N,
             max_npts=max_npts,
@@ -1505,7 +1734,8 @@ def ntfe_frts(
     elif cones is not None:
         data = cones
     else:
-        data = self.ntfe_hypers(
+        data = _ntfe_hypers(
+            self,
             require_star=False,
             N=N,
             max_npts=max_npts,

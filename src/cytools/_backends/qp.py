@@ -316,6 +316,11 @@ def osqp_tip(
         eps_abs=1e-4,
         eps_rel=1e-4,
         polishing=True,
+        # OSQP is migrating this default to True. Non-convergence is a normal,
+        # expected outcome here -- `osqp_tip` returns None and the caller falls
+        # back -- so pin the current behaviour rather than inherit a flip that
+        # would turn a routine miss into an exception.
+        raise_error=False,
     )
 
 

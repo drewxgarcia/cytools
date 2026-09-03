@@ -1,15 +1,15 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import Any, Literal, TypeAlias, overload
+from typing import Any, Literal, overload
 
 from numpy.typing import NDArray
 
-Scalar: TypeAlias = int | float
-MatrixLike: TypeAlias = NDArray[Any] | Sequence[Sequence[Scalar]]
-PolytopeInput: TypeAlias = MatrixLike | str
-NefPartitionWithHodge: TypeAlias = tuple[list[list[int]], list[list[int]], int]
-NefPartitionNoHodge: TypeAlias = tuple[list[list[int]], None, None]
+type Scalar = int | float
+type MatrixLike = NDArray[Any] | Sequence[Sequence[Scalar]]
+type PolytopeInput = MatrixLike | str
+type NefPartitionWithHodge = tuple[list[list[int]], list[list[int]], int]
+type NefPartitionNoHodge = tuple[list[list[int]], None, None]
 
 class Polytope:
     def __init__(self, data: PolytopeInput) -> None: ...

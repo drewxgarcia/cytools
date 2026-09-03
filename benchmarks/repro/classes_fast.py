@@ -24,10 +24,10 @@ def classes_for(verts):
     p = Polytope(verts)
     fav = p.is_favorable(lattice="N")
     keys = {
-        frozenset(frozenset(s) for s in t.simplices(on_faces_dim=2, as_np_array=False))
+        frozenset(frozenset(s) for s in t.simplex_set(on_faces_dim=2))
         for t in p.ntfe_frsts()
     }
-    autos = p.automorphisms(as_dictionary=True)
+    autos = p.automorphism_dicts()
     seen, n = set(), 0
     for k in keys:
         if k in seen:

@@ -35,7 +35,7 @@ import statistics
 import subprocess
 import sys
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 import numpy as np
@@ -263,7 +263,7 @@ def main() -> None:
 
     chosen = list(TASKS) if args.task == "all" else [args.task]
     report = {
-        "measured_utc": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "measured_utc": datetime.now(UTC).isoformat(timespec="seconds"),
         "repeat": args.repeat,
         "python": sys.version.split()[0],
         "tasks": {},

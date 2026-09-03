@@ -16,7 +16,8 @@ Silicon (M-series)**. Intel-based Macs and Windows are not supported. See
 
 Development uses [uv](https://docs.astral.sh/uv/) and the committed `uv.lock`
 file. `uv sync` creates a project-local virtual environment, installs CYTools
-editably, and includes the default test and benchmark tools:
+editably, and includes the repository-only test and benchmark tools. Those
+tools and their source files are not included in release artifacts:
 
 ```bash
 git clone https://github.com/drewxgarcia/cytools.git

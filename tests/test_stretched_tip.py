@@ -154,6 +154,7 @@ def test_highs_and_osqp_agree_where_the_first_order_method_converges():
     for A in (np.eye(2), np.array([[3, 2], [5, 3]]), doubling_chain(6)):
         certified = highs_tip(A, 1)
         first_order = osqp_tip(A, 1)
+        assert certified is not None, "HiGHS certifies every fixture here"
         assert first_order is not None, "fixture chosen to be within OSQP's reach"
         assert np.allclose(certified, first_order, rtol=1e-4, atol=1e-6)
 

@@ -297,7 +297,7 @@ class TestAutomorphisms:
         benchmark(lambda: POLY_5V.automorphisms(square_to_one=True))
 
     def test_automorphisms_as_dict_5v(self, benchmark):
-        benchmark(lambda: POLY_5V.automorphisms(as_dictionary=True))
+        benchmark(POLY_5V.automorphism_dicts)
 
     def test_automorphisms_batch(self, benchmark, tiny_poly_objects):
         def go():

@@ -618,10 +618,6 @@ dependencies = [
 ]
 
 [package.optional-dependencies]
-benchmark = [
-    { name = "pytest" },
-    { name = "pytest-benchmark" },
-]
 cvxopt = [
     { name = "cvxopt" },
 ]
@@ -635,7 +631,6 @@ normaliz = [
     { name = "pynormaliz" },
 ]
 notebook = [
-    { name = "huggingface-hub" },
     { name = "ipywidgets" },
     { name = "jupyterlab" },
 ]
@@ -664,7 +659,6 @@ requires-dist = [
     { name = "dualgnn", marker = "extra == 'gnn'" },
     { name = "extremalrays" },
     { name = "highspy", specifier = "==1.12.*" },
-    { name = "huggingface-hub", marker = "extra == 'notebook'" },
     { name = "huggingface-hub", marker = "extra == 'streaming'" },
     { name = "ipywidgets", marker = "extra == 'notebook'" },
     { name = "joblib" },
@@ -681,9 +675,7 @@ requires-dist = [
     { name = "pyarrow" },
     { name = "pynormaliz", marker = "extra == 'normaliz'", specifier = ">=2.24" },
     { name = "pypalp" },
-    { name = "pytest", marker = "extra == 'benchmark'" },
     { name = "pytest", marker = "extra == 'test'" },
-    { name = "pytest-benchmark", marker = "extra == 'benchmark'" },
     { name = "python-flint" },
     { name = "qpsolvers" },
     { name = "regfans", specifier = ">=0.2.1" },
@@ -694,7 +686,7 @@ requires-dist = [
     { name = "tqdm" },
     { name = "triangulumancer", specifier = ">=0.3" },
 ]
-provides-extras = ["benchmark", "cvxopt", "gnn", "mosek", "normaliz", "notebook", "performance", "streaming", "test"]
+provides-extras = ["cvxopt", "gnn", "mosek", "normaliz", "notebook", "performance", "streaming", "test"]
 
 [package.metadata.requires-dev]
 dev = [

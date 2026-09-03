@@ -52,7 +52,7 @@ def test_automorphism_orbit_with_filtered_automorphism():
     )
     t = p.triangulate(points=[0, 1, 2, 3, 4], make_star=False)
 
-    autos = p.automorphisms(as_dictionary=True)
+    autos = p.automorphism_dicts()
     filtered = [
         i
         for i, a in enumerate(autos)
@@ -100,10 +100,13 @@ def test_points_index_vocabulary():
     t = p.triangulate()
     labels = t.labels[:3]
 
-    assert t.points(which=labels, as_indices=True).tolist() == [0, 1, 2]
-
-    with pytest.raises(ValueError, match="different index spaces"):
-        t.points(which=labels, as_indices=True, as_poly_indices=True)
+    # The two index spaces are separate methods, so asking for both at once --
+    # which used to raise ValueError("different index spaces") -- can no longer
+    # be expressed.
+    assert t.point_indices(which=labels).tolist() == [0, 1, 2]
+    assert list(t.polytope_point_indices(which=labels)) == [
+        p.points_to_indices(pt) for pt in t.points(which=labels)
+    ]
 
 
 def test_heights_are_signed():
@@ -323,12 +326,7 @@ def test_face_restriction_treats_labels_as_identifiers(labels):
         expected.append(restrictions)
 
     assert (
-        triangulation.simplices(
-            on_faces_dim=2,
-            split_by_face=True,
-            as_np_array=False,
-        )
-        == expected
+        triangulation.simplices_by_face(on_faces_dim=2, as_np_array=False) == expected
     )
 
 
@@ -472,19 +470,19 @@ def test_simplices():
 
 
 def test_simplices_cache_not_aliased():
-    # simplices(split_by_face=True, as_np_array=False) used to hand out the
+    # simplices_by_face(as_np_array=False) used to hand out the
     # cached mutable sets themselves
     p = Polytope(
         [[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1], [-1, -1, -1, -1]]
     )
     t = p.triangulate()
 
-    first = t.simplices(on_faces_dim=2, split_by_face=True, as_np_array=False)
+    first = t.simplices_by_face(on_faces_dim=2, as_np_array=False)
     sizes = [len(face) for face in first]
     first[0].clear()
     first.pop()
 
-    second = t.simplices(on_faces_dim=2, split_by_face=True, as_np_array=False)
+    second = t.simplices_by_face(on_faces_dim=2, as_np_array=False)
     assert [len(face) for face in second] == sizes
 
 

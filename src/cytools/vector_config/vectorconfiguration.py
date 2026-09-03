@@ -233,6 +233,9 @@ class VectorConfiguration(regfans.VectorConfiguration):
     @overload
     def vectors_to_labels(self, vectors: Matrix) -> list[int]: ...
 
+    # Not redundant with the two above: `regfans.VectorConfiguration` declares
+    # this method as taking `ArrayLike`, and an override must accept everything
+    # its base accepts. Dropping this arm is an invalid-method-override.
     @overload
     def vectors_to_labels(self, vectors: ArrayLike) -> int | list[int]: ...
 

@@ -24,7 +24,7 @@
 # -----------------------------------------------------------------------------
 
 from collections.abc import Sequence
-from typing import Literal, TypeAlias
+from typing import Any, Literal, Protocol, TypeAlias
 
 import numpy as np
 
@@ -32,10 +32,42 @@ import numpy as np
 Scalar = int | float | np.number
 
 #: A 1-dimensional array of numbers: a row/point/height vector.
-Vector = np.ndarray | Sequence[Scalar]
+#:
+#: Spelled as a union of sequence types rather than the more obvious
+#: `Sequence[Scalar]`. numpy's `ArrayLike` is a union whose sequence members are
+#: `_NestedSequence[_SupportsArray[...]]` and `_NestedSequence[bool | int |
+#: float | ...]`; `Sequence[int | float]` satisfies the second and
+#: `Sequence[np.number]` the first, but `Sequence[int | float | np.number]`
+#: satisfies neither, because no single member covers a mixed element type.
+#: Writing it this way keeps every `Vector` assignable to `ArrayLike`, which is
+#: what the numpy-facing call sites and the `regfans` base classes require.
+Vector = np.ndarray | Sequence[int | float] | Sequence[np.number]
+
+
+class SupportsArray(Protocol):
+    """Anything numpy can consume through the array protocol.
+
+    `np.asarray` accepts any object exposing `__array__`, and several CYTools
+    types do (`helpers.matrix.CSR_stack`, for one). Kept out of `Matrix`
+    deliberately: `Matrix` must stay assignable to numpy's `ArrayLike`, and a
+    local protocol is not. Use it alongside `Matrix` at the call sites that
+    genuinely accept the array protocol, such as `Cone(hyperplanes=...)`.
+    """
+
+    def __array__(self, dtype: Any = None) -> np.ndarray: ...
+
+    def __len__(self) -> int: ...
+
 
 #: A 2-dimensional array of numbers: a list of points, rays, inequalities, ...
-Matrix = np.ndarray | Sequence[Vector]
+#: Spelled out arm-by-arm for the same reason as `Vector` above: `Sequence[T]`
+#: where `T` is itself a union satisfies no single member of `ArrayLike`.
+Matrix = (
+    np.ndarray
+    | Sequence[np.ndarray]
+    | Sequence[Sequence[int | float]]
+    | Sequence[Sequence[np.number]]
+)
 
 #: Either of the above -- for arguments accepting a vector or a matrix.
 VectorOrMatrix = Vector | Matrix
@@ -108,6 +140,7 @@ InvariantKind: TypeAlias = Literal["gv", "gw"]
 ProcessStartMethod: TypeAlias = Literal["fork", "forkserver", "spawn"]
 
 __all__ = [
+    "SupportsArray",
     "AutomorphismAction",
     "ExtremalityMethod",
     "ExtremalRaysMethod",

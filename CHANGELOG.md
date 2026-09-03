@@ -23,6 +23,8 @@ changes below are the consequence.
 
 ### Added
 
+- A PEP 561 `py.typed` marker, so editors and external type checkers use the
+  package's inline annotations after installation.
 - Notebook-first landscape workflows: `scan`, `sweep`, `status`, the
   `@quantity` extension point, resumable Parquet-backed derived results, and an
   executable `demos/landscape_scans.ipynb` walkthrough.
@@ -36,6 +38,28 @@ changes below are the consequence.
 
 ### Changed
 
+- Release artifacts now contain only the runtime package and essential package
+  metadata. Benchmarks, reproduction scripts, tests, demos, and platform
+  scripts remain repository-only, and benchmark tooling is available through
+  the development dependency group rather than a public package extra.
+- The lint and type-check targets now match `requires-python = ">=3.12"`
+  (previously pinned to 3.10 to keep the source upstreamable, which a true fork
+  does not owe anyone). Raising them surfaced 19 numpy-typing diagnostics the
+  old pin was hiding; all are fixed, none with a cast. Eleven came from one
+  root cause: `Vector`/`Matrix` were spelled `Sequence[Scalar]` where `Scalar`
+  is a union, and no member of numpy's `ArrayLike` covers a sequence with a
+  mixed element type. They are now unions of sequence types, so every `Vector`
+  and `Matrix` is `ArrayLike`-assignable. Two suppressions in
+  `tests/test_arithmetic.py` became unnecessary at 3.12 and were deleted.
+- **Breaking:** the random samplers draw from a local `np.random.Generator`
+  instead of seeding the interpreter-global legacy RNG. `random_flips`,
+  `random_triangulations_fast`, `random_triangulations_fair`, the NTFE
+  hyperplane sampler, `read_polytopes`' subsampling, and the GLSM basis retry
+  no longer call `np.random.seed`, so computing a geometry no longer perturbs
+  the RNG of anything else in the process -- which also makes seeding
+  well-defined per worker under parallel sweeps. A given seed is still exactly
+  reproducible, but **the stream differs**: a seed that produced one
+  triangulation before will generally produce another.
 - Lint coverage extended to `B` (bugbear), `PERF`, `C4`, `RSE`, `TID`, `Q`,
   `ICN`, `INT`, `SLOT`, `FLY`, and `PIE`, with every violation fixed rather
   than suppressed. Every `zip()` now states `strict=` explicitly; the one call
@@ -143,6 +167,25 @@ changes below are the consequence.
 
 ### Removed
 
+- **Breaking:** every public boolean flag that switched a return type is now a
+  separately named method. `points`/`point_indices`,
+  `vertices`/`vertex_indices`, `interior_points`/`interior_point_indices` and
+  the rest of the `Polytope`/`PolytopeFace` accessors no longer take
+  `as_indices`; `Triangulation.points` no longer takes `as_indices` or
+  `as_poly_indices` (they are `point_indices` and `polytope_point_indices`, so
+  the "different index spaces" `ValueError` is now unexpressible);
+  `simplices` splits into `simplices`/`simplex_set`/`simplices_by_face`;
+  `secondary_cone` into `secondary_cone`/`secondary_cone_hyperplanes`;
+  `automorphisms` into `automorphisms`/`automorphism_dicts` (dropping an
+  `action` argument the dictionary form silently ignored);
+  `Fan.intersection_numbers` into `intersection_numbers`/
+  `intersection_numbers_array`; `lll_reduce` into
+  `lll_reduce`/`lll_reduce_with_transform`; and the NTFE generators into
+  `ntfe_cones`/`iter_ntfe_cones`, `ntfe_hypers`/`iter_ntfe_hypers`,
+  `triangface_ineqs`/`triangface_ineqs_and_triangs`. Nineteen `@overload` sets
+  existed only to describe those flags; the public API now has none, and the
+  total stub count falls from 52 to 28 (six genuine input-shape sets, plus
+  seven private helpers that keep the branch internal).
 - **Breaking:** the renamed-parameter shims. `as_triang_indices`
   (`Triangulation.points`), `as_face_inds` (`Fan.restricted_simps`),
   `as_index` (`find_trilayer_vertex_polytope`), and `as_vertex_index`
@@ -199,6 +242,19 @@ changes below are the consequence.
 
 ### Fixed
 
+- The OSQP stretched-cone adapter passes `raise_error=False` explicitly. OSQP
+  is flipping that default, and non-convergence is an expected outcome here
+  that the caller handles by falling back, not an exception.
+- `tests/test_read_polytopes_ws.py` opened a file on every iteration of a walk
+  over `gc.get_objects()` purely to obtain `type(open(...))`, leaking ~528k
+  handles per run. It now tracks the reader's own handle instead, which is both
+  deterministic and a stronger assertion. The suite emits no warnings.
+- `CalabiYau.invariant(check_deg=True)` raised inside `np.dot` when the
+  geometry had no grading vector. A charge with no defined degree is now
+  reported as unknown rather than crashing.
+- `Triangulation.check_heights` raised an opaque `TypeError` from `np.matmul`
+  when called without heights. The precondition its callers already maintain is
+  now stated and checked in the method.
 - `Triangulation.automorphism_orbit` grew the orbit by re-applying
   automorphisms to *orbit elements*, but expressed that by letting a loop
   variable shadow the `simps` that a nested helper closed over. The helper now

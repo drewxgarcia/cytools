@@ -30,8 +30,8 @@ Optional features are grouped by purpose:
 
 | Extra | Adds |
 | --- | --- |
-| `notebook` | JupyterLab, widgets, and on-demand 4D data |
-| `streaming` | On-demand 4D data without notebook dependencies |
+| `notebook` | JupyterLab and notebook widgets |
+| `streaming` | Explicit 4D database-shard download support |
 | `cvxopt` | The optional CVXOPT quadratic-programming solver |
 | `gnn` | GNN-based triangulation sampling through `dualgnn` |
 | `mosek` | The optional MOSEK solver |
@@ -49,11 +49,12 @@ available on the host system before `scikit-sparse` is installed.
 
 ## Landscape data
 
-The notebook extra downloads requested 4D Parquet shards on demand and reuses
-the Hugging Face cache. No database setup is required for a first notebook.
+Database reads never start a download. A vertex-count shard can be gigabytes,
+and choosing a database snapshot is part of making a computation reproducible.
+Point the workbench at an existing local snapshot before running a landscape
+scan:
 
-For a large study, an offline machine, or an explicitly pinned data snapshot,
-point the workbench at a local directory:
+Set the snapshot location once for the current shell:
 
 ```bash
 export CYTOOLS_DB_DIR=/path/to/polytopes-4d
@@ -62,6 +63,19 @@ export CYTOOLS_DB_DIR=/path/to/polytopes-4d
 The directory must contain files named
 `polytopes-4d-05-vertices.parquet` through the vertex counts you intend to
 query. Pass `db_dir=` to `scan` when notebook-local configuration is clearer.
+
+If you explicitly want CYTools to fetch selected shards into the Hugging Face
+cache, install the separate `streaming` extra and request the vertex counts:
+
+```bash
+python -m pip install "cytools-workbench[streaming]"
+```
+
+```python
+from cytools import download_shards
+
+download_shards([5, 6, 7])
+```
 
 ## Develop from source
 

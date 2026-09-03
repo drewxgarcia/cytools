@@ -220,7 +220,7 @@ class TestSimplices:
         benchmark(lambda: triang_5v.simplices(on_faces_codim=1))
 
     def test_simplices_split_by_face_5v(self, benchmark, triang_5v):
-        benchmark(lambda: triang_5v.simplices(split_by_face=True))
+        benchmark(triang_5v.simplices_by_face)
 
     def test_simplices_batch(self, benchmark, batch_triangs):
         def go():
@@ -248,7 +248,7 @@ class TestPointsLookup:
         benchmark(lambda: triang_5v.points(optimal=True))
 
     def test_points_as_poly_indices_5v(self, benchmark, triang_5v):
-        benchmark(lambda: triang_5v.points(as_poly_indices=True))
+        benchmark(triang_5v.polytope_point_indices)
 
     def test_points_to_indices_5v(self, benchmark, triang_5v):
         pts = triang_5v.points().tolist()
@@ -285,7 +285,7 @@ class TestGKZAndSecondaryCone:
         benchmark(triang_6v.secondary_cone)
 
     def test_secondary_cone_not_as_cone_5v(self, benchmark, triang_5v):
-        benchmark(lambda: triang_5v.secondary_cone(as_cone=False))
+        benchmark(triang_5v.secondary_cone_hyperplanes)
 
     def test_secondary_cone_on_faces_5v(self, benchmark, triang_5v):
         benchmark(lambda: triang_5v.secondary_cone(on_faces_dim=2))

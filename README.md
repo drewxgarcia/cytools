@@ -55,13 +55,17 @@ From a source checkout, install the notebook environment with:
 uv sync --extra notebook
 ```
 
-For a release install, use `pip install "cytools-workbench[notebook]"`. Start
-with a small vertex-count range: the first scan downloads only those 4D
-Parquet shards and later scans reuse the local Hugging Face cache. For large or
-fully pinned studies, set `CYTOOLS_DB_DIR` to an explicit database snapshot.
+For a release install, use `pip install "cytools-workbench[notebook]"`.
+Landscape data is intentionally never downloaded by a read: a shard can be
+gigabytes, and the database snapshot is part of a reproducible computation.
+Point the workbench at an existing snapshot before scanning:
 
 ```python
+from pathlib import Path
+
 from cytools import quantities, scan
+
+DB_DIR = Path("/path/to/polytopes-4d")  # replace with your snapshot
 
 quantities()  # every built-in column and whether it can run in parallel
 
@@ -69,6 +73,7 @@ df = scan(
     ["h11", "h21", "chi", "n_points"],
     n=100,
     n_vertices=[5, 6, 7],
+    db_dir=DB_DIR,
 )
 df.head()
 ```
@@ -82,6 +87,7 @@ df = scan(
     ["h11", "is_favorable", "n_intnums"],
     n=1_000,
     n_vertices=[5, 6, 7],
+    db_dir=DB_DIR,
 )
 ```
 
@@ -95,6 +101,7 @@ df = scan(
     ["h11", "kahler_point", "divisor_volumes", "cy_volume"],
     n=1_000,
     moduli="sampled",
+    db_dir=DB_DIR,
 )
 ```
 
@@ -124,6 +131,7 @@ df = scan(
     n=250,
     n_vertices=[5, 6, 7],
     version=1,
+    db_dir=DB_DIR,
 )
 ```
 

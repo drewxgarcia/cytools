@@ -1,4 +1,5 @@
 import threading
+from importlib.resources import files
 
 import cytools
 
@@ -6,6 +7,10 @@ import cytools
 def test_version_aliases_agree():
     assert cytools.__version__ == cytools.version
     assert cytools.__upstream_version__ == cytools.upstream_version == "1.4.12"
+
+
+def test_installed_package_declares_inline_types():
+    assert files("cytools").joinpath("py.typed").is_file()
 
 
 def test_public_api_is_explicit():
@@ -36,11 +41,15 @@ def test_feature_namespaces_export_only_supported_names():
         "cone_of_permissible_heights",
         "expanded_secondary_fan",
         "face_triangulations",
+        # each generator-returning form is its own name; no `as_generator` flag
+        "iter_ntfe_cones",
+        "iter_ntfe_hypers",
         "ntfe_cones",
         "ntfe_frsts",
         "ntfe_frts",
         "ntfe_hypers",
         "triangface_ineqs",
+        "triangface_ineqs_and_triangs",
         "triangfaces_to_frst",
         "triangfaces_to_frt",
     }

@@ -19,7 +19,7 @@ from cytools.helpers.arithmetic import gcd_reduce, primitive
 # the bound `np.gcd.reduce`, whose numpy stub lacks a matching overload, is
 # quarantined in this one function rather than repeated at each use.
 def _old_reduce(a, axis=None):
-    return np.gcd.reduce(np.abs(a), axis=axis)  # ty: ignore[no-matching-overload]
+    return np.gcd.reduce(np.abs(a), axis=axis)
 
 
 def _old_flat(a):
@@ -155,7 +155,7 @@ def test_math_lcm_replaces_np_lcm_reduce_because_int64_overflows():
     """
     dens = [982451653, 961748941, 899809343, 878492759]  # pairwise coprime
     assert math.lcm(*dens) == math.prod(dens)
-    assert int(np.lcm.reduce(np.array(dens))) < 0  # ty: ignore[no-matching-overload]
+    assert int(np.lcm.reduce(np.array(dens))) < 0
 
 
 def test_primitive_is_idempotent(rng):

@@ -700,13 +700,30 @@ def test_the_same_seed_always_gives_the_same_triangulation():
     assert a == b
 
 
-def test_different_seeds_give_different_triangulations():
+def test_seeds_are_reproducible_and_the_sampler_is_not_degenerate():
+    """Two properties: one guaranteed, one statistical.
+
+    A given seed must always yield the same triangulation -- that is what the
+    derived store relies on to skip work it has already done. Separately the
+    sampler must be able to reach more than one triangulation.
+
+    The second is asserted over a *range* of seeds rather than a hand-picked
+    few. Which seeds diverge is a property of the RNG stream, not of the
+    sampler: the previous spelling pinned `(None, 11, 22, 33)`, and every one
+    of those landed on the canonical triangulation once the sampler moved off
+    the legacy global RNG onto `np.random.Generator`.
+    """
     verts = _vertices(4, n_vertices=[SCAN_VERTEX_COUNT])[0]
-    hashes = {
-        Geometry(verts, triangulation_seed=s).triangulation_hash
-        for s in (None, 11, 22, 33)
+
+    repeated = {
+        Geometry(verts, triangulation_seed=14).triangulation_hash for _ in range(3)
     }
-    assert len(hashes) > 1, "the sampler returned one triangulation every time"
+    assert len(repeated) == 1, "the same seed gave different triangulations"
+
+    hashes = {
+        Geometry(verts, triangulation_seed=s).triangulation_hash for s in range(32)
+    }
+    assert len(hashes) > 1, "the sampler returned one triangulation for every seed"
 
 
 def test_geometry_ids_are_identity_at_index_zero_and_distinct_after():

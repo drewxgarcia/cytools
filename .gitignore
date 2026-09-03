@@ -18,9 +18,22 @@ __pycache__
 *.lic
 
 # Python package build files
-build
-dist
-*.egg-info
+/build/
+/dist/
+/*.egg-info/
+
+# Local environments and tool state
+/.venv/
+/.pytest_cache/
+/.ruff_cache/
+/.ty_cache/
+/.benchmarks/
+/.coverage
+/htmlcov/
+
+# Local benchmark output. Curated baselines under benchmarks/artifacts remain
+# versioned; ad-hoc pytest-benchmark output does not.
+/benchmark-results/
 
 # testing
 private.py

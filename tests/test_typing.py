@@ -145,7 +145,7 @@ def test_index_flags_have_one_canonical_spelling():
     """
     retired = {"as_triang_indices", "as_face_inds", "as_index", "as_vertex_index"}
     canonical = {
-        Triangulation.points: "as_indices",
+        Triangulation.simplices: "as_indices",
         Fan.restricted_simps: "as_indices",
         find_trilayer_vertex_polytope: "as_indices",
         find_trilayer_vertex_vertices: "as_indices",
@@ -165,3 +165,18 @@ def test_index_flags_have_one_canonical_spelling():
     assert list(signature(Fan.cones).parameters).index("as_inds") == list(
         signature(regfans.fan.Fan.cones).parameters
     ).index("as_inds")
+
+    # The point accessors do not take an index flag at all: returning indices
+    # is a separate, separately-named method, so there is no boolean whose
+    # value changes the return type.
+    for owner, pair in (
+        (Polytope, ("points", "point_indices")),
+        (Polytope, ("vertices", "vertex_indices")),
+        (Polytope, ("interior_points", "interior_point_indices")),
+        (PolytopeFace, ("points", "point_indices")),
+        (PolytopeFace, ("vertices", "vertex_indices")),
+        (Triangulation, ("points", "point_indices")),
+    ):
+        for name in pair:
+            assert hasattr(owner, name), f"{owner.__name__}.{name}"
+            assert "as_indices" not in signature(getattr(owner, name)).parameters

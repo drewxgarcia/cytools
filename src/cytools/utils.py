@@ -2143,8 +2143,8 @@ def fetch_polytopes(
 
         # check if we actually need to sample (otherwise, just use full list)
         if len(items) > samples:
-            np.random.seed(sample_seed)
-            sampled = np.random.choice(items, size=samples, replace=False)
+            rng = np.random.default_rng(sample_seed)
+            sampled = rng.choice(items, size=samples, replace=False)
         else:
             sampled = items
 
@@ -2169,18 +2169,51 @@ def fetch_polytopes(
 
 # point manipulations
 # -------------------
+def lll_reduce(pts_in: Matrix) -> np.ndarray:
+    """
+    Apply lll-reduction to the input points (the rows).
+
+    **Arguments:**
+    - `pts_in`: A list of points.
+
+    **Returns:**
+    The reduced points. Use `lll_reduce_with_transform` if the basis change
+    itself is needed.
+    """
+    return _lll_reduce(pts_in, transform=False)
+
+
+def lll_reduce_with_transform(
+    pts_in: Matrix,
+) -> tuple[np.ndarray, tuple[np.ndarray, np.ndarray]]:
+    """
+    Apply lll-reduction and also return the basis change that achieved it.
+
+    **Arguments:**
+    - `pts_in`: A list of points.
+
+    **Returns:**
+    `(reduced_points, (A, A_inverse))`, where `A` is unimodular.
+    """
+    return _lll_reduce(pts_in, transform=True)
+
+
+# Overloaded, unlike the two public functions above. This is typing plumbing
+# for one internal call site, not API surface: computing the transform means an
+# `integral_inverse` and its verification, which the common path must not pay,
+# so the branch has to stay -- but the public spelling of it does not.
 @overload
-def lll_reduce(pts_in: Matrix, transform: Literal[False] = False) -> np.ndarray: ...
+def _lll_reduce(pts_in: Matrix, transform: Literal[False]) -> np.ndarray: ...
 
 
 @overload
-def lll_reduce(
+def _lll_reduce(
     pts_in: Matrix, transform: Literal[True]
 ) -> tuple[np.ndarray, tuple[np.ndarray, np.ndarray]]: ...
 
 
-def lll_reduce(
-    pts_in: Matrix, transform: bool = False
+def _lll_reduce(
+    pts_in: Matrix, transform: bool
 ) -> np.ndarray | tuple[np.ndarray, tuple[np.ndarray, np.ndarray]]:
     """
     Apply lll-reduction to the input points (the rows).

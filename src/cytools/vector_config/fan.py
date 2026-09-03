@@ -376,44 +376,16 @@ class Fan(regfans.fan.Fan):
 
     # toric stuff
     # -----------
-    @overload
     def intersection_numbers(
         self,
         pushed_down: bool = False,
         in_basis: bool = False,
         symmetrize: bool = False,
-        as_np_array: Literal[False] = False,
         eps: float = _INTERSECTION_NUMBERS_DEFAULT_EPS,
         digits: int | None = _INTERSECTION_NUMBERS_DEFAULT_DIGITS,
         copy: bool = True,
         verbosity: int = 0,
-    ) -> dict: ...
-
-    @overload
-    def intersection_numbers(
-        self,
-        pushed_down: bool = False,
-        in_basis: bool = False,
-        symmetrize: bool = False,
-        *,
-        as_np_array: Literal[True],
-        eps: float = _INTERSECTION_NUMBERS_DEFAULT_EPS,
-        digits: int | None = _INTERSECTION_NUMBERS_DEFAULT_DIGITS,
-        copy: bool = True,
-        verbosity: int = 0,
-    ) -> np.ndarray: ...
-
-    def intersection_numbers(
-        self,
-        pushed_down: bool = False,
-        in_basis: bool = False,
-        symmetrize: bool = False,
-        as_np_array: bool = False,
-        eps: float = _INTERSECTION_NUMBERS_DEFAULT_EPS,
-        digits: int | None = _INTERSECTION_NUMBERS_DEFAULT_DIGITS,
-        copy: bool = True,
-        verbosity: int = 0,
-    ) -> dict | np.ndarray:
+    ) -> dict:
         """
         **Description:**
         Compute the intersection numbers of the toric variety defined by the
@@ -426,8 +398,6 @@ class Fan(regfans.fan.Fan):
         - `symmetrize`:  Whether to give all intersection numbers, using the
                          symmetry of the intersection numbers. Otherwise, just
                          give components kappa[i,j,k] for i<=j<=k.
-        - `as_np_array`: Whether to format the intersection numbers as a NumPy
-                         array.
         - `eps`:         Compatibility-only tolerance for filtering near-zero
                          output entries. This does not affect the cached
                          tensor and should normally be left at the default.
@@ -444,6 +414,89 @@ class Fan(regfans.fan.Fan):
         **Returns:**
         The intersection numbers.
         """
+        return self._intersection_numbers(
+            pushed_down=pushed_down,
+            in_basis=in_basis,
+            symmetrize=symmetrize,
+            eps=eps,
+            digits=digits,
+            copy=copy,
+            verbosity=verbosity,
+            as_np_array=False,
+        )
+
+    def intersection_numbers_array(
+        self,
+        pushed_down: bool = False,
+        in_basis: bool = False,
+        symmetrize: bool = False,
+        eps: float = _INTERSECTION_NUMBERS_DEFAULT_EPS,
+        digits: int | None = _INTERSECTION_NUMBERS_DEFAULT_DIGITS,
+        copy: bool = True,
+        verbosity: int = 0,
+    ) -> np.ndarray:
+        """
+        **Description:**
+        The intersection numbers as a dense NumPy array rather than a dict.
+        See `intersection_numbers` for the arguments, which are identical.
+
+        **Returns:**
+        The intersection numbers, as an array.
+        """
+        return self._intersection_numbers(
+            pushed_down=pushed_down,
+            in_basis=in_basis,
+            symmetrize=symmetrize,
+            eps=eps,
+            digits=digits,
+            copy=copy,
+            verbosity=verbosity,
+            as_np_array=True,
+        )
+
+    # Overloaded, unlike the two public methods above: typing plumbing for two
+    # internal call sites. The dict and array forms share a cache keyed partly
+    # on this flag, so the branch stays -- but no public signature exposes it.
+    @overload
+    def _intersection_numbers(
+        self,
+        pushed_down: bool = False,
+        in_basis: bool = False,
+        symmetrize: bool = False,
+        *,
+        as_np_array: Literal[False],
+        eps: float = _INTERSECTION_NUMBERS_DEFAULT_EPS,
+        digits: int | None = _INTERSECTION_NUMBERS_DEFAULT_DIGITS,
+        copy: bool = True,
+        verbosity: int = 0,
+    ) -> dict: ...
+
+    @overload
+    def _intersection_numbers(
+        self,
+        pushed_down: bool = False,
+        in_basis: bool = False,
+        symmetrize: bool = False,
+        *,
+        as_np_array: Literal[True],
+        eps: float = _INTERSECTION_NUMBERS_DEFAULT_EPS,
+        digits: int | None = _INTERSECTION_NUMBERS_DEFAULT_DIGITS,
+        copy: bool = True,
+        verbosity: int = 0,
+    ) -> np.ndarray: ...
+
+    def _intersection_numbers(
+        self,
+        pushed_down: bool = False,
+        in_basis: bool = False,
+        symmetrize: bool = False,
+        as_np_array: bool = False,
+        eps: float = _INTERSECTION_NUMBERS_DEFAULT_EPS,
+        digits: int | None = _INTERSECTION_NUMBERS_DEFAULT_DIGITS,
+        copy: bool = True,
+        verbosity: int = 0,
+    ) -> dict | np.ndarray:
+        """Shared implementation of the two public accessors."""
         if not hasattr(self, "_kappa"):
             self._kappa = collections.defaultdict(float)
             self._kappa_known_labels = set()
@@ -802,7 +855,7 @@ class Fan(regfans.fan.Fan):
             as_np_array_output=False,
         )
 
-        return self.intersection_numbers(
+        return self._intersection_numbers(
             pushed_down=pushed_down,
             in_basis=in_basis,
             symmetrize=symmetrize,
@@ -837,8 +890,8 @@ class Fan(regfans.fan.Fan):
         two_cones = np.array(list(two_cones)) - 1
 
         # get the intersection numbers
-        kappa = self.intersection_numbers(
-            pushed_down=True, as_np_array=True, eps=eps, digits=digits
+        kappa = self.intersection_numbers_array(
+            pushed_down=True, eps=eps, digits=digits
         )
 
         # compute c2
@@ -979,9 +1032,7 @@ class Fan(regfans.fan.Fan):
     def flop_linear(self, *args, **kwargs):
         # define the hooks
         def hook_init(fan):
-            fan.kappa = fan.intersection_numbers(
-                pushed_down=True, in_basis=True, as_np_array=True
-            )
+            fan.kappa = fan.intersection_numbers_array(pushed_down=True, in_basis=True)
 
         def hook_flip(fanpre, fanpost, circ):
             fanpost.kappa = flop(fanpre, fanpre.kappa, circ)

@@ -1,17 +1,17 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import Any, TypeAlias
+from typing import Any
 
 import numpy as np
 from numpy.typing import NDArray
 
-Scalar: TypeAlias = int | float | np.number
-VectorLike: TypeAlias = NDArray[Any] | Sequence[Scalar]
+type Scalar = int | float | np.number
+type VectorLike = NDArray[Any] | Sequence[Scalar]
 # rows may themselves be arrays, not just sequences
-PointMatrixLike: TypeAlias = NDArray[Any] | Sequence[VectorLike]
-IndexMatrixLike: TypeAlias = NDArray[Any] | Sequence[NDArray[Any] | Sequence[int]]
-HeightLike: TypeAlias = VectorLike
+type PointMatrixLike = NDArray[Any] | Sequence[VectorLike]
+type IndexMatrixLike = NDArray[Any] | Sequence[NDArray[Any] | Sequence[int]]
+type HeightLike = VectorLike
 
 class PointConfiguration:
     def __init__(self, points: PointMatrixLike) -> None: ...

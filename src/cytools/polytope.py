@@ -56,7 +56,12 @@ from cytools._typing import (
     Vector,
     VectorOrMatrix,
 )
-from cytools.utils import instanced_lru_cache, integral_nullspace, lll_reduce
+from cytools.utils import (
+    instanced_lru_cache,
+    integral_nullspace,
+    lll_reduce,
+    lll_reduce_with_transform,
+)
 
 if TYPE_CHECKING:
     from cytools.polytopeface import PolytopeFace
@@ -124,11 +129,14 @@ class Polytope:
         )
         from cytools.ntfe.ntfe import (
             expanded_secondary_fan,
+            iter_ntfe_cones,
+            iter_ntfe_hypers,
             ntfe_cones,
             ntfe_frsts,
             ntfe_frts,
             ntfe_hypers,
             triangface_ineqs,
+            triangface_ineqs_and_triangs,
             triangfaces_to_frst,
             triangfaces_to_frt,
         )
@@ -146,8 +154,11 @@ class Polytope:
         triangfaces_to_frt = lazy_method("cytools.ntfe.ntfe")
         triangfaces_to_frst = lazy_method("cytools.ntfe.ntfe")
         triangface_ineqs = lazy_method("cytools.ntfe.ntfe")
+        triangface_ineqs_and_triangs = lazy_method("cytools.ntfe.ntfe")
         ntfe_hypers = lazy_method("cytools.ntfe.ntfe")
+        iter_ntfe_hypers = lazy_method("cytools.ntfe.ntfe")
         ntfe_cones = lazy_method("cytools.ntfe.ntfe")
+        iter_ntfe_cones = lazy_method("cytools.ntfe.ntfe")
         ntfe_frts = lazy_method("cytools.ntfe.ntfe")
         ntfe_frsts = lazy_method("cytools.ntfe.ntfe")
         vc = lazy_method("cytools.vector_config.vectorconfiguration")
@@ -846,7 +857,7 @@ class Polytope:
         # >0D below...
         # ============
         # LLL-reduction (allows reduction in dimension)
-        pts_optimal, transf = lll_reduce(pts_optimal, transform=True)
+        pts_optimal, transf = lll_reduce_with_transform(pts_optimal)
         pts_optimal = pts_optimal[:, self._dim_diff :]
         transf_mat, self._transf_mat_inv = transf
 
@@ -1071,19 +1082,29 @@ class Polytope:
 
     # main
     # ----
-    @overload
-    def points(
-        self, which=None, optimal: bool = False, as_indices: Literal[False] = False
-    ) -> np.ndarray: ...
+    def _point_labels(self, which=None) -> Iterable:
+        """Resolve the `which` argument of the point accessors to labels."""
+        if which is None:
+            return self._pts_order
+        if (not isinstance(which, np.ndarray)) and (which in self._pts_order):
+            return [which]
+        return which
 
-    @overload
-    def points(
-        self, which=None, optimal: bool = False, *, as_indices: Literal[True]
-    ) -> list: ...
+    def point_indices(self, which=None) -> list:
+        """
+        **Description:**
+        Returns the indices of the lattice points of the polytope, in the same
+        order as `points`.
 
-    def points(
-        self, which=None, optimal: bool = False, as_indices: bool = False
-    ) -> np.ndarray | list:
+        **Arguments:**
+        - `which`: Which points to return. Specified by a (list of) labels.
+
+        **Returns:**
+        The indices of the points, into the full list of lattice points.
+        """
+        return [self._labels2inds[label] for label in self._point_labels(which)]
+
+    def points(self, which=None, optimal: bool = False) -> np.ndarray:
         """
         **Description:**
         Returns the lattice points of the polytope.
@@ -1126,15 +1147,8 @@ class Polytope:
         #        [ 0,  0,  0, -1]])
         ```
         """
-        # get the labels of the points to return
-        if which is None:
-            which = self._pts_order
-        elif (not isinstance(which, np.ndarray)) and (which in self._pts_order):
-            which = [which]
+        which = self._point_labels(which)
 
-        # return the answer in the desired format
-        if as_indices:
-            return [self._labels2inds[label] for label in which]
         # set pts to be optimal/input depending on 'optimal' parameter
         if optimal:
             pts = self._labels2optPts
@@ -1146,117 +1160,135 @@ class Polytope:
 
     # common point grabbers
     # ---------------------
-    @overload
-    def interior_points(self, as_indices: Literal[False] = False) -> np.ndarray: ...
-
-    @overload
-    def interior_points(self, as_indices: Literal[True]) -> list: ...
-
-    def interior_points(self, as_indices: bool = False) -> np.ndarray | list:
+    def interior_points(self) -> np.ndarray:
         """
         **Description:**
         Returns the interior lattice points of the polytope.
 
         **Arguments:**
-        - `as_indices`: Return the points as indices of the full list of points
-          of the polytope.
+        None.
 
         **Returns:**
         The interior lattice points of the polytope.
         """
-        return self.points(which=self._labels_int, as_indices=as_indices)
+        return self.points(which=self._labels_int)
 
-    @overload
-    def boundary_points(self, as_indices: Literal[False] = False) -> np.ndarray: ...
+    def interior_point_indices(self) -> list:
+        """
+        **Description:**
+        Returns the indices of the interior lattice points of the polytope.
 
-    @overload
-    def boundary_points(self, as_indices: Literal[True]) -> list: ...
+        **Arguments:**
+        None.
 
-    def boundary_points(self, as_indices: bool = False) -> np.ndarray | list:
+        **Returns:**
+        The indices of those points, into the full list of lattice points.
+        """
+        return self.point_indices(which=self._labels_int)
+
+    def boundary_points(self) -> np.ndarray:
         """
         **Description:**
         Returns the boundary lattice points of the polytope.
 
         **Arguments:**
-        - `as_indices`: Return the points as indices of the full list of points
-          of the polytope.
+        None.
 
         **Returns:**
         The boundary lattice points of the polytope.
         """
-        return self.points(which=self._labels_bdry, as_indices=as_indices)
+        return self.points(which=self._labels_bdry)
 
-    @overload
-    def points_interior_to_facets(
-        self, as_indices: Literal[False] = False
-    ) -> np.ndarray: ...
+    def boundary_point_indices(self) -> list:
+        """
+        **Description:**
+        Returns the indices of the boundary lattice points of the polytope.
 
-    @overload
-    def points_interior_to_facets(self, as_indices: Literal[True]) -> list: ...
+        **Arguments:**
+        None.
 
-    def points_interior_to_facets(self, as_indices: bool = False) -> np.ndarray | list:
+        **Returns:**
+        The indices of those points, into the full list of lattice points.
+        """
+        return self.point_indices(which=self._labels_bdry)
+
+    def points_interior_to_facets(self) -> np.ndarray:
         """
         **Description:**
         Returns the lattice points interior to facets.
 
         **Arguments:**
-        - `as_indices`: Return the points as indices of the full list of points
-          of the polytope.
+        None.
 
         **Returns:**
         The lattice points interior to facets.
         """
-        return self.points(which=self._labels_facet, as_indices=as_indices)
+        return self.points(which=self._labels_facet)
 
-    @overload
-    def boundary_points_not_interior_to_facets(
-        self, as_indices: Literal[False] = False
-    ) -> np.ndarray: ...
+    def point_indices_interior_to_facets(self) -> list:
+        """
+        **Description:**
+        Returns the indices of the lattice points interior to facets.
 
-    @overload
-    def boundary_points_not_interior_to_facets(
-        self, as_indices: Literal[True]
-    ) -> list: ...
+        **Arguments:**
+        None.
 
-    def boundary_points_not_interior_to_facets(
-        self, as_indices: bool = False
-    ) -> np.ndarray | list:
+        **Returns:**
+        The indices of those points, into the full list of lattice points.
+        """
+        return self.point_indices(which=self._labels_facet)
+
+    def boundary_points_not_interior_to_facets(self) -> np.ndarray:
         """
         **Description:**
         Returns the boundary lattice points not interior to facets.
 
         **Arguments:**
-        - `as_indices`: Return the points as indices of the full list of points
-          of the polytope.
+        None.
 
         **Returns:**
         The boundary lattice points not interior to facets.
         """
-        return self.points(which=self._labels_codim2, as_indices=as_indices)
+        return self.points(which=self._labels_codim2)
 
-    @overload
-    def points_not_interior_to_facets(
-        self, as_indices: Literal[False] = False
-    ) -> np.ndarray: ...
+    def boundary_point_indices_not_interior_to_facets(self) -> list:
+        """
+        **Description:**
+        Returns the indices of the boundary lattice points not interior to facets.
 
-    @overload
-    def points_not_interior_to_facets(self, as_indices: Literal[True]) -> list: ...
+        **Arguments:**
+        None.
 
-    def points_not_interior_to_facets(
-        self, as_indices: bool = False
-    ) -> np.ndarray | list:
+        **Returns:**
+        The indices of those points, into the full list of lattice points.
+        """
+        return self.point_indices(which=self._labels_codim2)
+
+    def points_not_interior_to_facets(self) -> np.ndarray:
         """
         **Description:**
         Returns the lattice points not interior to facets.
 
         **Arguments:**
-        - `as_indices`: Return the points as indices of the full list of points
-          of the polytope.
+        None.
 
         **Returns:**
         The lattice points not interior to facets.
         """
-        return self.points(which=self._labels_not_facet, as_indices=as_indices)
+        return self.points(which=self._labels_not_facet)
+
+    def point_indices_not_interior_to_facets(self) -> list:
+        """
+        **Description:**
+        Returns the indices of the lattice points not interior to facets.
+
+        **Arguments:**
+        None.
+
+        **Returns:**
+        The indices of those points, into the full list of lattice points.
+        """
+        return self.point_indices(which=self._labels_not_facet)
 
     @overload
     def points_to_labels(self, points: Matrix, is_optimal: bool = False) -> list: ...
@@ -1350,24 +1382,41 @@ class Polytope:
 
         # grab labels, and then map to indices
         labels = self.points_to_labels(np.asarray(pts), is_optimal=is_optimal)
-        inds = np.asarray(self.points(which=labels, as_indices=True))
+        inds = np.asarray(self.point_indices(which=labels))
 
         # get/return the indices
         if single_pt and len(inds):
             return inds[0]  # just return the single index
         return inds  # return a list of indices
 
-    @overload
-    def vertices(
-        self, optimal: bool = False, as_indices: Literal[False] = False
-    ) -> np.ndarray: ...
+    def _vertex_labels(self) -> tuple:
+        """Labels of the vertices, computed and cached on first use."""
+        labels = self._labels_vertices
+        if labels is None:
+            if self.dimension() <= 0:
+                # 0D... trivial
+                labels = self._pts_order
+            else:
+                # for either ppl/PALP, map points to original representation
+                labels = self.points_to_labels(self._vertices_optimal, is_optimal=True)
+            labels = tuple(sorted(labels))
+            self._labels_vertices = labels
+        return labels
 
-    @overload
-    def vertices(self, optimal: bool = False, *, as_indices: Literal[True]) -> list: ...
+    def vertex_indices(self) -> list:
+        """
+        **Description:**
+        Returns the indices of the vertices of the polytope.
 
-    def vertices(
-        self, optimal: bool = False, as_indices: bool = False
-    ) -> np.ndarray | list:
+        **Arguments:**
+        None.
+
+        **Returns:**
+        The indices of the vertices, into the full list of lattice points.
+        """
+        return self.point_indices(which=self._vertex_labels())
+
+    def vertices(self, optimal: bool = False) -> np.ndarray:
         """
         **Description:**
         Returns the vertices of the polytope.
@@ -1393,31 +1442,7 @@ class Polytope:
         #        [-1, -1, -1, -1]])
         ```
         """
-        # return the answer if known
-        if self._labels_vertices is not None:
-            return self.points(
-                which=self._labels_vertices,
-                optimal=optimal,
-                as_indices=as_indices,
-            )
-
-        # calculate the answer
-        if self.dimension() <= 0:
-            # 0D... trivial
-            self._labels_vertices = self._pts_order
-
-        else:
-            verts = self._vertices_optimal
-
-        # for either ppl/PALP, map points to original representation
-        if self._labels_vertices is None:
-            self._labels_vertices = self.points_to_labels(verts, is_optimal=True)
-
-        # sort, map to tuple
-        self._labels_vertices = tuple(sorted(self._labels_vertices))
-
-        # return
-        return self.vertices(optimal=optimal, as_indices=as_indices)
+        return self.points(which=self._vertex_labels(), optimal=optimal)
 
     # faces
     # =====
@@ -1853,29 +1878,11 @@ class Polytope:
 
     # symmetries
     # ==========
-    @overload
     def automorphisms(
         self,
         square_to_one: bool = False,
         action: AutomorphismAction = "right",
-        as_dictionary: Literal[False] = False,
-    ) -> np.ndarray: ...
-
-    @overload
-    def automorphisms(
-        self,
-        square_to_one: bool = False,
-        action: AutomorphismAction = "right",
-        *,
-        as_dictionary: Literal[True],
-    ) -> list[dict]: ...
-
-    def automorphisms(
-        self,
-        square_to_one: bool = False,
-        action: AutomorphismAction = "right",
-        as_dictionary: bool = False,
-    ) -> np.ndarray | list[dict]:
+    ) -> np.ndarray:
         r"""
         **Description:**
         Returns the $SL^{\pm}(d,\mathbb{Z})$ matrices that leave the polytope
@@ -1886,13 +1893,10 @@ class Polytope:
         - `square_to_one`: Flag that restricts to only matrices that square to
             the identity.
         - `action`: Flag that specifies whether the returned matrices act on
-            the left or the right. This option is ignored when `as_dictionary`
-            is set to True.
-        - `as_dictionary`: Return each automphism as a dictionary that
-            describes the action on the indices of the points.
+            the left or the right.
 
         **Returns:**
-        A list of automorphism matrices or dictionaries.
+        A list of automorphism matrices.
 
         **Example:**
         We construct a polytope, and find its automorphisms. We also check that
@@ -1938,7 +1942,7 @@ class Polytope:
         # [ 0 -1  0  0  1]
         # [ 0 -6  1  0  0]
         # [ 0 -9  0  1  0]]
-        autos_dict = p.automorphisms(as_dictionary=True)
+        autos_dict = p.automorphism_dicts()
         print(autos_dict)
         # [{0: 0, 1: 1, 2: 2, 3: 3, 4: 4, 5: 5, 6: 6, 7: 7, 8: 8, 9: 9},
         #  {0: 0, 1: 4, 2: 2, 3: 3, 4: 1, 5: 5, 6: 6, 7: 7, 8: 8, 9: 9},
@@ -1948,6 +1952,54 @@ class Polytope:
         #  {0: 0, 1: 5, 2: 2, 3: 3, 4: 4, 5: 1, 6: 6, 7: 7, 8: 8, 9: 9}]
         ```
         """
+        return self._automorphisms(square_to_one, action, as_dictionary=False)
+
+    def automorphism_dicts(self, square_to_one: bool = False) -> list[dict]:
+        """
+        **Description:**
+        Returns the automorphisms of the polytope as dictionaries mapping each
+        point label to the label of its image, rather than as matrices.
+
+        There is no `action` argument: the mapping is on labels, so the
+        left/right distinction that `automorphisms` makes does not apply. The
+        matrix form silently ignored it here.
+
+        **Arguments:**
+        - `square_to_one`: Whether to only return automorphisms that square to
+            the identity.
+
+        **Returns:**
+        A list of dictionaries, one per automorphism.
+        """
+        return self._automorphisms(square_to_one, "right", as_dictionary=True)
+
+    # Overloaded, unlike the two public methods above. Typing plumbing for two
+    # internal call sites, not API surface: the matrix and dictionary forms
+    # share a four-slot cache and most of their derivation, so the branch has
+    # to stay -- but no public signature exposes it.
+    @overload
+    def _automorphisms(
+        self,
+        square_to_one: bool,
+        action: AutomorphismAction,
+        as_dictionary: Literal[False],
+    ) -> np.ndarray: ...
+
+    @overload
+    def _automorphisms(
+        self,
+        square_to_one: bool,
+        action: AutomorphismAction,
+        as_dictionary: Literal[True],
+    ) -> list[dict]: ...
+
+    def _automorphisms(
+        self,
+        square_to_one: bool,
+        action: AutomorphismAction,
+        as_dictionary: bool,
+    ) -> np.ndarray | list[dict]:
+        """Shared implementation of `automorphisms` / `automorphism_dicts`."""
         # check that this is sensical
         if self.dimension() != self.ambient_dimension():
             raise NotImplementedError(
@@ -2671,7 +2723,7 @@ class Polytope:
 
         # if heights are provided for all points, trim them
         if (heights is not None) and (len(heights) == len(self.labels)):
-            pts_inds = self.points(which=points, as_indices=True)
+            pts_inds = self.point_indices(which=points)
             triang_heights = np.array(heights)[list(pts_inds)]
         else:
             triang_heights = heights
@@ -3255,9 +3307,9 @@ class Polytope:
         if len(self.points()) == self.dimension() + 1:
             # simplex... trivial
             if raw_output:
-                # N.B.: points(as_indices=True) returns a list, so it must be
+                # N.B.: point_indices() returns a list, so it must be
                 # cast before it can be indexed with a tuple.
-                triangs = [np.asarray(self.points(as_indices=True))[None, :]]
+                triangs = [np.asarray(self.point_indices())[None, :]]
             else:
                 triangs = [Triangulation(self, self.labels)]
 
@@ -3626,6 +3678,10 @@ class Polytope:
             else:
                 indices = np.argsort(norms)
             indices[: linrel.shape[0]] = np.sort(indices[: linrel.shape[0]])
+            # Fixed seed so the retry order is reproducible. A local Generator
+            # rather than `np.random.seed`, which would reseed the interpreter's
+            # global RNG as a side effect of computing a GLSM basis.
+            basis_rng = np.random.default_rng(1337)
             for n_try in range(14):
                 if n_try == 1:
                     indices[:] = np.array(range(linrel.shape[1]))
@@ -3649,9 +3705,7 @@ class Polytope:
                     indices[:] = np.array([0] + list(range(1, linrel.shape[1]))[::-1])
                     indices[: linrel.shape[0]] = np.sort(indices[: linrel.shape[0]])
                 elif n_try > 3:
-                    if n_try == 4:
-                        np.random.seed(1337)
-                    np.random.shuffle(indices[1:])
+                    basis_rng.shuffle(indices[1:])
                     indices[: linrel.shape[0]] = np.sort(indices[: linrel.shape[0]])
 
                 for ctr in range(np.prod(linrel.shape) + 1):
@@ -3700,9 +3754,7 @@ class Polytope:
                     "for the ToricVariety or CalabiYau classes.",
                     stacklevel=2,
                 )
-                if pts_ind == tuple(
-                    self.points_not_interior_to_facets(as_indices=True)
-                ):
+                if pts_ind == tuple(self.point_indices_not_interior_to_facets()):
                     warnings.warn(
                         "Please let the developers know about the "
                         "polytope that caused this issue. "
@@ -4329,7 +4381,10 @@ def _saturating_lattice_pts_uncached(
     if dim == 0:
         backend = "palp"
     if ineqs is None:
-        ineqs, _ = poly_v_to_h(pts, backend)
+        # `poly_v_to_h` opens with `np.asarray(pts)`, so this conversion is
+        # free; doing it here also pins the element type, which a list of
+        # tuples built from a union-typed input otherwise leaves open.
+        ineqs, _ = poly_v_to_h(np.asarray(pts), backend)
 
     ineqs = np.array(ineqs)
 

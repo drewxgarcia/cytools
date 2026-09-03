@@ -112,7 +112,7 @@ def qhull_triangulate(points: Matrix, heights: Vector | None) -> np.ndarray:
     from scipy.spatial import ConvexHull
 
     lifted = [tuple(points[i]) + (heights[i],) for i in range(len(points))]
-    hull = ConvexHull(lifted)
+    hull = ConvexHull(np.asarray(lifted))
 
     # the lower facets; the -2 component is the lifting dimension
     low_fac = [hull.simplices[n] for n, eq in enumerate(hull.equations) if eq[-2] < 0]
